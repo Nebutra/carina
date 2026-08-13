@@ -66,6 +66,10 @@ Start and run:
 
 Inspect sessions:
   carina sessions                                  list sessions
+  carina import list [--source claude-code|codex] [--all-workspaces] [--json]
+                                                   preview local conversations available to copy
+  carina import apply (--id source-id | --all) [--source claude-code|codex] [--json]
+                                                   copy selected conversations; source history stays unchanged
   carina resume <session_id> [prompt|-]            continue or inspect a session
   carina fork <session_id>                         branch a session without changing its parent
   carina cost [session_id] [--json]                show model usage and cost totals
@@ -293,6 +297,8 @@ func run(cmd string, args []string) error {
 		return call(c, "daemon.metrics", map[string]any{})
 	case "sessions":
 		return call(c, "session.list", map[string]any{})
+	case "import":
+		return cmdImport(c, args)
 	case "fork":
 		return cmdFork(c, args)
 	case "cost":

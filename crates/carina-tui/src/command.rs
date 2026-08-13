@@ -15,6 +15,7 @@ pub enum CommandId {
     ViewPlan,
     Build,
     Sessions,
+    Import,
     Resume,
     Cancel,
     Minimal,
@@ -112,6 +113,12 @@ pub const COMMANDS: &[CommandSpec] = &[
         CommandId::Sessions,
         "/sessions",
         MessageId::CommandSessions,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::Import,
+        "/import",
+        MessageId::CommandImportConversations,
         AvailabilityRule::Always,
     ),
     command(

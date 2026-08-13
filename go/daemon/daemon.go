@@ -183,6 +183,7 @@ type Daemon struct {
 	submissionMu          sync.Mutex
 	taskSubmissions       map[string]string // session_id + client_submission_id -> task_id
 	forkMu                sync.Mutex
+	importMu              sync.Mutex
 	hookOutcomeMu         sync.Mutex
 	hookOutcomes          map[string]hookOutcome
 	hookStops             sync.Map // task_id -> true after Stop hooks run
@@ -1115,6 +1116,8 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("session.close", rpc.ScopeWrite, false, d.handleSessionClose)
 	d.registerRPC("session.replay", rpc.ScopeRead, true, d.handleSessionReplay)
 	d.registerRPC("session.items", rpc.ScopeRead, true, d.handleSessionItems)
+	d.registerRPC("conversation.import.discover", rpc.ScopeRead, false, d.handleConversationImportDiscover)
+	d.registerRPC("conversation.import.apply", rpc.ScopeWrite, false, d.handleConversationImportApply)
 	d.registerRPC("session.review", rpc.ScopeRead, true, d.handleSessionReview)
 	d.registerRPC("session.attach", rpc.ScopeRead, true, d.handleSessionAttach)
 	d.registerRPC("session.events.unsubscribe", rpc.ScopeStream, true, d.handleEventUnsubscribe)

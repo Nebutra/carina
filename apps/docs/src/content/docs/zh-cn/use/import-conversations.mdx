@@ -1,0 +1,85 @@
+---
+title: 导入会话
+description: 将本地 Claude Code 与 Codex 会话导入 Carina，同时保持来源历史不变。
+sidebar:
+  order: 2
+---
+
+import Callout from '../../../../components/ui/Callout.astro';
+import Steps from '../../../../components/mdx/Steps.astro';
+import Step from '../../../../components/mdx/Step.astro';
+
+Carina 可以把 **Claude Code** 和 **Codex** 中用户可见的本地对话复制为普通 Carina 会话。来源文件保持不变。这是一次性的导入，不是实时或双向同步。
+
+## 在 TUI 中导入
+
+<Steps>
+  <Step title="打开导入器">
+    运行 `carina`，进入 `/sessions`，然后选择 **导入会话**；也可以直接输入 `/import`。
+  </Step>
+  <Step title="选择扫描范围">
+    Carina 默认检查当前工作区中的 Claude Code 和 Codex 历史。按 `S` 只看一个来源；只有明确按下 `Tab` 才会查看全部工作区。
+  </Step>
+  <Step title="预览并选择">
+    每一行都会显示来源、标题、消息数，以及新增、已是最新或不可导入状态。预览中会分别显示来源工作区和 Carina 目标工作区。
+  </Step>
+  <Step title="确认创建本地副本">
+    用 `Space` 逐个选择，或使用 **全选**；选择 **检查并导入** 后再次确认。结果页会准确显示新增和跳过的消息数，并可直接打开导入后的会话。
+  </Step>
+</Steps>
+
+导入的用户和助手消息会在 transcript 中保留 **Claude Code import** 或 **Codex import** 标签。它们只是历史上下文，不代表 Carina 执行过来源工具中的调用。
+
+## 从 CLI 导入
+
+先预览当前工作区；这一步不会写入数据：
+
+```bash frame="none"
+carina import list
+carina import list --source claude-code
+carina import list --source codex --json
+```
+
+导入一个已发现的来源会话，或导入当前视图中所有符合条件的会话：
+
+```bash frame="none"
+carina import apply --source claude-code --id SOURCE_CONVERSATION_ID
+carina import apply --source codex --all
+```
+
+使用 `--workspace /path/to/repo` 指定 Carina 目标工作区。`--all-workspaces` 只会扩大发现范围，不会把无关会话合并到同一个工作区。非默认安装或合成测试数据可使用 `--source SOURCE --source-root /path/to/history`。
+
+## 会复制什么
+
+| 会复制 | 不复制，也不会信任 |
+| --- | --- |
+| 用户可见文本 | system / developer 指令 |
+| 助手可见文本 | 隐藏推理 |
+| 来源名称与会话身份 | 工具调用与工具结果 |
+| 原始消息时间 | 审批或权限设置 |
+| 来源与目标工作区的归属信息 | 凭据、环境转储或二进制附件 |
+
+Carina 通过 daemon 读取所选本地历史，把导入消息写入自身的哈希链审计日志，并以 `safe-edit` profile 将新会话绑定到界面展示的目标工作区。继续提问时，模型只会收到有长度上限、明确标为 **不可信导入会话** 的上下文；来源中的指令不会变成 Carina 权限或系统规则。
+
+<Callout variant="note">
+  导入不会启动 Claude Code 或 Codex，不需要它们的登录凭据，不会上传来源历史，也不会回写来源文件。Carina 只在你明确执行发现或导入时读取本地文件。
+</Callout>
+
+## 检查新增消息
+
+在结果页选择 **再次检查**、重新打开导入器，或重复 CLI 命令。Carina 通过稳定的来源身份和逐消息指纹去重：来源没有变化时，不会重复创建会话或消息；来源追加消息后，只会新增可见的新消息。
+
+Carina 不会在后台监视来源文件。“已是最新”只表示最近一次明确检查时没有发现新增内容。
+
+## 排查问题
+
+| 现象 | 处理方式 |
+| --- | --- |
+| 没有找到会话 | 确认来源与当前工作区；只有确实要查看其他项目时才使用 `Tab` 或 `--all-workspaces`。 |
+| 历史位于自定义目录 | 使用 `--source SOURCE --source-root /path/to/history`。 |
+| 会话不可导入 | 记录的工作区不存在，或不在 daemon 允许范围内。恢复该目录，或用 `--all-workspaces --workspace /existing/target` 在发现原会话的同时指定已有目标。 |
+| 部分记录被跳过 | 当仍有可用的用户/助手文本时，未知或格式异常的来源记录会作为 warning 报告。 |
+| 显示已是最新 | 没有发现新的可见消息；这是正常的幂等 no-op。 |
+| 导入在中途停止 | 处理回执中的错误后再次执行；已经记录的消息指纹会自动跳过。 |
+
+导入后可用 `carina items SESSION` 检查归一化 transcript，并用 `carina audit verify SESSION` 验证审计链。

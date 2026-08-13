@@ -43,6 +43,7 @@ pub enum EventType {
     SessionUnarchived,
     DirectoryGranted,
     CommandExpanded,
+    ConversationImported,
     ExternalEvent,
     ModelRequested,
     ModelResponded,

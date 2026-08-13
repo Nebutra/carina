@@ -49,7 +49,7 @@ use crate::product_projection::{
 };
 use crate::rpc::ModelProvider;
 use crate::semantic_cell::SemanticCellKind;
-use crate::session_browser::SessionScope;
+use crate::session_browser::{ConversationImportSource, ConversationImportStage, SessionScope};
 use crate::tool_projection::{
     TodoItem, visible_group_members_with_limits, visible_output_lines_with_limits,
 };
@@ -1445,6 +1445,10 @@ impl App {
     }
 
     fn render_sessions(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        if self.session_browser.conversation_import().is_open() {
+            self.render_conversation_import(frame, area);
+            return;
+        }
         let locale = self.ui_locale();
         let layout = BrowserLayout::compute(area);
         let scope = match self.session_browser.scope() {
@@ -1558,6 +1562,7 @@ impl App {
         let footer = Layout::horizontal([
             Constraint::Length(layout_contract::SESSION_PRIMARY_ACTION_WIDTH),
             Constraint::Length(layout_contract::SESSION_SECONDARY_ACTION_WIDTH),
+            Constraint::Length(layout_contract::SESSION_SECONDARY_ACTION_WIDTH),
             Constraint::Min(layout_contract::SESSION_LIST_MIN_HEIGHT),
         ])
         .split(chunks[2]);
@@ -1595,6 +1600,10 @@ impl App {
                     Action::CreateSession,
                 ),
                 (
+                    tr(locale, MessageId::ImportConversations),
+                    Action::OpenConversationImport,
+                ),
+                (
                     tr(locale, MessageId::RenameSelected),
                     Action::BeginRenameSession,
                 ),
@@ -1626,6 +1635,345 @@ impl App {
         if let Some(detail) = layout.detail {
             self.render_session_detail(frame, detail);
         }
+    }
+
+    fn render_conversation_import(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        let locale = self.ui_locale();
+        let layout = BrowserLayout::compute(area);
+        let import = self.session_browser.conversation_import();
+        let source = match import.source() {
+            ConversationImportSource::All => tr(locale, MessageId::ConversationImportAllSources),
+            ConversationImportSource::ClaudeCode => "Claude Code",
+            ConversationImportSource::Codex => "Codex",
+        };
+        let scope = if import.all_workspaces() {
+            tr(locale, MessageId::AllWorkspaces)
+        } else {
+            tr(locale, MessageId::CurrentWorkspace)
+        };
+        self.render_scene_title(
+            frame,
+            layout.title,
+            tr(locale, MessageId::ImportConversations),
+            &tr_format(
+                locale,
+                MessageId::ConversationImportBrowseDetail,
+                &[("source", source), ("scope", scope)],
+            ),
+        );
+        let list_title = format!(" {} ", tr(locale, MessageId::ImportConversations));
+        let list_area = self.render_browser_panel(frame, layout.list, &list_title);
+        let chunks = Layout::vertical([
+            Constraint::Length(2),
+            Constraint::Min(layout_contract::SESSION_LIST_MIN_HEIGHT),
+            Constraint::Length(layout_contract::CONTROL_HEIGHT),
+        ])
+        .split(list_area);
+        frame.render_widget(
+            Paragraph::new(tr(locale, MessageId::ConversationImportCopySemantics))
+                .style(Style::default().fg(self.theme.muted))
+                .wrap(Wrap { trim: false }),
+            chunks[0],
+        );
+
+        match import.stage() {
+            ConversationImportStage::Discovering => {
+                frame.render_widget(
+                    Paragraph::new(tr(locale, MessageId::ConversationImportScanning))
+                        .style(self.theme.focus()),
+                    chunks[1],
+                );
+                self.render_conversation_import_footer(
+                    frame,
+                    chunks[2],
+                    &[(MessageId::Cancel, Action::CancelConversationImport)],
+                );
+            }
+            ConversationImportStage::Selecting => {
+                let discovery_failed = !import.error().is_empty();
+                let rows = import
+                    .candidates()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, candidate)| {
+                        let checked = if import.is_selected(index) {
+                            "[x]"
+                        } else {
+                            "[ ]"
+                        };
+                        let source = conversation_import_source_label(&candidate.source);
+                        let state = if !candidate.importable {
+                            tr(locale, MessageId::ConversationImportUnavailable).to_owned()
+                        } else if candidate.new_messages == 0 {
+                            tr(locale, MessageId::ConversationImportUpToDate).to_owned()
+                        } else {
+                            tr_format(
+                                locale,
+                                MessageId::ConversationImportNewMessages,
+                                &[("count", &candidate.new_messages.to_string())],
+                            )
+                        };
+                        let title_width = usize::from(chunks[1].width).saturating_sub(30).max(12);
+                        let title =
+                            truncate_cells(&candidate.title, title_width, self.theme.glyphs);
+                        (index, format!("{checked} {source:<11} {title}  {state}"))
+                    })
+                    .collect::<Vec<_>>();
+                if rows.is_empty() && !discovery_failed {
+                    frame.render_widget(
+                        Paragraph::new(tr(locale, MessageId::ConversationImportNoneFound))
+                            .style(Style::default().fg(self.theme.muted))
+                            .wrap(Wrap { trim: false }),
+                        chunks[1],
+                    );
+                }
+                self.render_indexed_rows(
+                    frame,
+                    chunks[1],
+                    rows,
+                    import.selected_visible(),
+                    3_300,
+                    |index| Some(Action::SelectConversationImport(index)),
+                );
+                let actions = if discovery_failed {
+                    vec![
+                        (
+                            MessageId::ConversationImportCheckAgain,
+                            Action::RetryConversationImport,
+                        ),
+                        (MessageId::Cancel, Action::CancelConversationImport),
+                    ]
+                } else {
+                    vec![
+                        (
+                            MessageId::ConversationImportReview,
+                            Action::ReviewConversationImport,
+                        ),
+                        (
+                            MessageId::ConversationImportSelectAll,
+                            Action::ToggleConversationImportAll,
+                        ),
+                        (
+                            MessageId::ConversationImportSource,
+                            Action::CycleConversationImportSource,
+                        ),
+                        (MessageId::Cancel, Action::CancelConversationImport),
+                    ]
+                };
+                self.render_conversation_import_footer(frame, chunks[2], &actions);
+            }
+            ConversationImportStage::Confirming => {
+                let count = import.selected_count().to_string();
+                let messages = import.selected_message_count().to_string();
+                let mut lines = vec![
+                    Line::from(Span::styled(
+                        tr(locale, MessageId::ConversationImportConfirmTitle),
+                        self.theme.focus().add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(""),
+                    Line::from(tr_format(
+                        locale,
+                        MessageId::ConversationImportConfirmDetail,
+                        &[("count", &count), ("messages", &messages)],
+                    )),
+                ];
+                if let Some((first, remaining)) = import.selected_target_summary() {
+                    let suffix = if remaining == 0 {
+                        String::new()
+                    } else {
+                        format!(" (+{remaining})")
+                    };
+                    lines.push(Line::from(format!(
+                        "{}  {first}{suffix}",
+                        tr(locale, MessageId::ConversationImportTargetWorkspace)
+                    )));
+                }
+                lines.extend([
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        tr(locale, MessageId::ConversationImportCopySemantics),
+                        Style::default().fg(self.theme.muted),
+                    )),
+                ]);
+                frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), chunks[1]);
+                self.render_conversation_import_footer(
+                    frame,
+                    chunks[2],
+                    &[
+                        (MessageId::ConfirmImport, Action::ConfirmConversationImport),
+                        (MessageId::Cancel, Action::CancelConversationImport),
+                    ],
+                );
+            }
+            ConversationImportStage::Applying => {
+                frame.render_widget(
+                    Paragraph::new(tr(locale, MessageId::ConversationImportApplying))
+                        .style(self.theme.focus()),
+                    chunks[1],
+                );
+            }
+            ConversationImportStage::Results => {
+                let rows = import
+                    .receipts()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, receipt)| {
+                        let source = conversation_import_source_label(&receipt.source);
+                        let status = match receipt.status.as_str() {
+                            "imported" => tr_format(
+                                locale,
+                                MessageId::ConversationImportResultImported,
+                                &[("count", &receipt.imported_messages.to_string())],
+                            ),
+                            "updated" => tr_format(
+                                locale,
+                                MessageId::ConversationImportResultUpdated,
+                                &[("count", &receipt.imported_messages.to_string())],
+                            ),
+                            "up_to_date" => {
+                                tr(locale, MessageId::ConversationImportUpToDate).to_owned()
+                            }
+                            _ => tr_format(
+                                locale,
+                                MessageId::ConversationImportResultFailed,
+                                &[("error", &receipt.error)],
+                            ),
+                        };
+                        (index, format!("{source:<11} {status}"))
+                    })
+                    .collect::<Vec<_>>();
+                self.render_indexed_rows(
+                    frame,
+                    chunks[1],
+                    rows,
+                    import.result_selected(),
+                    3_500,
+                    |index| Some(Action::SelectConversationImportResult(index)),
+                );
+                self.render_conversation_import_footer(
+                    frame,
+                    chunks[2],
+                    &[
+                        (MessageId::Open, Action::OpenConversationImportResult),
+                        (
+                            MessageId::ConversationImportCheckAgain,
+                            Action::RetryConversationImport,
+                        ),
+                        (MessageId::Done, Action::CancelConversationImport),
+                    ],
+                );
+            }
+            ConversationImportStage::Closed => {}
+        }
+
+        if let Some(detail) = layout.detail {
+            self.render_conversation_import_detail(frame, detail);
+        }
+    }
+
+    fn render_conversation_import_footer(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        actions: &[(MessageId, Action)],
+    ) {
+        let locale = self.ui_locale();
+        let constraints = actions
+            .iter()
+            .map(|(label, _)| Constraint::Length(label_button_width(tr(locale, *label)).min(24)))
+            .collect::<Vec<_>>();
+        let areas = Layout::horizontal(constraints).split(area);
+        for (index, ((label, action), area)) in actions.iter().zip(areas.iter()).enumerate() {
+            let component = ComponentId(3_200 + index as u64);
+            frame.render_widget(
+                Paragraph::new(tr(locale, *label)).style(if self.interactions.hovered(component) {
+                    self.theme.selected()
+                } else {
+                    self.theme.focus()
+                }),
+                *area,
+            );
+            self.interactions.register(HitRegion {
+                component,
+                area: *area,
+                action: action.clone(),
+            });
+        }
+    }
+
+    fn render_conversation_import_detail(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        let locale = self.ui_locale();
+        let import = self.session_browser.conversation_import();
+        let area = self.render_browser_panel(
+            frame,
+            area,
+            &format!(" {} ", tr(locale, MessageId::ConversationPreview)),
+        );
+        let mut lines = Vec::new();
+        if import.stage() == ConversationImportStage::Selecting
+            && let Some(candidate) = import.candidates().get(import.selected_visible())
+        {
+            lines.extend([
+                Line::from(Span::styled(
+                    candidate.title.clone(),
+                    self.theme.focus().add_modifier(Modifier::BOLD),
+                )),
+                Line::from(""),
+                Line::from(format!(
+                    "{}  {}",
+                    tr(locale, MessageId::Provider),
+                    conversation_import_source_label(&candidate.source)
+                )),
+                Line::from(format!(
+                    "{}  {}",
+                    tr(locale, MessageId::ConversationImportSourceWorkspace),
+                    candidate.workspace_root
+                )),
+                Line::from(format!(
+                    "{}  {}",
+                    tr(locale, MessageId::ConversationImportTargetWorkspace),
+                    if candidate.target_workspace.is_empty() {
+                        tr(locale, MessageId::ConversationImportUnavailable)
+                    } else {
+                        candidate.target_workspace.as_str()
+                    }
+                )),
+                Line::from(tr_format(
+                    locale,
+                    MessageId::ConversationImportMessageCount,
+                    &[("count", &candidate.message_count.to_string())],
+                )),
+            ]);
+            if !candidate.updated_at.is_empty() {
+                lines.push(Line::from(tr_format(
+                    locale,
+                    MessageId::ConversationImportUpdatedAt,
+                    &[("time", &candidate.updated_at)],
+                )));
+            }
+            if !candidate.import_error.is_empty() {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    candidate.import_error.clone(),
+                    Style::default().fg(self.theme.danger),
+                )));
+            }
+        }
+        if !import.error().is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                import.error().to_owned(),
+                Style::default().fg(self.theme.danger),
+            )));
+        }
+        if let Some(warning) = import.warnings().first() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                warning.clone(),
+                Style::default().fg(self.theme.warning),
+            )));
+        }
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
     }
 
     fn render_session_detail(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -2158,13 +2506,54 @@ impl App {
                 }
                 shortcuts
             }
-            Phase::Session => vec![
-                ("/", tr(locale, MessageId::Search)),
-                ("Tab", tr(locale, MessageId::Scope)),
-                ("N", tr(locale, MessageId::NewConversation)),
-                ("Enter", tr(locale, MessageId::Open)),
-                ("Esc", tr(locale, MessageId::Back)),
-            ],
+            Phase::Session => {
+                let import = self.session_browser.conversation_import();
+                match import.stage() {
+                    ConversationImportStage::Closed => vec![
+                        ("/", tr(locale, MessageId::Search)),
+                        ("Tab", tr(locale, MessageId::Scope)),
+                        ("N", tr(locale, MessageId::NewConversation)),
+                        ("I", tr(locale, MessageId::ImportConversations)),
+                        ("Enter", tr(locale, MessageId::Open)),
+                        ("Esc", tr(locale, MessageId::Back)),
+                    ],
+                    ConversationImportStage::Selecting if !import.error().is_empty() => vec![
+                        ("R", tr(locale, MessageId::ConversationImportCheckAgain)),
+                        ("Esc", tr(locale, MessageId::Cancel)),
+                    ],
+                    ConversationImportStage::Selecting if area.width < 100 => vec![
+                        (
+                            "Space",
+                            tr(locale, MessageId::ConversationImportToggleSelection),
+                        ),
+                        ("Enter", tr(locale, MessageId::ConversationImportReview)),
+                        ("Esc", tr(locale, MessageId::Cancel)),
+                    ],
+                    ConversationImportStage::Selecting => vec![
+                        (
+                            "Space",
+                            tr(locale, MessageId::ConversationImportToggleSelection),
+                        ),
+                        ("A", tr(locale, MessageId::ConversationImportSelectAll)),
+                        ("S", tr(locale, MessageId::ConversationImportSource)),
+                        ("Tab", tr(locale, MessageId::Scope)),
+                        ("Enter", tr(locale, MessageId::ConversationImportReview)),
+                        ("Esc", tr(locale, MessageId::Cancel)),
+                    ],
+                    ConversationImportStage::Confirming => vec![
+                        ("Enter", tr(locale, MessageId::ConfirmImport)),
+                        ("Esc", tr(locale, MessageId::Back)),
+                    ],
+                    ConversationImportStage::Results => vec![
+                        ("Enter", tr(locale, MessageId::Open)),
+                        ("R", tr(locale, MessageId::ConversationImportCheckAgain)),
+                        ("Esc", tr(locale, MessageId::Done)),
+                    ],
+                    ConversationImportStage::Discovering | ConversationImportStage::Applying => {
+                        vec![("Esc", tr(locale, MessageId::Cancel))]
+                    }
+                }
+            }
             Phase::Credential => vec![
                 ("Esc", tr(locale, MessageId::Cancel)),
                 ("Enter", tr(locale, MessageId::Validate)),
@@ -7037,6 +7426,14 @@ fn truncate_cells(value: &str, max_width: usize, glyphs: Glyphs) -> String {
     crate::render_contract::truncate_width_with_glyphs(value, max_width, glyphs)
 }
 
+fn conversation_import_source_label(source: &str) -> &str {
+    match source {
+        "claude-code" => "Claude Code",
+        "codex" => "Codex",
+        _ => source,
+    }
+}
+
 fn pad_cells(value: &str, width: usize, glyphs: Glyphs) -> String {
     let mut out = truncate_cells(value, width, glyphs);
     let used = UnicodeWidthStr::width(out.as_str());
@@ -7495,12 +7892,15 @@ fn transcript_lines_with_tool_key_and_density(
         } else {
             glyphs.role_prefix()
         };
-        let prefix = transcript_role_prefix(
+        let role_label = imported_transcript_role_label(block)
+            .unwrap_or_else(|| tr(locale, MessageId::TranscriptYou));
+        let prefix = transcript_role_prefix_with_width(
             marker,
-            tr(locale, MessageId::TranscriptYou),
+            role_label,
             label_style,
             metadata_style,
             content_width,
+            imported_transcript_role_width(block),
         );
         let mut body = block.body.split('\n');
         let mut first = Vec::new();
@@ -7522,12 +7922,15 @@ fn transcript_lines_with_tool_key_and_density(
         return wrap_styled_lines(logical_lines, usize::from(content_width), &prefix);
     }
     if cell_kind == SemanticCellKind::Assistant {
-        let prefix = transcript_role_prefix(
+        let role_label = imported_transcript_role_label(block)
+            .unwrap_or_else(|| tr(locale, MessageId::TranscriptCarina));
+        let prefix = transcript_role_prefix_with_width(
             glyphs.role_prefix(),
-            tr(locale, MessageId::TranscriptCarina),
+            role_label,
             label_style,
             metadata_style,
             content_width,
+            imported_transcript_role_width(block),
         );
         return render_markdown_prefixed(
             &block.body,
@@ -8320,6 +8723,7 @@ fn tool_hint_line(hint: String, context: ToolLineContext, nested: bool) -> Line<
     ])
 }
 
+#[cfg(test)]
 fn transcript_role_prefix(
     marker: &'static str,
     label: &'static str,
@@ -8327,10 +8731,29 @@ fn transcript_role_prefix(
     continuation_style: Style,
     content_width: u16,
 ) -> StyledPrefix {
-    let label_width = UnicodeWidthStr::width(label);
+    transcript_role_prefix_with_width(
+        marker,
+        label,
+        label_style,
+        continuation_style,
+        content_width,
+        layout_contract::TRANSCRIPT_ROLE_LABEL_WIDTH,
+    )
+}
+
+fn transcript_role_prefix_with_width(
+    marker: &'static str,
+    label: &str,
+    label_style: Style,
+    continuation_style: Style,
+    content_width: u16,
+    label_field_width: usize,
+) -> StyledPrefix {
+    let label = truncate_cells(label, label_field_width, Glyphs::new(GlyphMode::Unicode));
+    let label_width = UnicodeWidthStr::width(label.as_str());
     let padded_label = format!(
         "{label}{}{}",
-        " ".repeat(layout_contract::TRANSCRIPT_ROLE_LABEL_WIDTH.saturating_sub(label_width)),
+        " ".repeat(label_field_width.saturating_sub(label_width)),
         " ".repeat(layout_contract::TRANSCRIPT_ROLE_GAP_WIDTH)
     );
     let continuation_width = if content_width < layout_contract::TRANSCRIPT_FULL_ROLE_MIN_WIDTH {
@@ -8348,9 +8771,27 @@ fn transcript_role_prefix(
     );
     debug_assert_eq!(
         prefix.width(),
-        layout_contract::TRANSCRIPT_ROLE_PREFIX_WIDTH
+        layout_contract::TRANSCRIPT_ROLE_MARK_WIDTH
+            + label_field_width
+            + layout_contract::TRANSCRIPT_ROLE_GAP_WIDTH
     );
     prefix
+}
+
+fn imported_transcript_role_label(block: &TranscriptBlock) -> Option<&str> {
+    matches!(block.kind, BlockKind::User | BlockKind::Assistant)
+        .then_some(block.title.as_str())
+        .filter(|title| *title == "Imported conversation" || title.ends_with(" import"))
+}
+
+fn imported_transcript_role_width(block: &TranscriptBlock) -> usize {
+    imported_transcript_role_label(block)
+        .map(UnicodeWidthStr::width)
+        .unwrap_or(layout_contract::TRANSCRIPT_ROLE_LABEL_WIDTH)
+        .clamp(
+            layout_contract::TRANSCRIPT_ROLE_LABEL_WIDTH,
+            layout_contract::TRANSCRIPT_IMPORTED_ROLE_LABEL_MAX_WIDTH,
+        )
 }
 
 #[cfg(test)]
@@ -8819,7 +9260,7 @@ mod transcript_tests {
     use super::*;
     use crate::history_search::HistorySearchState;
     use crate::overlay::PlanReviewOverlay;
-    use crate::rpc::Session;
+    use crate::rpc::{ConversationImportCandidate, ConversationImportDiscovery, Session};
     use crossterm::event::{
         Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
@@ -9000,6 +9441,226 @@ mod transcript_tests {
 
     fn count_label(value: &str, label: &str) -> usize {
         value.match_indices(label).count()
+    }
+
+    fn render_conversation_import_fixture(width: u16, locale: Locale) -> String {
+        let (mut app, root, server) = production_render_app();
+        app.phase = Phase::Session;
+        app.options.workspace = std::path::PathBuf::from("<workspace>");
+        app.options.locale = Some(locale.product_id().into());
+        app.locale_index = Locale::ALL
+            .iter()
+            .position(|candidate| *candidate == locale)
+            .unwrap_or_default();
+        let generation = app.session_browser.conversation_import_mut().begin();
+        app.session_browser
+            .conversation_import_mut()
+            .apply_discovery(
+                generation,
+                Ok(ConversationImportDiscovery {
+                    conversations: vec![
+                        ConversationImportCandidate {
+                            source: "claude-code".into(),
+                            id: "claude-review-parser".into(),
+                            path: "/history/claude/review-parser.jsonl".into(),
+                            workspace_root: "<workspace>".into(),
+                            target_workspace: "<workspace>".into(),
+                            title: "Review the bounded conversation parser".into(),
+                            updated_at: "2026-08-13 16:01".into(),
+                            message_count: 7,
+                            new_messages: 7,
+                            importable: true,
+                            ..ConversationImportCandidate::default()
+                        },
+                        ConversationImportCandidate {
+                            source: "codex".into(),
+                            id: "codex-audit-chain".into(),
+                            path: "/history/codex/audit-chain.jsonl".into(),
+                            workspace_root: "<workspace>".into(),
+                            target_workspace: "<workspace>".into(),
+                            title: "Verify the imported audit chain".into(),
+                            updated_at: "2026-08-13 15:42".into(),
+                            message_count: 4,
+                            imported_messages: 4,
+                            importable: true,
+                            ..ConversationImportCandidate::default()
+                        },
+                    ],
+                    copy_semantics: "local copy".into(),
+                    ..ConversationImportDiscovery::default()
+                }),
+            );
+        app.session_browser
+            .conversation_import_mut()
+            .toggle_candidate(Some(0));
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 30)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let rendered = rendered_frame_text(terminal.backend().buffer());
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        rendered
+    }
+
+    #[test]
+    fn conversation_import_selection_is_clear_at_narrow_and_wide_widths() {
+        for (locale_name, locale) in [("en", Locale::En), ("zh_hans", Locale::ZhHans)] {
+            for width in [80, 120] {
+                let rendered = render_conversation_import_fixture(width, locale);
+                assert!(rendered.contains("Carina"));
+                assert!(rendered.contains("Claude Code"));
+                assert!(rendered.contains("[x]"));
+                assert!(rendered.contains(tr(locale, MessageId::ConversationImportUpToDate)));
+                if width == 120 {
+                    assert!(
+                        rendered.contains(tr(locale, MessageId::ConversationImportTargetWorkspace)),
+                        "wide import view must state the write target"
+                    );
+                }
+                insta::assert_snapshot!(
+                    format!("conversation_import_{locale_name}_{width}"),
+                    rendered
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn production_session_browser_exposes_import_action_with_existing_conversations() {
+        let (mut app, root, server) = production_render_app();
+        app.phase = Phase::Session;
+        app.options.locale = Some(Locale::ZhHans.product_id().into());
+        app.locale_index = Locale::ALL
+            .iter()
+            .position(|candidate| *candidate == Locale::ZhHans)
+            .unwrap_or_default();
+        app.sessions = vec![
+            serde_json::from_value(serde_json::json!({
+                "session_id": "sess-existing",
+                "name": "pebble conversation",
+                "workspace_id": "workspace-existing",
+                "workspace_root": root,
+                "status": "active",
+                "execution_status": "ready"
+            }))
+            .unwrap(),
+        ];
+        app.session_browser
+            .open(&app.sessions, &app.options.workspace);
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 44)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let area = terminal.backend().buffer().area;
+        let rendered = rendered_frame_text(terminal.backend().buffer());
+        assert_eq!(
+            count_label(
+                &rendered,
+                tr(Locale::ZhHans, MessageId::ImportConversations)
+            ),
+            2,
+            "the import action must be visible in both the browser and keyboard footer"
+        );
+
+        let import_positions = action_positions(&app, area, Action::OpenConversationImport);
+        assert!(
+            !import_positions.is_empty(),
+            "the visible import label must own a pointer action"
+        );
+        let trigger = import_positions[0];
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: trigger.x,
+            row: trigger.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(app.session_browser.conversation_import().is_open());
+        app.session_browser.conversation_import_mut().close();
+        app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE))
+            .unwrap();
+        assert!(
+            app.session_browser.conversation_import().is_open(),
+            "the visible I shortcut must open the same import workflow"
+        );
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn conversation_import_discovery_failure_exposes_only_recovery_actions() {
+        let (mut app, root, server) = production_render_app();
+        app.phase = Phase::Session;
+        app.options.locale = Some(Locale::ZhHans.product_id().into());
+        app.locale_index = Locale::ALL
+            .iter()
+            .position(|candidate| *candidate == Locale::ZhHans)
+            .unwrap_or_default();
+        let generation = app.session_browser.conversation_import_mut().begin();
+        app.session_browser
+            .conversation_import_mut()
+            .apply_discovery(
+                generation,
+                Err("daemon rejected request: method not found".into()),
+            );
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 44)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let area = terminal.backend().buffer().area;
+        let rendered = rendered_frame_text(terminal.backend().buffer());
+        assert!(rendered.contains("daemon rejected request: method not found"));
+        assert!(rendered.contains(tr(Locale::ZhHans, MessageId::ConversationImportCheckAgain)));
+        assert!(
+            action_positions(&app, area, Action::ReviewConversationImport).is_empty(),
+            "a failed discovery cannot offer import review"
+        );
+        assert!(
+            action_positions(&app, area, Action::ToggleConversationImportAll).is_empty(),
+            "a failed discovery cannot offer selection actions"
+        );
+
+        let retry = action_positions(&app, area, Action::RetryConversationImport);
+        assert!(!retry.is_empty(), "the error must expose a retry action");
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: retry[0].x,
+            row: retry[0].y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(
+            app.session_browser.conversation_import().stage(),
+            ConversationImportStage::Discovering
+        );
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn imported_transcript_renders_the_external_source_instead_of_carina() {
+        let mut imported_user = block(BlockKind::User, "Inspect the parser.");
+        imported_user.title = "Claude Code import".into();
+        imported_user.branchable = false;
+        let mut imported_assistant = block(BlockKind::Assistant, "The parser is bounded.");
+        imported_assistant.title = "Claude Code import".into();
+
+        for imported in [&imported_user, &imported_assistant] {
+            let rendered = plain(&transcript_lines_with_tool_key(
+                imported,
+                Locale::En,
+                TranscriptStyles::default(),
+                80,
+                "Ctrl+O",
+            ));
+            let first = rendered.first().map(String::as_str).unwrap_or_default();
+            assert!(first.starts_with(&format!(
+                "{}Claude Code import",
+                Glyphs::default().role_prefix()
+            )));
+            assert!(!first.starts_with(&format!("{}Carina", Glyphs::default().role_prefix())));
+        }
     }
 
     #[test]

@@ -257,6 +257,11 @@ export default defineConfig({
               link: '/use/cli-tui/',
             },
             {
+              label: 'Import conversations',
+              translations: { 'zh-CN': '导入会话' },
+              link: '/use/import-conversations/',
+            },
+            {
               label: 'Agents',
               translations: { 'zh-CN': 'Agents' },
               link: '/agents/overview/',

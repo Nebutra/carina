@@ -196,6 +196,13 @@ Drive Carina from the terminal — CLI golden path and interactive TUI surface.
 - URL: https://carina.nebutra.com/use/cli-tui/
 - Markdown: https://carina.nebutra.com/use/cli-tui/index.md
 
+## Import conversations
+
+Bring local Claude Code and Codex conversations into Carina without changing the source history.
+
+- URL: https://carina.nebutra.com/use/import-conversations/
+- Markdown: https://carina.nebutra.com/use/import-conversations/index.md
+
 ## Workflows overview
 
 Declarative multi-step agent DAGs with attenuated subagents.
@@ -405,6 +412,13 @@ Carina 文档的 KaTeX LaTeX 支持 — 行内、块级、矩阵与复杂 AMS �
 
 - URL: https://carina.nebutra.com/zh-cn/use/cli-tui/
 - Markdown: https://carina.nebutra.com/zh-cn/use/cli-tui/index.md
+
+## 导入会话
+
+将本地 Claude Code 与 Codex 会话导入 Carina，同时保持来源历史不变。
+
+- URL: https://carina.nebutra.com/zh-cn/use/import-conversations/
+- Markdown: https://carina.nebutra.com/zh-cn/use/import-conversations/index.md
 
 ## Workflows 概览
 

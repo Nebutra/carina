@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Nebutra/carina/go/kernel"
 	"github.com/Nebutra/carina/go/protocolschema"
 )
 
@@ -30,7 +31,7 @@ func (d *Daemon) runtimeCapabilities() map[string]any {
 		}
 	}
 	slices.Sort(methodNames)
-	return map[string]any{"rpc_methods": methodNames, "workflow_control": methods["workflow.run"] && methods["workflow.resume"], "trusted_channels": methods["channel.event.inject"], "extension_inventory": methods["extension.list"], "agent_view": methods["agent.view"], "session_review": methods["session.review"], "checkpoint_restore": methods["session.checkpoint.restore"], "task_resume": methods["execution.resume"], "artifact_media_refs": methods["artifact.read"], "worktree_isolation": methods["worktree.create"], "event_unsubscribe": methods["session.events.unsubscribe"], "pagination": methods["session.items"], "projection_versions": []string{sessionProjectionVersion}, "projection_cursor": map[string]any{"scheme": "cp1", "exclusive": true, "signed": true, "restart_stable": true, "error_code": -32010}, "event_schema_version": "0.3.1", "tool_call_lifecycle": true, "runtime_stage_timeline": true, "event_emission_modes": []string{"canonical", "compat"}, "default_event_emission_mode": "compat", "legacy_event_projection": true, "provider_retry_governance": map[string]any{"scope": "daemon", "breaker": "sliding_window", "shared_budget": "token_bucket", "backpressure_integration": true}, "telemetry_format": "carina-telemetry-json-v1", "telemetry_enabled": d.telemetry != nil && d.telemetry.Enabled(), "safe_mode": d.safeMode, "sdk_conformance": true}
+	return map[string]any{"rpc_methods": methodNames, "workflow_control": methods["workflow.run"] && methods["workflow.resume"], "trusted_channels": methods["channel.event.inject"], "extension_inventory": methods["extension.list"], "agent_view": methods["agent.view"], "session_review": methods["session.review"], "checkpoint_restore": methods["session.checkpoint.restore"], "task_resume": methods["execution.resume"], "artifact_media_refs": methods["artifact.read"], "worktree_isolation": methods["worktree.create"], "event_unsubscribe": methods["session.events.unsubscribe"], "pagination": methods["session.items"], "projection_versions": []string{sessionProjectionVersion}, "projection_cursor": map[string]any{"scheme": "cp1", "exclusive": true, "signed": true, "restart_stable": true, "error_code": -32010}, "event_schema_version": kernel.EventSchemaVersion, "tool_call_lifecycle": true, "runtime_stage_timeline": true, "event_emission_modes": []string{"canonical", "compat"}, "default_event_emission_mode": "compat", "legacy_event_projection": true, "provider_retry_governance": map[string]any{"scope": "daemon", "breaker": "sliding_window", "shared_budget": "token_bucket", "backpressure_integration": true}, "telemetry_format": "carina-telemetry-json-v1", "telemetry_enabled": d.telemetry != nil && d.telemetry.Enabled(), "safe_mode": d.safeMode, "sdk_conformance": true}
 }
 func (d *Daemon) handleRuntimeInitialize(params json.RawMessage) (any, error) {
 	var p struct {

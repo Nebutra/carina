@@ -27,24 +27,27 @@ import (
 const SessionVersion = 1
 
 type Session struct {
-	Version             int       `json:"version,omitempty"`
-	SessionID           string    `json:"session_id"`
-	Name                string    `json:"name,omitempty"`
-	WorkspaceID         string    `json:"workspace_id"`
-	WorkspaceRoot       string    `json:"workspace_root"`
-	Status              string    `json:"status"` // active | paused | closed
-	PermissionProfile   string    `json:"permission_profile"`
-	ApprovalMode        string    `json:"approval_mode,omitempty"` // untrusted|on_request|never
-	NextModel           string    `json:"next_model,omitempty"`    // default model override for subsequent tasks
-	NextReasoningEffort string    `json:"next_reasoning_effort,omitempty"`
-	PlanMode            bool      `json:"plan_mode,omitempty"`
-	ParentID            string    `json:"parent_id,omitempty"` // set for subagent sessions
-	ForkedFromTaskID    string    `json:"forked_from_task_id,omitempty"`
-	ForkedThroughTurn   int       `json:"forked_through_turn,omitempty"`
-	ForkRequestID       string    `json:"fork_request_id,omitempty"`
-	ForkFingerprint     string    `json:"fork_fingerprint,omitempty"`
-	Depth               int       `json:"depth"` // 0 = main; bounded to prevent runaway nesting
-	CreatedAt           time.Time `json:"created_at"`
+	Version              int       `json:"version,omitempty"`
+	SessionID            string    `json:"session_id"`
+	Name                 string    `json:"name,omitempty"`
+	WorkspaceID          string    `json:"workspace_id"`
+	WorkspaceRoot        string    `json:"workspace_root"`
+	Status               string    `json:"status"` // active | paused | closed
+	PermissionProfile    string    `json:"permission_profile"`
+	ApprovalMode         string    `json:"approval_mode,omitempty"` // untrusted|on_request|never
+	NextModel            string    `json:"next_model,omitempty"`    // default model override for subsequent tasks
+	NextReasoningEffort  string    `json:"next_reasoning_effort,omitempty"`
+	PlanMode             bool      `json:"plan_mode,omitempty"`
+	ParentID             string    `json:"parent_id,omitempty"` // set for subagent sessions
+	ForkedFromTaskID     string    `json:"forked_from_task_id,omitempty"`
+	ForkedThroughTurn    int       `json:"forked_through_turn,omitempty"`
+	ForkRequestID        string    `json:"fork_request_id,omitempty"`
+	ForkFingerprint      string    `json:"fork_fingerprint,omitempty"`
+	ImportSource         string    `json:"import_source,omitempty"`
+	ImportConversationID string    `json:"import_conversation_id,omitempty"`
+	ImportSourcePath     string    `json:"import_source_path,omitempty"`
+	Depth                int       `json:"depth"` // 0 = main; bounded to prevent runaway nesting
+	CreatedAt            time.Time `json:"created_at"`
 }
 
 func (s *Store) Rename(sessionID, name string) (*Session, error) {
@@ -105,6 +108,42 @@ func (s *Store) SetPlanMode(sessionID string, on bool) (*Session, error) {
 	}
 	s.sessions[sessionID] = &updated
 	return &updated, nil
+}
+
+// SetImportProvenance links a Carina session to one external conversation.
+// The link is immutable once set so a retry cannot alias unrelated history.
+func (s *Store) SetImportProvenance(sessionID, source, conversationID, sourcePath string) (*Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[sessionID]
+	if !ok {
+		return nil, fmt.Errorf("sessionstore: unknown session %s", sessionID)
+	}
+	if sess.ImportSource != "" && (sess.ImportSource != source || sess.ImportConversationID != conversationID) {
+		return nil, fmt.Errorf("sessionstore: session %s already belongs to another imported conversation", sessionID)
+	}
+	updated := *sess
+	updated.ImportSource = source
+	updated.ImportConversationID = conversationID
+	updated.ImportSourcePath = sourcePath
+	if err := s.persist(&updated); err != nil {
+		return nil, err
+	}
+	s.sessions[sessionID] = &updated
+	return &updated, nil
+}
+
+// FindImport resolves the durable source identity used by idempotent imports.
+func (s *Store) FindImport(source, conversationID string) (*Session, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, sess := range s.sessions {
+		if sess.ImportSource == source && sess.ImportConversationID == conversationID {
+			copy := *sess
+			return &copy, true
+		}
+	}
+	return nil, false
 }
 
 // SetForkLineage persists the immutable model-context boundary inherited by a

@@ -23,6 +23,12 @@ import (
 // (never an unrelated carina-daemon the operator launched by hand).
 const OwnershipMarker = "carina-cli/v1"
 
+var requiredRuntimeMethods = []string{
+	"execution.start",
+	"conversation.import.discover",
+	"conversation.import.apply",
+}
+
 // DialFunc dials a unix socket. Tests replace Dial.
 var Dial = rpc.Dial
 
@@ -220,7 +226,7 @@ func runtimeHandshake(client *rpc.Client, spec localruntime.Spec) (RuntimeDescri
 	if initialized.Runtime.Epoch != description.Epoch {
 		return RuntimeDescription{}, &rpc.Error{Code: rpc.CodeRuntimeIdentityMismatch, Message: "runtime epoch changed during initialization", Data: map[string]any{"described": description.Epoch, "initialized": initialized.Runtime.Epoch}}
 	}
-	if missing := missingRuntimeMethods(initialized.Capabilities.RPCMethods, "execution.start"); len(missing) > 0 {
+	if missing := missingRuntimeMethods(initialized.Capabilities.RPCMethods, requiredRuntimeMethods...); len(missing) > 0 {
 		return RuntimeDescription{}, &RuntimeCompatibilityError{
 			Description:    initialized.Runtime,
 			MissingMethods: missing,

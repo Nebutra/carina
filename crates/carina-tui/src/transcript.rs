@@ -1001,7 +1001,9 @@ impl TranscriptReducer {
                         format!("assistant:{message_id}"),
                         item.run_id,
                         BlockKind::Assistant,
-                        "Carina",
+                        imported_source_title(&item.details)
+                            .as_deref()
+                            .unwrap_or("Carina"),
                         text,
                         display_status(&item.status),
                     );
@@ -1015,7 +1017,14 @@ impl TranscriptReducer {
                         .unwrap_or_default();
                 if !prompt.is_empty() {
                     let run_id = item.run_id;
-                    self.upsert_user_block(blocks, item_id, run_id, prompt);
+                    if let Some(title) = imported_source_title(&item.details) {
+                        let mut block = user_block(item_id, run_id, prompt);
+                        block.title = title;
+                        block.branchable = false;
+                        upsert_block(blocks, block);
+                    } else {
+                        self.upsert_user_block(blocks, item_id, run_id, prompt);
+                    }
                 }
             }
             _ => {
@@ -2324,6 +2333,19 @@ fn raw_string<'a>(details: &'a BTreeMap<String, Value>, key: &str) -> Option<&'a
 
 fn first_detail(details: &BTreeMap<String, Value>, keys: &[&str]) -> Option<String> {
     keys.iter().find_map(|key| detail(details, key))
+}
+
+fn imported_source_title(details: &BTreeMap<String, Value>) -> Option<String> {
+    details
+        .get("imported")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        .then(|| match detail(details, "source").as_deref() {
+            Some("claude-code") => "Claude Code import".to_owned(),
+            Some("codex") => "Codex import".to_owned(),
+            Some(source) if !source.is_empty() => format!("{source} import"),
+            _ => "Imported conversation".to_owned(),
+        })
 }
 
 fn classify(value: &str) -> BlockKind {

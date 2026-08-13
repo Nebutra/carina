@@ -1,0 +1,85 @@
+---
+title: Import conversations
+description: Bring local Claude Code and Codex conversations into Carina without changing the source history.
+sidebar:
+  order: 2
+---
+
+import Callout from '../../../components/ui/Callout.astro';
+import Steps from '../../../components/mdx/Steps.astro';
+import Step from '../../../components/mdx/Step.astro';
+
+Carina can copy visible conversation history from **Claude Code** and **Codex** into ordinary Carina conversations. The source files remain unchanged. This is a point-in-time import, not a live or bidirectional sync.
+
+## Import in the TUI
+
+<Steps>
+  <Step title="Open the importer">
+    Run `carina`, open `/sessions`, then choose **Import conversations**. You can also enter `/import` directly.
+  </Step>
+  <Step title="Choose what to scan">
+    Carina starts with Claude Code and Codex history for the current workspace. Press `S` to choose one source, or `Tab` to explicitly include all workspaces.
+  </Step>
+  <Step title="Review and select">
+    Each row shows the source, title, message count, and whether it is new, up to date, or unavailable. The preview shows both the source workspace and the Carina target workspace.
+  </Step>
+  <Step title="Confirm the local copy">
+    Select conversations with `Space` or **Select all**, choose **Review import**, and confirm. The result page shows exactly how many messages were added or skipped; open an imported conversation from there.
+  </Step>
+</Steps>
+
+Imported user and assistant messages retain a **Claude Code import** or **Codex import** label in the transcript. They are historical context, not evidence that Carina ran the source tool calls.
+
+## Import from the CLI
+
+Preview the current workspace before writing anything:
+
+```bash frame="none"
+carina import list
+carina import list --source claude-code
+carina import list --source codex --json
+```
+
+Import one discovered source conversation, or every eligible conversation in the current view:
+
+```bash frame="none"
+carina import apply --source claude-code --id SOURCE_CONVERSATION_ID
+carina import apply --source codex --all
+```
+
+Use `--workspace /path/to/repo` to choose the Carina target workspace. `--all-workspaces` broadens discovery; it does not merge unrelated conversations into one workspace. For a non-default installation or a synthetic test fixture, pair `--source-root /path/to/history` with an explicit `--source`.
+
+## What Carina copies
+
+| Copied | Not copied or trusted |
+| --- | --- |
+| Visible user text | System or developer instructions |
+| Visible assistant text | Hidden reasoning |
+| Source name and conversation identity | Tool calls and tool results |
+| Original message timestamp | Approval or permission settings |
+| Source and target workspace provenance | Credentials, environment dumps, or binary attachments |
+
+Carina reads the selected local history through the daemon, records imported messages in its hash-chained audit log, and binds the new conversation to the shown target workspace with the `safe-edit` profile. A follow-up prompt receives a bounded, explicitly delimited **untrusted imported conversation** context. Imported instructions never become Carina authority.
+
+<Callout variant="note">
+  Import does not start Claude Code or Codex, require their credentials, upload the source history, or write back to it. Carina only reads local files during an explicit discovery or import action.
+</Callout>
+
+## Check for new messages
+
+Run **Check again** in the result page, reopen the importer, or repeat the CLI command. Carina uses stable source identity and per-message fingerprints, so an unchanged import creates no duplicate conversation or message. If the source appended messages, only the new visible messages are added.
+
+Carina does not watch source files in the background. “Up to date” means up to date as of the last explicit check.
+
+## Troubleshooting
+
+| Symptom | What to do |
+| --- | --- |
+| No conversations found | Confirm the source and current workspace; use `Tab` or `--all-workspaces` only when you intend to scan other projects. |
+| Source history is in a custom location | Use `--source SOURCE --source-root /path/to/history`. |
+| Conversation is unavailable | Its recorded workspace is missing or outside the daemon's allowed roots. Restore it, or use `--all-workspaces --workspace /existing/target` to discover it while choosing an existing target. |
+| Some records were skipped | Unknown or malformed source records are reported as warnings when usable user/assistant text remains. |
+| Conversation says up to date | No new visible messages were found. This is an idempotent no-op. |
+| Import stops partway through | Resolve the reported error and run it again. Already recorded fingerprints are skipped. |
+
+After import, inspect the normalized transcript with `carina items SESSION` and verify the audit chain with `carina audit verify SESSION`.

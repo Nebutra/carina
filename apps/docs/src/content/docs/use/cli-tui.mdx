@@ -73,6 +73,7 @@ Registered in the TUI (`crates/carina-tui/src/command.rs`). `/exit` aliases `/qu
 | `/plan` | Toggle plan mode (exit may require governed approval) |
 | `/build` | Switch to build mode |
 | `/sessions` | Browse sessions |
+| `/import` | Import local Claude Code or Codex conversations |
 | `/resume` | Resume a session |
 | `/cancel` | Cancel the active run (only when a run is active) |
 | `/queue` | Inspect / drop follow-up execution queue |
@@ -174,7 +175,7 @@ Defaults live in the TUI; project/global config can override via `tui_keybinding
 | Area | Commands |
 | --- | --- |
 | Lifecycle | `init`, `status`, `doctor`, `update`, `daemon *`, `runtime *`, `runtimes` |
-| Work | `run`, `ask`, `resume`, `fork`, `steer`, `answer` |
+| Work | `run`, `ask`, `resume`, `fork`, `steer`, `answer`, `import *` |
 | Inspect | `sessions`, `items`, `watch`, `cost`, `session review`, `checkpoint *` |
 | Governance | `approve`, `deny`, `profile`, `audit*`, `patch*`, `report`, `export` |
 | Orchestration | `workflow *`, `worker *`, `schedule *` |
@@ -182,6 +183,8 @@ Defaults live in the TUI; project/global config can override via `tui_keybinding
 | Providers | `auth *`, `providers list` |
 
 Full tables: [CLI reference](/reference/cli/).
+
+Conversation migration: [Import conversations](/use/import-conversations/).
 
 ## Source of truth
 

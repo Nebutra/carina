@@ -302,6 +302,33 @@ impl Client {
         self.call("session.list", &json!({}))
     }
 
+    pub fn discover_conversation_imports(
+        &mut self,
+        source: Option<&str>,
+        workspace_root: &str,
+        all_workspaces: bool,
+    ) -> Result<ConversationImportDiscovery, RpcError> {
+        let sources = source.into_iter().collect::<Vec<_>>();
+        self.call(
+            "conversation.import.discover",
+            &json!({
+                "sources": sources,
+                "workspace_root": workspace_root,
+                "all_workspaces": all_workspaces,
+            }),
+        )
+    }
+
+    pub fn apply_conversation_imports(
+        &mut self,
+        selections: &[ConversationImportSelection],
+    ) -> Result<ConversationImportApplyResult, RpcError> {
+        self.call(
+            "conversation.import.apply",
+            &json!({"selections": selections}),
+        )
+    }
+
     pub fn create_session(&mut self, workspace_root: &str) -> Result<Session, RpcError> {
         self.call(
             "session.create",

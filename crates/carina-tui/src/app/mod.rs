@@ -74,7 +74,7 @@ use crate::rpc::{
     ExecutionLifecycleReduction, ExecutionRun, GovernanceId, Model, ModelInventory, ReceivedEvent,
     RpcError, RuntimeInitialize, Session, SessionItemEvent, WireEvent, spawn_event_stream,
 };
-use crate::session_browser::{SessionBrowserState, SessionScope};
+use crate::session_browser::{ConversationImportStage, SessionBrowserState, SessionScope};
 use crate::sync_output::SyncOutputSupport;
 use crate::terminal_graphics::{MediaPreviewPlacement, TerminalGraphics};
 use crate::terminal_writer::TerminalWriter;
@@ -418,6 +418,14 @@ enum AsyncMessage {
         session_id: String,
         result: Result<Vec<SessionItemEvent>, String>,
     },
+    ConversationImportsDiscovered {
+        generation: u64,
+        result: Result<crate::rpc::ConversationImportDiscovery, String>,
+    },
+    ConversationImportsApplied {
+        generation: u64,
+        result: Result<Box<ConversationImportApplyOutcome>, String>,
+    },
     ToolArtifactLoaded {
         generation: u64,
         session_id: String,
@@ -459,6 +467,11 @@ struct AgentsLoadOutcome {
 struct ChangesLoadOutcome {
     projection: ProductProjection,
     patch_reviews: Vec<PatchReview>,
+}
+
+struct ConversationImportApplyOutcome {
+    result: crate::rpc::ConversationImportApplyResult,
+    sessions: Vec<Session>,
 }
 
 struct PausedResumeOutcome {
@@ -1120,6 +1133,78 @@ impl App {
         self.phase = Phase::Session;
         self.focus = Focus::Scene;
         self.request_session_preview();
+    }
+
+    fn begin_conversation_import(&mut self) {
+        let generation = self.session_browser.conversation_import_mut().begin();
+        self.request_conversation_import_discovery(generation);
+        self.phase = Phase::Session;
+        self.focus = Focus::Scene;
+        self.notice.clear();
+    }
+
+    fn request_conversation_import_discovery(&self, generation: u64) {
+        let import = self.session_browser.conversation_import();
+        let source = import.source().rpc_value().map(str::to_owned);
+        let all_workspaces = import.all_workspaces();
+        let workspace = self.options.workspace.to_string_lossy().into_owned();
+        let socket = self.options.socket.clone();
+        let tx = self.async_tx.clone();
+        std::thread::spawn(move || {
+            let result = Client::connect(&socket)
+                .and_then(|mut rpc| {
+                    rpc.discover_conversation_imports(source.as_deref(), &workspace, all_workspaces)
+                })
+                .map_err(|error| error.to_string());
+            let _ = tx.send(AsyncMessage::ConversationImportsDiscovered { generation, result });
+        });
+    }
+
+    fn confirm_conversation_import(&mut self) {
+        let Some((generation, selections)) =
+            self.session_browser.conversation_import_mut().begin_apply()
+        else {
+            return;
+        };
+        let socket = self.options.socket.clone();
+        let tx = self.async_tx.clone();
+        std::thread::spawn(move || {
+            let result = Client::connect(&socket)
+                .and_then(|mut rpc| {
+                    let result = rpc.apply_conversation_imports(&selections)?;
+                    let mut sessions = rpc.sessions()?;
+                    sort_sessions_by_recency(&mut sessions);
+                    Ok(Box::new(ConversationImportApplyOutcome {
+                        result,
+                        sessions,
+                    }))
+                })
+                .map_err(|error| error.to_string());
+            let _ = tx.send(AsyncMessage::ConversationImportsApplied { generation, result });
+        });
+    }
+
+    fn open_conversation_import_result(&mut self) {
+        let Some(session_id) = self
+            .session_browser
+            .conversation_import()
+            .selected_result_session_id()
+            .map(str::to_owned)
+        else {
+            return;
+        };
+        self.session_browser.conversation_import_mut().close();
+        let generation = self.session_browser.begin_load(session_id.clone());
+        let socket = self.options.socket.clone();
+        let tx = self.async_tx.clone();
+        std::thread::spawn(move || {
+            let result = load_session_and_items(&socket, &session_id, None);
+            let _ = tx.send(AsyncMessage::SessionLoaded {
+                generation,
+                target_id: session_id,
+                result,
+            });
+        });
     }
 
     fn open_selected_session(&mut self, visible_index: Option<usize>) {
@@ -2763,6 +2848,24 @@ impl App {
                     target_id,
                     result,
                 } => self.apply_session_load(generation, &target_id, result),
+                AsyncMessage::ConversationImportsDiscovered { generation, result } => {
+                    self.session_browser
+                        .conversation_import_mut()
+                        .apply_discovery(generation, result);
+                }
+                AsyncMessage::ConversationImportsApplied { generation, result } => match result {
+                    Ok(outcome) => {
+                        let ConversationImportApplyOutcome { result, sessions } = *outcome;
+                        self.sessions = sessions;
+                        self.session_browser
+                            .conversation_import_mut()
+                            .apply_results(generation, Ok(result));
+                    }
+                    Err(error) => self
+                        .session_browser
+                        .conversation_import_mut()
+                        .apply_results(generation, Err(error)),
+                },
                 AsyncMessage::SessionPreviewLoaded {
                     generation,
                     session_id,
@@ -3240,6 +3343,11 @@ impl App {
             self.dirty = true;
             return Ok(());
         }
+        if self.phase == Phase::Session && self.session_browser.conversation_import().is_open() {
+            self.handle_conversation_import_key(key);
+            self.dirty = true;
+            return Ok(());
+        }
         match self.phase {
             Phase::Locale => match key.code {
                 KeyCode::Up => self.locale_index = self.locale_index.saturating_sub(1),
@@ -3353,6 +3461,9 @@ impl App {
                 KeyCode::Char('n') if !self.session_browser.search_active() => {
                     self.create_session_from_browser()
                 }
+                KeyCode::Char('i' | 'I') if !self.session_browser.search_active() => {
+                    self.begin_conversation_import()
+                }
                 KeyCode::Char('r') if !self.session_browser.search_active() => {
                     self.begin_selected_session_rename()
                 }
@@ -3422,6 +3533,96 @@ impl App {
         }
         self.dirty = true;
         Ok(())
+    }
+
+    fn handle_conversation_import_key(&mut self, key: KeyEvent) {
+        let stage = self.session_browser.conversation_import().stage();
+        match stage {
+            ConversationImportStage::Closed => {}
+            ConversationImportStage::Discovering | ConversationImportStage::Applying => {
+                if key.code == KeyCode::Esc && stage == ConversationImportStage::Discovering {
+                    self.session_browser.conversation_import_mut().close();
+                }
+            }
+            ConversationImportStage::Selecting => match key.code {
+                KeyCode::Up => self
+                    .session_browser
+                    .conversation_import_mut()
+                    .move_candidate(false),
+                KeyCode::Down => self
+                    .session_browser
+                    .conversation_import_mut()
+                    .move_candidate(true),
+                KeyCode::Char(' ') => self
+                    .session_browser
+                    .conversation_import_mut()
+                    .toggle_candidate(None),
+                KeyCode::Char('a' | 'A') => {
+                    self.session_browser.conversation_import_mut().toggle_all()
+                }
+                KeyCode::Char('s' | 'S') => {
+                    let generation = self
+                        .session_browser
+                        .conversation_import_mut()
+                        .cycle_source();
+                    self.request_conversation_import_discovery(generation);
+                }
+                KeyCode::Tab | KeyCode::BackTab => {
+                    let generation = self
+                        .session_browser
+                        .conversation_import_mut()
+                        .toggle_workspace_scope();
+                    self.request_conversation_import_discovery(generation);
+                }
+                KeyCode::Char('r' | 'R') => {
+                    let generation = self
+                        .session_browser
+                        .conversation_import_mut()
+                        .begin_discovery();
+                    self.request_conversation_import_discovery(generation);
+                }
+                KeyCode::Enter => {
+                    if !self
+                        .session_browser
+                        .conversation_import_mut()
+                        .begin_confirmation()
+                    {
+                        self.notice =
+                            Notice::localized(MessageId::ConversationImportSelectRequired);
+                    }
+                }
+                KeyCode::Esc => self.session_browser.conversation_import_mut().close(),
+                _ => {}
+            },
+            ConversationImportStage::Confirming => match key.code {
+                KeyCode::Enter => self.confirm_conversation_import(),
+                KeyCode::Esc => self
+                    .session_browser
+                    .conversation_import_mut()
+                    .cancel_confirmation(),
+                _ => {}
+            },
+            ConversationImportStage::Results => match key.code {
+                KeyCode::Up => self
+                    .session_browser
+                    .conversation_import_mut()
+                    .move_result(false),
+                KeyCode::Down => self
+                    .session_browser
+                    .conversation_import_mut()
+                    .move_result(true),
+                KeyCode::Enter => self.open_conversation_import_result(),
+                KeyCode::Char('r' | 'R') => {
+                    let generation = self
+                        .session_browser
+                        .conversation_import_mut()
+                        .begin_discovery();
+                    self.request_conversation_import_discovery(generation);
+                }
+                KeyCode::Esc => self.session_browser.conversation_import_mut().close(),
+                _ => {}
+            },
+        }
     }
 
     fn handle_credential_key(&mut self, key: KeyEvent) {
@@ -4629,6 +4830,10 @@ impl App {
             CommandId::Build => self.request_conversation_mode(false),
             CommandId::ViewPlan => self.open_plan_review(),
             CommandId::Sessions => self.open_session_browser(),
+            CommandId::Import => {
+                self.open_session_browser();
+                self.begin_conversation_import();
+            }
             CommandId::Resume => {
                 let paused = self
                     .active_session
@@ -6533,6 +6738,58 @@ impl App {
                 }
                 self.create_session_from_browser();
             }
+            Action::OpenConversationImport => self.begin_conversation_import(),
+            Action::SelectConversationImport(index) => self
+                .session_browser
+                .conversation_import_mut()
+                .toggle_candidate(Some(index)),
+            Action::ToggleConversationImportAll => {
+                self.session_browser.conversation_import_mut().toggle_all()
+            }
+            Action::CycleConversationImportSource => {
+                let generation = self
+                    .session_browser
+                    .conversation_import_mut()
+                    .cycle_source();
+                self.request_conversation_import_discovery(generation);
+            }
+            Action::ToggleConversationImportScope => {
+                let generation = self
+                    .session_browser
+                    .conversation_import_mut()
+                    .toggle_workspace_scope();
+                self.request_conversation_import_discovery(generation);
+            }
+            Action::ReviewConversationImport => {
+                if !self
+                    .session_browser
+                    .conversation_import_mut()
+                    .begin_confirmation()
+                {
+                    self.notice = Notice::localized(MessageId::ConversationImportSelectRequired);
+                }
+            }
+            Action::ConfirmConversationImport => self.confirm_conversation_import(),
+            Action::CancelConversationImport => {
+                let import = self.session_browser.conversation_import_mut();
+                if import.stage() == ConversationImportStage::Confirming {
+                    import.cancel_confirmation();
+                } else {
+                    import.close();
+                }
+            }
+            Action::RetryConversationImport => {
+                let generation = self
+                    .session_browser
+                    .conversation_import_mut()
+                    .begin_discovery();
+                self.request_conversation_import_discovery(generation);
+            }
+            Action::SelectConversationImportResult(index) => self
+                .session_browser
+                .conversation_import_mut()
+                .select_result(index),
+            Action::OpenConversationImportResult => self.open_conversation_import_result(),
             Action::BeginRenameSession => self.begin_selected_session_rename(),
             Action::ConfirmRenameSession => self.confirm_session_rename(),
             Action::CancelRenameSession => self.session_browser.cancel_rename(),

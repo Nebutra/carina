@@ -3,6 +3,8 @@ package daemon
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/Nebutra/carina/go/kernel"
 )
 
 func TestRuntimeInitializeNegotiatesMajorAndCapabilities(t *testing.T) {
@@ -29,7 +31,7 @@ func TestRuntimeInitializeNegotiatesMajorAndCapabilities(t *testing.T) {
 	if caps["session_review"] != false {
 		t.Fatalf("unregistered session.review capability = %+v", caps)
 	}
-	if caps["artifact_media_refs"] != false || caps["event_schema_version"] != "0.3.1" {
+	if caps["artifact_media_refs"] != false || caps["event_schema_version"] != kernel.EventSchemaVersion {
 		t.Fatalf("unregistered artifact media or event schema drift = %+v", caps)
 	}
 	bad, _ := json.Marshal(map[string]any{"protocol_version": "2.0.0"})

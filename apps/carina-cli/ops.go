@@ -365,6 +365,7 @@ var completionSubcommands = map[string][]string{
 	"context":   {"status", "doctor", "stats", "compress", "retrieve"},
 	"daemon":    {"start", "status", "stop", "logs"},
 	"gateway":   {"hello", "methods", "ws-probe"},
+	"import":    {"list", "apply"},
 	"memory":    {"status", "list", "context", "search", "write", "projection-authorize", "projection-retry", "projection-reseed"},
 	"patch":     {"list", "show", "propose", "apply", "rollback"},
 	"providers": {"list"},
@@ -376,7 +377,7 @@ var completionSubcommands = map[string][]string{
 var completionRootCommands = []string{
 	"agents", "answer", "approve", "ask", "audit", "auth", "backpressure", "close", "commands",
 	"completion", "context", "cost", "daemon", "debug", "diff", "doctor", "exec", "export",
-	"fork", "gateway", "grep", "help", "init", "items", "memory", "metrics", "patch",
+	"fork", "gateway", "grep", "help", "import", "init", "items", "memory", "metrics", "patch",
 	"patch-native", "plugin", "profile", "providers", "pty", "replay", "report", "resume",
 	"run", "run-native", "scan", "schedule", "search", "secret", "sessions", "status", "steer",
 	"update", "verify", "version", "watch", "worker", "workers", "workflow", "workflows",

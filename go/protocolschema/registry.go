@@ -26,6 +26,7 @@ type Registry struct {
 type MethodSchema struct {
 	Params map[string]any `json:"params"`
 	Result map[string]any `json:"result"`
+	Errors map[string]any `json:"errors,omitempty"`
 }
 type Bundle struct {
 	Version string                  `json:"version"`

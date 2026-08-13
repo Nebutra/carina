@@ -248,6 +248,9 @@ func (d *Daemon) runTaskContext(ctx context.Context, sess *sessionstore.Session,
 		memorySnapshot = cp.MemorySnapshot
 		d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go", map[string]any{"status": "fork_context_restored", "source_task_id": sess.ForkedFromTaskID, "through_turn": sess.ForkedThroughTurn}, "")
 	} else {
+		if imported := d.importedConversationContext(sess); imported != "" {
+			tr.addTurn(Turn{Tool: "user", ActionBrief: "imported-conversation", Obs: Observation{Content: imported, Pinned: true}})
+		}
 		if evidence := d.buildTaskMemoryEvidence(ctx, sess, task); evidence != "" {
 			tr.addTurn(Turn{Tool: "memory_recall", ActionBrief: "hms-evidence", Obs: Observation{Content: evidence, Pinned: true}})
 		}

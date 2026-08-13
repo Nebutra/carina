@@ -1,6 +1,6 @@
 {
   "$comment": "Authoritative Carina JSON-RPC 2.0 registry. Each entry mirrors a daemon MethodDescriptor; params/result document the wire contract. Transport is newline-delimited JSON over the local socket or authenticated Gateway transports.",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "apis": {
     "runtime": [
       { "method": "runtime.initialize", "scope": "read", "remote": true, "params": { "protocol_version": "semver?", "schema_version": "semver? compatible major", "projection_version": "semver? exact reducer match", "client_name": "string?", "client_version": "semver?", "expected_workspace_id": "string?", "expected_runtime_id": "string?", "expected_epoch": "string?" }, "result": "RuntimeInitializeResult" },
@@ -50,6 +50,8 @@
       { "method": "session.close", "scope": "write", "remote": false, "params": { "session_id": "string" }, "result": "Session" },
       { "method": "session.replay", "scope": "read", "remote": true, "params": { "session_id": "string" }, "result": "Event[]" },
       { "method": "session.items", "scope": "read", "remote": true, "params": { "session_id": "string", "cursor": "signed opaque exclusive cursor?", "limit": "integer 1..200?" }, "result": "SessionItemEvent[] when pagination omitted; otherwise { data: SessionItemEvent[], next_cursor: string?, projection_version: string }", "errors": "-32010 invalid_cursor|cursor_expired with recovery data" },
+      { "method": "conversation.import.discover", "scope": "read", "remote": false, "params": { "sources": "(claude-code|codex)[]?", "source_root": "string?", "workspace_root": "string?", "all_workspaces": "boolean?" }, "result": "{ conversations: ImportCandidate[], warnings: string[], copy_semantics: string }" },
+      { "method": "conversation.import.apply", "scope": "write", "remote": false, "params": { "selections": "{ source, source_root?, path, conversation_id, target_workspace? }[]" }, "result": "{ results: ImportReceipt[] }" },
       { "method": "session.review", "scope": "read", "remote": true, "params": { "session_id": "string" }, "result": "SessionReview" },
       { "method": "session.attach", "scope": "read", "remote": true, "params": { "session_id": "string", "since": "number?", "event_mode": "compat|canonical? (default compat)" }, "result": "{ events: Event[], from: number, cursor: number, event_mode: compat|canonical }; cursor always advances over raw audit positions" },
       { "method": "session.fork", "scope": "write", "remote": false, "params": { "session_id": "string", "last_task_id": "string?", "through_turn": "integer? >= 1", "before_first": "boolean?", "client_fork_id": "ASCII token? 1-128" }, "result": "Source-preserving Session with fork lineage; client_fork_id retries are idempotent" },

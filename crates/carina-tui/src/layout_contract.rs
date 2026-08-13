@@ -65,6 +65,9 @@ pub const TRANSCRIPT_SCROLLBAR_GAP: u16 = 1;
 pub const TRANSCRIPT_SCROLLBAR_WIDTH: u16 = 1;
 pub const TRANSCRIPT_ROLE_MARK_WIDTH: usize = 2;
 pub const TRANSCRIPT_ROLE_LABEL_WIDTH: usize = 6;
+/// Imported history uses its full source marker on the first visual row while
+/// wrapped rows retain the same compact semantic rail as native messages.
+pub const TRANSCRIPT_IMPORTED_ROLE_LABEL_MAX_WIDTH: usize = 21;
 pub const TRANSCRIPT_ROLE_GAP_WIDTH: usize = 2;
 pub const TRANSCRIPT_ROLE_PREFIX_WIDTH: usize =
     TRANSCRIPT_ROLE_MARK_WIDTH + TRANSCRIPT_ROLE_LABEL_WIDTH + TRANSCRIPT_ROLE_GAP_WIDTH;

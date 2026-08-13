@@ -1,9 +1,13 @@
 package localdaemon
 
 import (
+	"bufio"
+	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -47,6 +51,82 @@ func TestRequireRuntimeMethodsRejectsLegacyRuntimeBeforeUILaunch(t *testing.T) {
 	}
 	if err := requireRuntimeMethods([]string{"session.list", "execution.start"}, "execution.start"); err != nil {
 		t.Fatalf("compatible runtime rejected: %v", err)
+	}
+}
+
+func TestRequiredRuntimeMethodsIncludeConversationImport(t *testing.T) {
+	missing := missingRuntimeMethods([]string{"execution.start"}, requiredRuntimeMethods...)
+	want := []string{"conversation.import.discover", "conversation.import.apply"}
+	if !slices.Equal(missing, want) {
+		t.Fatalf("missing methods = %v, want %v", missing, want)
+	}
+}
+
+func TestRuntimeHandshakeRejectsMissingConversationImportMethods(t *testing.T) {
+	spec := runtimeSpecFixture(t)
+	description := matchingDescription(spec)
+	clientConn, serverConn := net.Pipe()
+	client := rpc.NewClient(clientConn, clientConn, clientConn)
+	t.Cleanup(func() { _ = client.Close() })
+
+	serverDone := make(chan error, 1)
+	go func() {
+		defer serverConn.Close()
+		reader := bufio.NewReader(serverConn)
+		for _, expectedMethod := range []string{"runtime.describe", "runtime.initialize"} {
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				serverDone <- err
+				return
+			}
+			var request struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+			if err := json.Unmarshal(line, &request); err != nil {
+				serverDone <- err
+				return
+			}
+			if request.Method != expectedMethod {
+				serverDone <- errors.New("unexpected runtime handshake method: " + request.Method)
+				return
+			}
+			result := any(description)
+			if request.Method == "runtime.initialize" {
+				result = map[string]any{
+					"runtime": description,
+					"capabilities": map[string]any{
+						"rpc_methods": []string{"execution.start"},
+					},
+				}
+			}
+			response, err := json.Marshal(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      request.ID,
+				"result":  result,
+			})
+			if err == nil {
+				_, err = serverConn.Write(append(response, '\n'))
+			}
+			if err != nil {
+				serverDone <- err
+				return
+			}
+		}
+		serverDone <- nil
+	}()
+
+	_, err := runtimeHandshake(client, spec)
+	var compatibility *RuntimeCompatibilityError
+	if !errors.As(err, &compatibility) {
+		t.Fatalf("runtimeHandshake error = %v, want RuntimeCompatibilityError", err)
+	}
+	want := []string{"conversation.import.discover", "conversation.import.apply"}
+	if !slices.Equal(compatibility.MissingMethods, want) {
+		t.Fatalf("missing methods = %v, want %v", compatibility.MissingMethods, want)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
 	}
 }
 

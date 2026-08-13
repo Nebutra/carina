@@ -521,6 +521,25 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 				Details:       turnStartDetails(turnStart),
 			})
 		}
+		if ev.Type == "ConversationImported" {
+			role := stringField(ev.Payload, "role")
+			kind := "user"
+			if role == "assistant" {
+				kind = "agent_message"
+			}
+			details := copyMap(ev.Payload)
+			details["imported"] = true
+			item := &SessionItem{
+				ID:          fallbackItemID("import", ev, i),
+				Type:        kind,
+				Status:      "completed",
+				StartedAt:   nonempty(stringField(ev.Payload, "source_timestamp"), ev.Timestamp),
+				CompletedAt: nonempty(stringField(ev.Payload, "source_timestamp"), ev.Timestamp),
+				Details:     details,
+			}
+			out = append(out, itemEvent("item.completed", sessionID, ev, item))
+			continue
+		}
 
 		switch ev.Type {
 		case "ToolRequested":

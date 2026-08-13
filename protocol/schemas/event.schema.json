@@ -48,6 +48,7 @@
         "SessionUnarchived",
         "DirectoryGranted",
         "CommandExpanded",
+        "ConversationImported",
         "ExternalEvent",
         "ModelRequested",
         "ModelResponded",
@@ -132,6 +133,10 @@
     }
   },
   "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "ConversationImported" } }, "required": ["type"] },
+      "then": { "required": ["payload"], "properties": { "payload": { "required": ["source", "source_conversation_id", "source_path", "source_message_id", "source_timestamp", "role", "content", "fingerprint", "batch_id"], "properties": { "source": { "enum": ["claude-code", "codex"] }, "source_conversation_id": { "type": "string", "minLength": 1 }, "source_path": { "type": "string", "minLength": 1 }, "source_message_id": { "type": "string" }, "source_timestamp": { "type": "string", "format": "date-time" }, "role": { "enum": ["user", "assistant"] }, "content": { "type": "string", "minLength": 1 }, "fingerprint": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }, "batch_id": { "type": "string", "minLength": 1 } } } } }
+    },
     {
       "if": { "properties": { "type": { "const": "RoutingRetryScheduled" } }, "required": ["type"] },
       "then": { "required": ["payload"], "properties": { "payload": { "required": ["evidence_id", "attempt", "max_attempts", "error"], "properties": { "attempt": { "type": "integer", "minimum": 1 }, "max_attempts": { "type": "integer", "minimum": 1 }, "error": { "type": "object", "required": ["code", "category", "message", "retry"] } } } } }

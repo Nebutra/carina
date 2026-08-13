@@ -1,0 +1,33 @@
+---
+source: crates/carina-tui/src/app/render.rs
+expression: rendered
+---
+size=120x30
+
+    ⠀⢀⣀⣀⡀⣠⣶⣶⣄⠀   Carina                                                                        Conversation recovery
+    ⠀⣿⣿⣿⣿⣿⣿⣿⣿⠀   Provider   Provider  |  Direct API
+    ⠀⠙⣿⣿⡏⠀⠈⢻⡇⠀   Model      model  |  reasoning off
+    ⠀⢰⣿⣿⣿⣦⣴⣿⡿⠀   Workspace  <workspace>
+    ⠀⠈⠻⠿⠟⠁⠀⠀⠀⠀
+   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   > Import conversations
+     Local history · Claude Code + Codex · Current workspace
+
+   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   ┌ Import conversations ─────────────────────────────────────────────────┐  ┌ CONVERSATION PREVIEW ───────────────┐
+   │                                                                       │  │                                     │
+   │ Carina makes a local copy. Source files stay unchanged; later         │  │ Review the bounded conversation     │
+   │ messages appear only after you check again.                           │  │ parser                              │
+   │ > [x] Claude Code Review the bounded conversation parser  7 new       │  │                                     │
+   │   [ ] Codex       Verify the imported audit chain  up to date         │  │ Provider  Claude Code               │
+   │                                                                       │  │ Source workspace  <workspace>       │
+   │                                                                       │  │ Target workspace  <workspace>       │
+   │                                                                       │  │ 7 visible user/assistant messages   │
+   │                                                                       │  │ Updated 2026-08-13 16:01            │
+   │                                                                       │  │                                     │
+   │ Review import  Select all  Change source  Cancel                      │  │                                     │
+   │                                                                       │  │                                     │
+   │                                                                       │  │                                     │
+   └───────────────────────────────────────────────────────────────────────┘  └─────────────────────────────────────┘
+    Space  Select or clear   A  Select all   S  Change source   Tab  Scope   Enter  Review import   Esc  Cancel

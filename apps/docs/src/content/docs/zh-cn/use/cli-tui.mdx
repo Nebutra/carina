@@ -73,6 +73,7 @@ CLI 与 TUI 共享同一 daemon、策略内核与审计链路（与 JSON-RPC 一
 | `/plan` | 切换 plan 模式（退出可能需要受控审批） |
 | `/build` | 切换到 build 模式 |
 | `/sessions` | 浏览会话 |
+| `/import` | 导入本地 Claude Code 或 Codex 会话 |
 | `/resume` | 恢复会话 |
 | `/cancel` | 取消当前 run（仅有活动 run 时可用） |
 | `/queue` | 查看 / 丢弃 follow-up 执行队列 |
@@ -166,7 +167,7 @@ carina deny SESSION DECISION_ID "reason"
 | 区域 | 命令 |
 | --- | --- |
 | 生命周期 | `init`, `status`, `doctor`, `update`, `daemon *`, `runtime *`, `runtimes` |
-| 工作 | `run`, `ask`, `resume`, `fork`, `steer`, `answer` |
+| 工作 | `run`, `ask`, `resume`, `fork`, `steer`, `answer`, `import *` |
 | 检查 | `sessions`, `items`, `watch`, `cost`, `session review`, `checkpoint *` |
 | 治理 | `approve`, `deny`, `profile`, `audit*`, `patch*`, `report`, `export` |
 | 编排 | `workflow *`, `worker *`, `schedule *` |
@@ -174,6 +175,8 @@ carina deny SESSION DECISION_ID "reason"
 | 提供商 | `auth *`, `providers list` |
 
 完整表见 [CLI 参考](/zh-cn/reference/cli/)。
+
+会话迁移见 [导入会话](/zh-cn/use/import-conversations/)。
 
 ## 权威来源
 

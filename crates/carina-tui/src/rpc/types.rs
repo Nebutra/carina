@@ -700,6 +700,84 @@ pub struct Session {
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct ConversationImportCandidate {
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub workspace_root: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub updated_at: String,
+    #[serde(default)]
+    pub message_count: usize,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub warnings: Vec<String>,
+    #[serde(default)]
+    pub imported_session_id: String,
+    #[serde(default)]
+    pub imported_messages: usize,
+    #[serde(default)]
+    pub new_messages: usize,
+    #[serde(default)]
+    pub target_workspace: String,
+    #[serde(default)]
+    pub importable: bool,
+    #[serde(default)]
+    pub import_error: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct ConversationImportDiscovery {
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub conversations: Vec<ConversationImportCandidate>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub warnings: Vec<String>,
+    #[serde(default)]
+    pub copy_semantics: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ConversationImportSelection {
+    pub source: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub source_root: String,
+    pub path: String,
+    pub conversation_id: String,
+    pub target_workspace: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct ConversationImportReceipt {
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub conversation_id: String,
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default)]
+    pub workspace_root: String,
+    #[serde(default)]
+    pub imported_messages: usize,
+    #[serde(default)]
+    pub skipped_messages: usize,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct ConversationImportApplyResult {
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub results: Vec<ConversationImportReceipt>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 pub struct ConfigInventory {
     #[serde(default)]
     pub effective: EffectiveConfig,

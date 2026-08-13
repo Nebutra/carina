@@ -1,6 +1,6 @@
 {
   "$comment": "Canonical event type enumeration (PRD §8.2). The event log is append-only; every event carries timestamp + session_id; side-effect events carry permission_decision_id.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "types": [
     { "name": "ExecutionQueued", "side_effect": false, "payload": ["run_id", "user_prompt"] },
     { "name": "ExecutionStarted", "side_effect": false, "payload": ["resumed"] },
@@ -25,6 +25,7 @@
     { "name": "SessionUnarchived", "side_effect": false, "payload": ["reason"] },
     { "name": "DirectoryGranted", "side_effect": false, "payload": ["path"] },
     { "name": "CommandExpanded", "side_effect": false, "payload": ["command"] },
+    { "name": "ConversationImported", "side_effect": false, "payload": ["source", "source_conversation_id", "source_path", "source_message_id", "source_timestamp", "role", "content", "fingerprint", "batch_id"] },
     { "name": "ExternalEvent", "side_effect": false, "payload": ["event_id", "sender_id", "kind", "data"] },
     { "name": "ModelRequested", "side_effect": false, "payload": ["provider", "model", "input_tokens"] },
     { "name": "ModelResponded", "side_effect": false, "payload": ["provider", "model", "output_tokens", "stop_reason"] },

@@ -1,6 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use crate::rpc::Session;
+use crate::rpc::{
+    ConversationImportApplyResult, ConversationImportCandidate, ConversationImportDiscovery,
+    ConversationImportReceipt, ConversationImportSelection, Session,
+};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SessionScope {
@@ -8,6 +11,340 @@ pub enum SessionScope {
     Workspace,
     All,
     Archived,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ConversationImportSource {
+    #[default]
+    All,
+    ClaudeCode,
+    Codex,
+}
+
+impl ConversationImportSource {
+    pub fn rpc_value(self) -> Option<&'static str> {
+        match self {
+            Self::All => None,
+            Self::ClaudeCode => Some("claude-code"),
+            Self::Codex => Some("codex"),
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::All => Self::ClaudeCode,
+            Self::ClaudeCode => Self::Codex,
+            Self::Codex => Self::All,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ConversationImportStage {
+    #[default]
+    Closed,
+    Discovering,
+    Selecting,
+    Confirming,
+    Applying,
+    Results,
+}
+
+#[derive(Debug, Default)]
+pub struct ConversationImportState {
+    stage: ConversationImportStage,
+    source: ConversationImportSource,
+    all_workspaces: bool,
+    candidates: Vec<ConversationImportCandidate>,
+    selected: Vec<bool>,
+    selected_visible: usize,
+    warnings: Vec<String>,
+    copy_semantics: String,
+    receipts: Vec<ConversationImportReceipt>,
+    result_selected: usize,
+    error: String,
+    generation: u64,
+}
+
+impl ConversationImportState {
+    pub fn stage(&self) -> ConversationImportStage {
+        self.stage
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.stage != ConversationImportStage::Closed
+    }
+
+    pub fn source(&self) -> ConversationImportSource {
+        self.source
+    }
+
+    pub fn all_workspaces(&self) -> bool {
+        self.all_workspaces
+    }
+
+    pub fn candidates(&self) -> &[ConversationImportCandidate] {
+        &self.candidates
+    }
+
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
+    }
+
+    pub fn copy_semantics(&self) -> &str {
+        &self.copy_semantics
+    }
+
+    pub fn receipts(&self) -> &[ConversationImportReceipt] {
+        &self.receipts
+    }
+
+    pub fn selected_visible(&self) -> usize {
+        self.selected_visible
+    }
+
+    pub fn result_selected(&self) -> usize {
+        self.result_selected
+    }
+
+    pub fn error(&self) -> &str {
+        &self.error
+    }
+
+    pub fn is_selected(&self, index: usize) -> bool {
+        self.selected.get(index).copied().unwrap_or(false)
+    }
+
+    pub fn selected_count(&self) -> usize {
+        self.selected.iter().filter(|selected| **selected).count()
+    }
+
+    pub fn selected_message_count(&self) -> usize {
+        self.candidates
+            .iter()
+            .zip(&self.selected)
+            .filter_map(|(candidate, selected)| selected.then_some(candidate.new_messages))
+            .sum()
+    }
+
+    pub fn selected_target_summary(&self) -> Option<(&str, usize)> {
+        let mut targets =
+            self.candidates
+                .iter()
+                .zip(&self.selected)
+                .filter_map(|(candidate, selected)| {
+                    (*selected && !candidate.target_workspace.is_empty())
+                        .then_some(candidate.target_workspace.as_str())
+                });
+        let first = targets.next()?;
+        let mut unique = Vec::new();
+        for target in targets {
+            if target != first && !unique.contains(&target) {
+                unique.push(target);
+            }
+        }
+        Some((first, unique.len()))
+    }
+
+    pub fn begin(&mut self) -> u64 {
+        *self = Self::default();
+        self.begin_discovery()
+    }
+
+    pub fn begin_discovery(&mut self) -> u64 {
+        self.generation = self.generation.saturating_add(1);
+        self.stage = ConversationImportStage::Discovering;
+        self.candidates.clear();
+        self.selected.clear();
+        self.selected_visible = 0;
+        self.warnings.clear();
+        self.copy_semantics.clear();
+        self.receipts.clear();
+        self.result_selected = 0;
+        self.error.clear();
+        self.generation
+    }
+
+    pub fn accepts(&self, generation: u64, stage: ConversationImportStage) -> bool {
+        self.generation == generation && self.stage == stage
+    }
+
+    pub fn apply_discovery(
+        &mut self,
+        generation: u64,
+        result: Result<ConversationImportDiscovery, String>,
+    ) {
+        if !self.accepts(generation, ConversationImportStage::Discovering) {
+            return;
+        }
+        match result {
+            Ok(discovery) => {
+                self.selected = vec![false; discovery.conversations.len()];
+                self.candidates = discovery.conversations;
+                self.warnings = discovery.warnings;
+                self.copy_semantics = discovery.copy_semantics;
+                self.stage = ConversationImportStage::Selecting;
+                self.normalize_candidate_selection();
+            }
+            Err(error) => {
+                self.error = error;
+                self.stage = ConversationImportStage::Selecting;
+            }
+        }
+    }
+
+    pub fn cycle_source(&mut self) -> u64 {
+        self.source = self.source.next();
+        self.begin_discovery()
+    }
+
+    pub fn toggle_workspace_scope(&mut self) -> u64 {
+        self.all_workspaces = !self.all_workspaces;
+        self.begin_discovery()
+    }
+
+    pub fn move_candidate(&mut self, down: bool) {
+        if self.candidates.is_empty() {
+            self.selected_visible = 0;
+        } else if down {
+            self.selected_visible = (self.selected_visible + 1).min(self.candidates.len() - 1);
+        } else {
+            self.selected_visible = self.selected_visible.saturating_sub(1);
+        }
+        self.error.clear();
+    }
+
+    pub fn toggle_candidate(&mut self, index: Option<usize>) {
+        let index = index.unwrap_or(self.selected_visible);
+        let Some(candidate) = self.candidates.get(index) else {
+            return;
+        };
+        self.selected_visible = index;
+        if candidate.importable && candidate.new_messages > 0 {
+            if let Some(selected) = self.selected.get_mut(index) {
+                *selected = !*selected;
+            }
+            self.error.clear();
+        } else if !candidate.import_error.is_empty() {
+            self.error = candidate.import_error.clone();
+        }
+    }
+
+    pub fn toggle_all(&mut self) {
+        let selectable = self
+            .candidates
+            .iter()
+            .enumerate()
+            .filter(|(_, candidate)| candidate.importable && candidate.new_messages > 0)
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        let select = selectable
+            .iter()
+            .any(|index| !self.selected.get(*index).copied().unwrap_or(false));
+        for index in selectable {
+            self.selected[index] = select;
+        }
+        self.error.clear();
+    }
+
+    pub fn begin_confirmation(&mut self) -> bool {
+        if self.selected_count() == 0 {
+            return false;
+        }
+        self.stage = ConversationImportStage::Confirming;
+        self.error.clear();
+        true
+    }
+
+    pub fn cancel_confirmation(&mut self) {
+        if self.stage == ConversationImportStage::Confirming {
+            self.stage = ConversationImportStage::Selecting;
+            self.error.clear();
+        }
+    }
+
+    pub fn begin_apply(&mut self) -> Option<(u64, Vec<ConversationImportSelection>)> {
+        if self.stage != ConversationImportStage::Confirming {
+            return None;
+        }
+        let selections = self
+            .candidates
+            .iter()
+            .zip(&self.selected)
+            .filter(|(_, selected)| **selected)
+            .map(|(candidate, _)| ConversationImportSelection {
+                source: candidate.source.clone(),
+                source_root: String::new(),
+                path: candidate.path.clone(),
+                conversation_id: candidate.id.clone(),
+                target_workspace: candidate.target_workspace.clone(),
+            })
+            .collect::<Vec<_>>();
+        if selections.is_empty() {
+            return None;
+        }
+        self.generation = self.generation.saturating_add(1);
+        self.stage = ConversationImportStage::Applying;
+        self.error.clear();
+        Some((self.generation, selections))
+    }
+
+    pub fn apply_results(
+        &mut self,
+        generation: u64,
+        result: Result<ConversationImportApplyResult, String>,
+    ) {
+        if !self.accepts(generation, ConversationImportStage::Applying) {
+            return;
+        }
+        match result {
+            Ok(result) => {
+                self.receipts = result.results;
+                self.result_selected = 0;
+                self.stage = ConversationImportStage::Results;
+                self.error.clear();
+            }
+            Err(error) => {
+                self.stage = ConversationImportStage::Confirming;
+                self.error = error;
+            }
+        }
+    }
+
+    pub fn move_result(&mut self, down: bool) {
+        if self.receipts.is_empty() {
+            self.result_selected = 0;
+        } else if down {
+            self.result_selected = (self.result_selected + 1).min(self.receipts.len() - 1);
+        } else {
+            self.result_selected = self.result_selected.saturating_sub(1);
+        }
+    }
+
+    pub fn select_result(&mut self, index: usize) {
+        if index < self.receipts.len() {
+            self.result_selected = index;
+        }
+    }
+
+    pub fn selected_result_session_id(&self) -> Option<&str> {
+        self.receipts
+            .get(self.result_selected)
+            .map(|receipt| receipt.session_id.as_str())
+            .filter(|session_id| !session_id.is_empty())
+    }
+
+    pub fn close(&mut self) {
+        self.generation = self.generation.saturating_add(1);
+        self.stage = ConversationImportStage::Closed;
+        self.error.clear();
+    }
+
+    fn normalize_candidate_selection(&mut self) {
+        self.selected_visible = self
+            .selected_visible
+            .min(self.candidates.len().saturating_sub(1));
+    }
 }
 
 #[derive(Debug, Default)]
@@ -24,9 +361,17 @@ pub struct SessionBrowserState {
     renaming_session_id: Option<String>,
     rename_value: String,
     archive_confirmation_id: Option<String>,
+    conversation_import: ConversationImportState,
 }
 
 impl SessionBrowserState {
+    pub fn conversation_import(&self) -> &ConversationImportState {
+        &self.conversation_import
+    }
+
+    pub fn conversation_import_mut(&mut self) -> &mut ConversationImportState {
+        &mut self.conversation_import
+    }
     pub fn query(&self) -> &str {
         &self.query
     }
@@ -135,6 +480,7 @@ impl SessionBrowserState {
         self.preview_lines.clear();
         self.renaming_session_id = None;
         self.rename_value.clear();
+        self.conversation_import.close();
         self.normalize_selection(sessions, workspace);
     }
 
@@ -303,6 +649,7 @@ fn same_workspace(session_root: &str, workspace: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rpc::ConversationImportDiscovery;
 
     fn session(id: &str, root: &str, name: &str, summary: &str) -> Session {
         Session {
@@ -324,6 +671,31 @@ mod tests {
             execution_status: String::new(),
             summary: summary.into(),
             continuity: None,
+        }
+    }
+
+    fn import_candidate(
+        id: &str,
+        new_messages: usize,
+        importable: bool,
+    ) -> ConversationImportCandidate {
+        ConversationImportCandidate {
+            source: "codex".into(),
+            id: id.into(),
+            path: format!("/tmp/{id}.jsonl"),
+            workspace_root: "/tmp/current".into(),
+            title: format!("Conversation {id}"),
+            message_count: new_messages,
+            new_messages,
+            target_workspace: if importable { "/tmp/current" } else { "" }.into(),
+            importable,
+            import_error: if importable {
+                ""
+            } else {
+                "workspace unavailable"
+            }
+            .into(),
+            ..ConversationImportCandidate::default()
         }
     }
 
@@ -441,5 +813,57 @@ mod tests {
         assert_eq!(state.archive_confirmation_id(), Some("active"));
         state.cancel_archive();
         assert_eq!(state.archive_confirmation_id(), None);
+    }
+
+    #[test]
+    fn conversation_import_requires_explicit_selection_and_confirmation() {
+        let mut state = ConversationImportState::default();
+        let generation = state.begin();
+        state.apply_discovery(
+            generation,
+            Ok(ConversationImportDiscovery {
+                conversations: vec![
+                    import_candidate("new", 2, true),
+                    import_candidate("missing", 1, false),
+                ],
+                copy_semantics: "local copy".into(),
+                ..ConversationImportDiscovery::default()
+            }),
+        );
+        assert_eq!(state.stage(), ConversationImportStage::Selecting);
+        assert!(!state.begin_confirmation());
+        state.toggle_candidate(Some(1));
+        assert_eq!(state.error(), "workspace unavailable");
+        state.toggle_candidate(Some(0));
+        assert_eq!(state.selected_count(), 1);
+        assert!(state.begin_confirmation());
+        let (_, selections) = state.begin_apply().expect("confirmed selection");
+        assert_eq!(selections.len(), 1);
+        assert_eq!(selections[0].conversation_id, "new");
+        assert_eq!(selections[0].target_workspace, "/tmp/current");
+    }
+
+    #[test]
+    fn stale_conversation_discovery_does_not_replace_newer_scope() {
+        let mut state = ConversationImportState::default();
+        let first = state.begin();
+        let second = state.toggle_workspace_scope();
+        state.apply_discovery(
+            first,
+            Ok(ConversationImportDiscovery {
+                conversations: vec![import_candidate("stale", 1, true)],
+                ..ConversationImportDiscovery::default()
+            }),
+        );
+        assert_eq!(state.stage(), ConversationImportStage::Discovering);
+        assert!(state.candidates().is_empty());
+        state.apply_discovery(
+            second,
+            Ok(ConversationImportDiscovery {
+                conversations: vec![import_candidate("current", 1, true)],
+                ..ConversationImportDiscovery::default()
+            }),
+        );
+        assert_eq!(state.candidates()[0].id, "current");
     }
 }
