@@ -112,6 +112,20 @@ func TestSystemPromptRequiresEconomicalCompletion(t *testing.T) {
 	}
 }
 
+func TestSystemPromptRoutesRepositoryQuestionsToBoundedEvidence(t *testing.T) {
+	for _, instruction := range []string{
+		"Broad unfamiliar-repository overview, architecture, core modules, entry points, or relationships",
+		`call "code.map" first`,
+		"Exact metadata such as license, install steps, or package scripts",
+		"A targeted symbol question",
+		`Never use an unbounded workspace "list" as a substitute for "code.map"`,
+	} {
+		if !strings.Contains(systemPrompt, instruction) {
+			t.Fatalf("system prompt is missing repository evidence routing %q", instruction)
+		}
+	}
+}
+
 func TestSystemPromptCarriesNebutraCarinaProductIdentity(t *testing.T) {
 	for _, want := range []string{
 		"You are Carina",

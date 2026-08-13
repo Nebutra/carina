@@ -173,6 +173,34 @@ func TestMergeCCSwitchProvidersKeepsSourceMetadataAndRuntimeProtocol(t *testing.
 	}
 }
 
+func TestMergeCCSwitchProvidersInheritsCanonicalExplicitModelCapabilities(t *testing.T) {
+	canonical := Model{
+		ID: "gpt-5.6-sol", Name: "GPT 5.6 Sol", Reasoning: true, ToolCall: true,
+		Limit:      ModelLimit{Context: 1_050_000, Output: 128_000},
+		Modalities: &Modalities{Input: []string{"text", "image"}, Output: []string{"text"}},
+	}
+	base := Catalog{"openai": {
+		ID: "openai", Models: map[string]Model{"gpt-5.6-sol": canonical},
+	}}
+	profiles := []CCSwitchProfile{
+		{RuntimeID: "ccswitch-codex-known", Name: "Known", BaseURL: "http://127.0.0.1:18080/v1", Protocol: "openai-responses", Model: "gpt-5.6-sol", Importable: true},
+		{RuntimeID: "ccswitch-codex-unknown", Name: "Unknown", BaseURL: "http://127.0.0.1:18081/v1", Protocol: "openai-responses", Model: "future-model", Importable: true},
+	}
+
+	merged := MergeCCSwitchProviders(base, profiles)
+	known := merged[profiles[0].RuntimeID].Models[profiles[0].Model]
+	if known.Modalities == nil || !known.ToolCall || known.Limit.Context != canonical.Limit.Context {
+		t.Fatalf("known proxy model lost canonical capabilities: %#v", known)
+	}
+	if got := known.Modalities.Input; len(got) != 2 || got[1] != "image" {
+		t.Fatalf("known proxy input modalities = %#v", got)
+	}
+	unknown := merged[profiles[1].RuntimeID].Models[profiles[1].Model]
+	if unknown.Modalities != nil {
+		t.Fatalf("unknown proxy model must remain fail-closed for modalities: %#v", unknown)
+	}
+}
+
 func TestDetectCCSwitchProvidersTreatsMissingInstallAsEmpty(t *testing.T) {
 	profiles, err := DetectCCSwitchProviders(filepath.Join(t.TempDir(), "missing.db"))
 	if err != nil || len(profiles) != 0 {

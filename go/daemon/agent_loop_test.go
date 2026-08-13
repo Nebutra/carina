@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,61 @@ import (
 )
 
 // scripted reasoner from reasoner.go drives the loop deterministically.
+
+type repoMapRoutingReasoner struct {
+	prompts []string
+}
+
+func (r *repoMapRoutingReasoner) Name() string { return "repo-map-routing" }
+func (r *repoMapRoutingReasoner) Think(_ context.Context, prompt string) (string, error) {
+	r.prompts = append(r.prompts, prompt)
+	switch len(r.prompts) {
+	case 1:
+		return `{"tool":"code.map","intent":"Map the repository before inspecting its core entry point"}`, nil
+	case 2:
+		if strings.Contains(prompt, "main.go") && strings.Contains(prompt, "OverviewEntryPoint") {
+			return `{"tool":"read","path":"main.go","intent":"Inspect the entry point identified by the repository map"}`, nil
+		}
+		return `{"tool":"done","summary":"The repository map was not available to guide a targeted read."}`, nil
+	default:
+		return `{"tool":"done","summary":"The repository entry point is implemented in main.go."}`, nil
+	}
+}
+
+func TestAgentLoopFeedsCodeMapObservationIntoTargetedRead(t *testing.T) {
+	d, workspace := newLoopDaemon(t)
+	defer d.Close()
+	if !d.tools.Available() {
+		t.Skip("zig tools not built")
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n\nfunc OverviewEntryPoint() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	reasoner := &repoMapRoutingReasoner{}
+	d.SetReasoner(reasoner)
+	sess, _ := d.store.CreateSession(workspace, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, workspace, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "What is this unfamiliar repository, and where is its core entry point?")
+	d.runTask(sess, task)
+
+	if len(reasoner.prompts) != 3 {
+		t.Fatalf("map observation did not drive map -> targeted read -> done; prompts = %d", len(reasoner.prompts))
+	}
+	if !strings.Contains(reasoner.prompts[0], `call "code.map" first`) {
+		t.Fatal("initial broad-repository prompt is missing the code.map routing contract")
+	}
+	if !strings.Contains(reasoner.prompts[1], "OverviewEntryPoint") || !strings.Contains(reasoner.prompts[1], "main.go") {
+		t.Fatalf("code.map observation was not visible to the next model turn:\n%s", reasoner.prompts[1])
+	}
+	if !strings.Contains(reasoner.prompts[2], "func OverviewEntryPoint()") {
+		t.Fatalf("targeted read observation was not visible to the completion turn:\n%s", reasoner.prompts[2])
+	}
+	completed, _ := d.sched.Get(task.RunID)
+	if completed.Status != "completed" {
+		t.Fatalf("repository overview run status = %s", completed.Status)
+	}
+}
 
 // TestAgentLoopExecutesThroughKernel proves the ReAct loop actually edits a
 // file and runs a command — all mediated by the kernel — using a scripted

@@ -253,6 +253,46 @@ func TestModelListPublishesInputAndToolCapabilities(t *testing.T) {
 	}
 }
 
+func TestModelListProjectsCanonicalVisionCapabilitiesThroughCCSwitch(t *testing.T) {
+	canonical := provider.Model{
+		ID: "gpt-5.6-sol", Name: "GPT 5.6 Sol", Reasoning: true, ToolCall: true,
+		Modalities: &provider.Modalities{Input: []string{"text", "image"}, Output: []string{"text"}},
+	}
+	base := provider.Catalog{"openai": {
+		ID: "openai", Name: "OpenAI", API: "https://api.openai.com/v1", APIProtocol: "openai-responses",
+		Models: map[string]provider.Model{"gpt-5.6-sol": canonical},
+	}}
+	profiles := []provider.CCSwitchProfile{
+		{RuntimeID: "ccswitch-codex-known", Name: "Known proxy", BaseURL: "http://127.0.0.1:18080/v1", Protocol: "openai-responses", CredentialKind: provider.CCSwitchCredentialBearer, Model: "gpt-5.6-sol", Importable: true},
+		{RuntimeID: "ccswitch-codex-unknown", Name: "Unknown proxy", BaseURL: "http://127.0.0.1:18081/v1", Protocol: "openai-responses", CredentialKind: provider.CCSwitchCredentialBearer, Model: "future-model", Importable: true},
+	}
+	catalog := provider.MergeCCSwitchProviders(base, profiles)
+	store, _ := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
+	d := &Daemon{router: modelrouter.New(), authStore: store, providerCatalog: catalog}
+	result, err := d.handleModelList(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	capabilities := map[string]bool{}
+	for _, row := range result.(map[string]any)["providers"].([]modelInventoryProvider) {
+		for _, model := range row.Models {
+			capabilities[model.ID] = model.ImageInput
+		}
+	}
+	for _, id := range []string{"openai/gpt-5.6-sol", "ccswitch-codex-known/gpt-5.6-sol"} {
+		if !capabilities[id] {
+			t.Fatalf("%s must advertise canonical image input: %#v", id, capabilities)
+		}
+		if !catalogModelImageCapable(catalog, id) {
+			t.Fatalf("%s must pass the daemon media delivery gate", id)
+		}
+	}
+	if capabilities["ccswitch-codex-unknown/future-model"] || catalogModelImageCapable(catalog, "ccswitch-codex-unknown/future-model") {
+		t.Fatalf("unknown proxy model must remain fail-closed: %#v", capabilities)
+	}
+}
+
 func TestModelListProjectsCCSwitchDiscoveryWithoutSourceIDsOrSecrets(t *testing.T) {
 	store, _ := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
 	d := &Daemon{

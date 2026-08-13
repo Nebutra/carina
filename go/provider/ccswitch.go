@@ -229,7 +229,16 @@ func MergeCCSwitchProviders(base Catalog, profiles []CCSwitchProfile) Catalog {
 			// OAuth-only and invalid source records are explanatory entries, not
 			// executable model inventories.
 		} else if profile.Model != "" {
-			models[profile.Model] = Model{ID: profile.Model, Name: profile.Model, Reasoning: true, ToolCall: true}
+			if model, ok := sourceModelForProtocol(base, profile.Protocol, profile.Model); ok {
+				// A proxy route does not change the selected model's capabilities.
+				// Preserve the canonical modalities, limits, tools, and reasoning
+				// metadata so every downstream consumer sees the same contract.
+				models[profile.Model] = model
+			} else {
+				// Unknown proxy model IDs remain conservative for capabilities that
+				// require affirmative catalog evidence, including image input.
+				models[profile.Model] = Model{ID: profile.Model, Name: profile.Model, Reasoning: true, ToolCall: true}
+			}
 		} else {
 			for id, model := range sourceModelsForProtocol(base, profile.Protocol) {
 				models[id] = model
@@ -271,6 +280,19 @@ func sourceModelsForProtocol(base Catalog, protocol string) map[string]Model {
 		return nil
 	}
 	return base[sourceID].Models
+}
+
+func sourceModelForProtocol(base Catalog, protocol, modelID string) (Model, bool) {
+	models := sourceModelsForProtocol(base, protocol)
+	if model, ok := models[modelID]; ok {
+		return model, true
+	}
+	for _, model := range models {
+		if model.ID == modelID {
+			return model, true
+		}
+	}
+	return Model{}, false
 }
 
 func readCCSwitch(databasePath string) ([]ccSwitchResolved, error) {
