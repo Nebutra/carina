@@ -249,6 +249,21 @@ enum Phase {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModelBackDestination {
+    Provider,
+    Conversation,
+}
+
+impl ModelBackDestination {
+    fn message_id(self) -> MessageId {
+        match self {
+            Self::Provider => MessageId::BackToProvider,
+            Self::Conversation => MessageId::BackToConversation,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Focus {
     Scene,
     Composer,
@@ -1392,6 +1407,14 @@ impl App {
                         .iter()
                         .any(|model| model.available && model.id == self.selected_model)
             })
+    }
+
+    fn model_back_destination(&self) -> ModelBackDestination {
+        if self.active_session.is_some() {
+            ModelBackDestination::Conversation
+        } else {
+            ModelBackDestination::Provider
+        }
     }
 
     fn open_models(&mut self) {
@@ -3301,13 +3324,12 @@ impl App {
                 KeyCode::Tab | KeyCode::Right => self.cycle_reasoning_effort(true),
                 KeyCode::BackTab | KeyCode::Left => self.cycle_reasoning_effort(false),
                 KeyCode::Enter => self.select_model_and_continue(self.model_index),
-                KeyCode::Esc => {
-                    if self.active_session.is_some() {
+                KeyCode::Esc => match self.model_back_destination() {
+                    ModelBackDestination::Conversation => {
                         self.return_to_conversation_or_repair();
-                    } else {
-                        self.phase = Phase::Provider;
                     }
-                }
+                    ModelBackDestination::Provider => self.phase = Phase::Provider,
+                },
                 _ => {}
             },
             Phase::Session => match key.code {

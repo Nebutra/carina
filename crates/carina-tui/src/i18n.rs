@@ -296,6 +296,8 @@ pub enum MessageId {
     Close,
     LoadingRestoreImpact,
     Back,
+    BackToProvider,
+    BackToConversation,
     ConfirmDestructiveRestore,
     RestoringCheckpoint,
     ReviewRestoreImpact,
@@ -867,6 +869,8 @@ impl MessageId {
         Self::Close,
         Self::LoadingRestoreImpact,
         Self::Back,
+        Self::BackToProvider,
+        Self::BackToConversation,
         Self::ConfirmDestructiveRestore,
         Self::RestoringCheckpoint,
         Self::ReviewRestoreImpact,
@@ -3611,6 +3615,24 @@ fn translated_compact(id: MessageId, lang: usize) -> &'static str {
 fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
     use MessageId::*;
     let values = match id {
+        BackToProvider => [
+            "Back to provider",
+            "返回服务商",
+            "返回服務商",
+            "プロバイダーに戻る",
+            "제공자로 돌아가기",
+            "Volver al proveedor",
+            "Retour au fournisseur",
+        ],
+        BackToConversation => [
+            "Back to conversation",
+            "返回会话",
+            "返回對話",
+            "会話に戻る",
+            "대화로 돌아가기",
+            "Volver a la conversación",
+            "Retour à la conversation",
+        ],
         ProductMenu => [
             "Carina menu",
             "Carina 菜单",
@@ -6623,6 +6645,25 @@ mod tests {
                     "placeholder mismatch in {locale:?} {id:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn model_picker_back_destinations_are_explicit_in_every_locale() {
+        assert_eq!(
+            text(Locale::ZhHans, MessageId::BackToProvider),
+            "返回服务商"
+        );
+        assert_eq!(
+            text(Locale::ZhHans, MessageId::BackToConversation),
+            "返回会话"
+        );
+        for locale in Locale::ALL {
+            assert_ne!(
+                text(locale, MessageId::BackToProvider),
+                text(locale, MessageId::BackToConversation),
+                "{locale:?}"
+            );
         }
     }
 

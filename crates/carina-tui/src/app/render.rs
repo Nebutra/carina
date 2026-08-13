@@ -2144,8 +2144,9 @@ impl App {
                 ),
             ],
             Phase::Model => {
+                let back_label = tr(locale, self.model_back_destination().message_id());
                 let mut shortcuts = vec![
-                    ("Esc", tr(locale, MessageId::Back)),
+                    ("Esc", back_label),
                     ("Enter", tr(locale, MessageId::UseModel)),
                     (
                         self.theme.glyphs.nav_vertical(),
@@ -8825,6 +8826,12 @@ mod transcript_tests {
     use ratatui::style::Color;
 
     fn production_render_app() -> (App, std::path::PathBuf, std::thread::JoinHandle<()>) {
+        production_render_app_with_model_refreshes(0)
+    }
+
+    fn production_render_app_with_model_refreshes(
+        model_refreshes: usize,
+    ) -> (App, std::path::PathBuf, std::thread::JoinHandle<()>) {
         use std::io::{BufRead, BufReader, Write};
         use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -8882,6 +8889,32 @@ mod transcript_tests {
                 .unwrap();
                 stream.flush().unwrap();
             }
+            for _ in 0..model_refreshes {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["method"], "model.list");
+                writeln!(
+                    stream,
+                    "{}",
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "result": {
+                            "default_model": "test/model",
+                            "reasoner": {"available": true},
+                            "providers": [{
+                                "id": "test",
+                                "registered": true,
+                                "available": true,
+                                "models": [{"id": "test/model", "available": true}]
+                            }]
+                        }
+                    })
+                )
+                .unwrap();
+                stream.flush().unwrap();
+            }
         });
         let mut app = App::bootstrap(super::super::Options {
             socket,
@@ -8903,6 +8936,50 @@ mod transcript_tests {
         .unwrap();
         app.phase = Phase::Conversation;
         (app, root, server)
+    }
+
+    #[test]
+    fn model_picker_names_and_follows_its_back_destination() {
+        let (mut onboarding, root, server) = production_render_app();
+        onboarding.phase = Phase::Model;
+        onboarding.options.locale = Some(Locale::ZhHans.product_id().into());
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| onboarding.render(frame)).unwrap();
+        let rendered = rendered_frame_text(terminal.backend().buffer());
+        assert!(rendered.contains(tr(Locale::ZhHans, MessageId::BackToProvider)));
+        assert!(!rendered.contains(tr(Locale::ZhHans, MessageId::BackToConversation)));
+        onboarding
+            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(onboarding.phase, Phase::Provider);
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+
+        let (mut conversation, root, server) = production_render_app_with_model_refreshes(1);
+        conversation.phase = Phase::Model;
+        conversation.options.locale = Some(Locale::ZhHans.product_id().into());
+        conversation.active_session = Some(
+            serde_json::from_value(serde_json::json!({
+                "session_id": "sess-model-picker",
+                "workspace_root": conversation.options.workspace,
+                "status": "active",
+                "next_model": "test/model",
+                "execution_status": "ready"
+            }))
+            .unwrap(),
+        );
+        terminal.draw(|frame| conversation.render(frame)).unwrap();
+        let rendered = rendered_frame_text(terminal.backend().buffer());
+        assert!(rendered.contains(tr(Locale::ZhHans, MessageId::BackToConversation)));
+        assert!(!rendered.contains(tr(Locale::ZhHans, MessageId::BackToProvider)));
+        conversation
+            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(conversation.phase, Phase::Conversation);
+        assert_eq!(conversation.focus, Focus::Composer);
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     fn header_provider(id: &str, name: &str, model_id: &str, model_name: &str) -> ModelProvider {
