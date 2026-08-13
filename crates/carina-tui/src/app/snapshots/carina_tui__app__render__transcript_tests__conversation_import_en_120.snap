@@ -5,21 +5,21 @@ expression: rendered
 size=120x30
 
     ⠀⢀⣀⣀⡀⣠⣶⣶⣄⠀   Carina                                                                        Conversation recovery
-    ⠀⣿⣿⣿⣿⣿⣿⣿⣿⠀   Provider   Provider  |  Direct API
-    ⠀⠙⣿⣿⡏⠀⠈⢻⡇⠀   Model      model  |  reasoning off
+    ⠀⣿⣿⣿⣿⣿⣿⣿⣿⠀   Provider   Provider  ·  Direct API
+    ⠀⠙⣿⣿⡏⠀⠈⢻⡇⠀   Model      model  ·  reasoning off
     ⠀⢰⣿⣿⣿⣦⣴⣿⡿⠀   Workspace  <workspace>
     ⠀⠈⠻⠿⠟⠁⠀⠀⠀⠀
    ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-   > Import conversations
+   ▌ Import conversations
      Local history · Claude Code + Codex · Current workspace
 
    ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-   ┌ Import conversations ─────────────────────────────────────────────────┐  ┌ CONVERSATION PREVIEW ───────────────┐
+   ╭ Import conversations ─────────────────────────────────────────────────╮  ╭ CONVERSATION PREVIEW ───────────────╮
    │                                                                       │  │                                     │
    │ Carina makes a local copy. Source files stay unchanged; later         │  │ Review the bounded conversation     │
    │ messages appear only after you check again.                           │  │ parser                              │
-   │ > [x] Claude Code Review the bounded conversation parser  7 new       │  │                                     │
+   │ ▌ [x] Claude Code Review the bounded conversation parser  7 new       │  │                                     │
    │   [ ] Codex       Verify the imported audit chain  up to date         │  │ Provider  Claude Code               │
    │                                                                       │  │ Source workspace  <workspace>       │
    │                                                                       │  │ Target workspace  <workspace>       │
@@ -29,5 +29,5 @@ size=120x30
    │ Review import  Select all  Change source  Cancel                      │  │                                     │
    │                                                                       │  │                                     │
    │                                                                       │  │                                     │
-   └───────────────────────────────────────────────────────────────────────┘  └─────────────────────────────────────┘
+   ╰───────────────────────────────────────────────────────────────────────╯  ╰─────────────────────────────────────╯
     Space  Select or clear   A  Select all   S  Change source   Tab  Scope   Enter  Review import   Esc  Cancel

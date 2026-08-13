@@ -9445,6 +9445,10 @@ mod transcript_tests {
 
     fn render_conversation_import_fixture(width: u16, locale: Locale) -> String {
         let (mut app, root, server) = production_render_app();
+        app.theme.glyphs = app
+            .theme
+            .glyphs
+            .with_mode(crate::glyphs::GlyphMode::Unicode);
         app.phase = Phase::Session;
         app.options.workspace = std::path::PathBuf::from("<workspace>");
         app.options.locale = Some(locale.product_id().into());

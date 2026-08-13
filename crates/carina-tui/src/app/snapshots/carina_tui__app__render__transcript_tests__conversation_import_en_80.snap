@@ -5,18 +5,18 @@ expression: rendered
 size=80x30
 
   Carina                                                Conversation recovery
-  model  |  reasoning off  |  Provider  |  Direct API  |  <workspace>
+  model  ·  reasoning off  ·  Provider  ·  Direct API  ·  <workspace>
   ────────────────────────────────────────────────────────────────────────────
 
-  > Import conversations
+  ▌ Import conversations
     Local history · Claude Code + Codex · Current workspace
 
   ────────────────────────────────────────────────────────────────────────────
-  ┌ Import conversations ────────────────────────────────────────────────────┐
+  ╭ Import conversations ────────────────────────────────────────────────────╮
   │                                                                          │
   │ Carina makes a local copy. Source files stay unchanged; later messages   │
   │ appear only after you check again.                                       │
-  │ > [x] Claude Code Review the bounded conversation parser  7 new          │
+  │ ▌ [x] Claude Code Review the bounded conversation parser  7 new          │
   │   [ ] Codex       Verify the imported audit chain  up to date            │
   │                                                                          │
   │                                                                          │
@@ -29,5 +29,5 @@ size=80x30
   │ Review import  Select all  Change source  Cancel                         │
   │                                                                          │
   │                                                                          │
-  └──────────────────────────────────────────────────────────────────────────┘
+  ╰──────────────────────────────────────────────────────────────────────────╯
    Space  Select or clear   Enter  Review import   Esc  Cancel
