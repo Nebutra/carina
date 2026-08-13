@@ -19,6 +19,9 @@ When files disagree, do not blend them. Fix the lower-authority consumer to matc
 - Use the supplied horizontal or stacked lockup. Do not typeset `CARINA` with a substitute font to recreate the wordmark.
 - Do not add gradients, shadows, materials, outlines, animation, or seasonal skins to the canonical masters.
 - Do not use skin, mockup, or specimen files as a source for tracing.
+- Keep one-row terminal headers wordmark-only. Do not compress the canonical symbol into a single
+  text row or substitute a generic glyph; render a generated terminal mark only when the layout
+  provides its documented width and height.
 
 ## Typography
 

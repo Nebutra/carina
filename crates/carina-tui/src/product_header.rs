@@ -356,6 +356,9 @@ impl ConversationHeader<'_> {
         );
 
         let product_component = ComponentId::stable("conversation-header", "product-menu");
+        // The canonical mark needs multiple rows to preserve its rotated lobes
+        // and closed counterform. Keep this one-row trigger wordmark-only rather
+        // than presenting a sampled Braille or generic-symbol approximation.
         let product_label = format!("{COMPACT_NAME} {}", theme.glyphs.disclosure_open());
         let identity_min_width = UnicodeWidthStr::width(product_label.as_str()) as u16;
         let mut right = area.right();
@@ -782,9 +785,10 @@ mod tests {
     }
 
     #[test]
-    fn conversation_product_menu_trigger_is_exact_and_width_locked() {
+    fn conversation_product_menu_trigger_is_wordmark_only_exact_and_width_locked() {
         for (glyphs, expected) in [
             (crate::glyphs::GlyphMode::Unicode, "Carina ▾ "),
+            (crate::glyphs::GlyphMode::Nerd, "Carina  "),
             (crate::glyphs::GlyphMode::Ascii, "Carina v "),
         ] {
             let mut theme = Theme::carina(false);

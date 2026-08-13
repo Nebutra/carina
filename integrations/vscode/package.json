@@ -1,7 +1,7 @@
 {
   "name": "carina-vscode",
   "displayName": "Carina Agent Runtime",
-  "version": "0.8.18",
+  "version": "0.8.19",
   "publisher": "nebutra",
   "license": "MIT",
   "repository": {
