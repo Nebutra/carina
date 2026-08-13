@@ -2495,6 +2495,7 @@ impl App {
                 let back_label = tr(locale, self.model_back_destination().message_id());
                 let mut shortcuts = vec![
                     ("Esc", back_label),
+                    ("P", tr(locale, MessageId::Provider)),
                     ("Enter", tr(locale, MessageId::UseModel)),
                     (
                         self.theme.glyphs.nav_vertical(),
@@ -9390,6 +9391,26 @@ mod transcript_tests {
         let rendered = rendered_frame_text(terminal.backend().buffer());
         assert!(rendered.contains(tr(Locale::ZhHans, MessageId::BackToProvider)));
         assert!(!rendered.contains(tr(Locale::ZhHans, MessageId::BackToConversation)));
+        assert!(rendered.contains(&format!("P  {}", tr(Locale::ZhHans, MessageId::Provider))));
+        onboarding.focus = Focus::Composer;
+        for modifiers in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::SUPER,
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ] {
+            onboarding
+                .handle_key(KeyEvent::new(KeyCode::Char('p'), modifiers))
+                .unwrap();
+            assert_eq!(onboarding.phase, Phase::Model);
+            assert_eq!(onboarding.focus, Focus::Composer);
+        }
+        onboarding
+            .handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(onboarding.phase, Phase::Provider);
+        assert_eq!(onboarding.focus, Focus::Scene);
+        onboarding.phase = Phase::Model;
         onboarding
             .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
             .unwrap();
@@ -9414,6 +9435,14 @@ mod transcript_tests {
         let rendered = rendered_frame_text(terminal.backend().buffer());
         assert!(rendered.contains(tr(Locale::ZhHans, MessageId::BackToConversation)));
         assert!(!rendered.contains(tr(Locale::ZhHans, MessageId::BackToProvider)));
+        assert!(rendered.contains(&format!("P  {}", tr(Locale::ZhHans, MessageId::Provider))));
+        conversation.focus = Focus::Composer;
+        conversation
+            .handle_key(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT))
+            .unwrap();
+        assert_eq!(conversation.phase, Phase::Provider);
+        assert_eq!(conversation.focus, Focus::Scene);
+        conversation.phase = Phase::Model;
         conversation
             .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
             .unwrap();

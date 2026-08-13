@@ -3432,6 +3432,11 @@ impl App {
                 KeyCode::Tab | KeyCode::Right => self.cycle_reasoning_effort(true),
                 KeyCode::BackTab | KeyCode::Left => self.cycle_reasoning_effort(false),
                 KeyCode::Enter => self.select_model_and_continue(self.model_index),
+                KeyCode::Char('p' | 'P')
+                    if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+                {
+                    self.apply_action(Action::OpenProvider);
+                }
                 KeyCode::Esc => match self.model_back_destination() {
                     ModelBackDestination::Conversation => {
                         self.return_to_conversation_or_repair();
@@ -7102,6 +7107,7 @@ impl App {
             Action::OpenProvider => {
                 self.close_top_non_governance();
                 self.phase = Phase::Provider;
+                self.focus = Focus::Scene;
             }
             Action::TogglePlanMode => {
                 self.close_top_non_governance();
