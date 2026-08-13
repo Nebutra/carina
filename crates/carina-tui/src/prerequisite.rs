@@ -165,26 +165,51 @@ impl ProviderPickerState {
             });
             return visible;
         }
-        providers
+        let mut visible = providers
             .iter()
             .enumerate()
-            .filter(|(_, provider)| {
-                query.is_empty()
-                    || provider.id.to_lowercase().contains(&query)
-                    || provider.name.to_lowercase().contains(&query)
-                    || provider.source_label.to_lowercase().contains(&query)
+            .filter_map(|(index, provider)| {
+                let provider_match = matches_query(&provider.id, &query)
+                    || matches_query(&provider.name, &query)
+                    || matches_query(&provider.source_label, &query);
+                let model_matches = provider
+                    .models
+                    .iter()
+                    .filter(|model| {
+                        matches_query(&model.id, &query)
+                            || matches_query(&model.display_id, &query)
+                            || matches_query(&model.name, &query)
+                    })
+                    .count();
+                (provider_match || model_matches > 0).then_some((
+                    index,
+                    provider_match,
+                    model_matches,
+                    provider.models.len(),
+                ))
             })
-            .map(|(index, _)| index)
-            .collect()
+            .collect::<Vec<_>>();
+        visible.sort_by(
+            |(left_index, left_provider, left_matches, left_total),
+             (right_index, right_provider, right_matches, right_total)| {
+                match right_provider.cmp(left_provider) {
+                    std::cmp::Ordering::Equal if *left_provider => left_index.cmp(right_index),
+                    std::cmp::Ordering::Equal => ((*right_matches as u128) * (*left_total as u128))
+                        .cmp(&((*left_matches as u128) * (*right_total as u128)))
+                        .then_with(|| right_matches.cmp(left_matches))
+                        .then_with(|| left_index.cmp(right_index)),
+                    ordering => ordering,
+                }
+            },
+        );
+        visible.into_iter().map(|(index, _, _, _)| index).collect()
     }
 
     pub fn normalize_selection(&self, providers: &[ModelProvider], selected: usize) -> usize {
-        let visible = self.visible_indices(providers);
-        if visible.contains(&selected) {
-            selected
-        } else {
-            visible.first().copied().unwrap_or(0)
-        }
+        self.visible_indices(providers)
+            .first()
+            .copied()
+            .unwrap_or(selected)
     }
 
     pub fn move_selection(
@@ -205,6 +230,10 @@ impl ProviderPickerState {
         };
         visible.get(next).copied().unwrap_or(selected)
     }
+}
+
+fn matches_query(value: &str, query: &str) -> bool {
+    value.to_lowercase().contains(query)
 }
 
 #[cfg(test)]
@@ -228,6 +257,22 @@ mod tests {
             source_importable: false,
             source_reason: String::new(),
             models: Vec::new(),
+        }
+    }
+
+    fn model(id: &str, display_id: &str, name: &str) -> crate::rpc::Model {
+        crate::rpc::Model {
+            id: id.into(),
+            display_id: display_id.into(),
+            name: name.into(),
+            available: true,
+            status: String::new(),
+            status_reason: String::new(),
+            reasoning: false,
+            reasoning_efforts: Vec::new(),
+            default_reasoning_effort: String::new(),
+            image_input: false,
+            tool_call: false,
         }
     }
 
@@ -268,6 +313,11 @@ mod tests {
             provider("openrouter", "OpenRouter"),
         ];
         let mut state = ProviderPickerState::default();
+        providers[1].models = vec![model("open-1", "open-1", "Open Model")];
+        providers[2].models = vec![
+            model("open-1", "open-1", "Open Model 1"),
+            model("open-2", "open-2", "Open Model 2"),
+        ];
         state.begin_search();
         for character in "open".chars() {
             state.push(character);
@@ -283,6 +333,49 @@ mod tests {
             source_search.push(character);
         }
         assert_eq!(source_search.visible_indices(&providers), vec![0]);
+    }
+
+    #[test]
+    fn provider_search_matches_models_and_prioritizes_their_primary_catalog() {
+        let mut providers = vec![
+            provider("openrouter", "OpenRouter"),
+            provider("xai", "xAI"),
+            provider("unrelated", "Unrelated"),
+        ];
+        providers[0].models = vec![
+            model("grok-4.6", "x-ai/grok-4.6", "Grok 4.6"),
+            model("gpt-5", "openai/gpt-5", "GPT-5"),
+        ];
+        providers[1].models = vec![
+            model("grok-4.5", "grok-4.5", "Grok 4.5"),
+            model("grok-4.6", "grok-4.6", "Grok 4.6"),
+        ];
+
+        for query in ["grok", "x-ai/grok-4.6", "Grok 4.5"] {
+            let mut search = ProviderPickerState::default();
+            search.begin_search();
+            for character in query.chars() {
+                search.push(character);
+            }
+            let expected = if query == "Grok 4.5" {
+                vec![1]
+            } else if query == "x-ai/grok-4.6" {
+                vec![0]
+            } else {
+                vec![1, 0]
+            };
+            assert_eq!(search.visible_indices(&providers), expected, "{query}");
+            if query == "grok" {
+                assert_eq!(search.normalize_selection(&providers, 0), 1);
+            }
+        }
+
+        let mut direct = ProviderPickerState::default();
+        direct.begin_search();
+        for character in "openrouter".chars() {
+            direct.push(character);
+        }
+        assert_eq!(direct.visible_indices(&providers), vec![0]);
     }
 
     #[test]
