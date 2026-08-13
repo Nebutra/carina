@@ -58,6 +58,7 @@ func TestPlanModeToolMatrix(t *testing.T) {
 		{tool: "todo"}, {tool: "update_plan"}, {tool: "ask_user"},
 		{tool: "done"}, {tool: "mcp_find"}, {tool: "spawn"},
 		{tool: "patch", blocked: true}, {tool: "run", blocked: true},
+		{tool: "web.fetch", blocked: true},
 		{tool: "memory", blocked: true}, {tool: "mcp", blocked: true},
 		{tool: "workflow", blocked: true}, {tool: "best_of_n", blocked: true},
 		{tool: "swarm_publish", blocked: true}, {tool: "swarm_receive", blocked: true},

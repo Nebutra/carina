@@ -142,8 +142,8 @@ func (d *Daemon) interactiveApproveRequiresApproval(sess *sessionstore.Session, 
 }
 
 // resolveApproval turns a requires_approval decision into a final one. In
-// autonomous mode (default) it auto-approves as the agent. In interactive mode
-// it asks the operator and only approves on an explicit allow. Returns the
+// always-approve mode it auto-approves as the agent. In the default ask mode it
+// asks the operator and only approves on an explicit allow. Returns the
 // (possibly upgraded) decision and whether it is now allowed.
 func (d *Daemon) resolveApproval(sess *sessionstore.Session, task *scheduler.ExecutionRun, dec *kernel.Decision, label string) (*kernel.Decision, bool) {
 	if err := d.markActiveToolApprovalRequired(task.RunID, dec.DecisionID); err != nil {

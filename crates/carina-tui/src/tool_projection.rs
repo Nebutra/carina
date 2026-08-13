@@ -5,6 +5,7 @@ pub enum ToolKind {
     Read,
     List,
     Search,
+    WebFetch,
     Run,
     Patch,
     Diff,
@@ -29,6 +30,7 @@ impl ToolKind {
             "read" => Self::Read,
             "list" => Self::List,
             "search" => Self::Search,
+            "web.fetch" => Self::WebFetch,
             "run" => Self::Run,
             "patch" => Self::Patch,
             "diff" => Self::Diff,
@@ -54,6 +56,7 @@ impl ToolKind {
             Self::Read => "Read",
             Self::List => "List",
             Self::Search => "Search",
+            Self::WebFetch => "Fetch",
             Self::Run => "Run",
             Self::Patch => "Edit",
             Self::Diff => "Changes",
@@ -286,6 +289,7 @@ pub fn present(facts: &ToolFacts, failed: bool) -> ToolPresentation {
         ToolKind::List => "workspace",
         ToolKind::Search => &facts.pattern,
         ToolKind::CodeSearch | ToolKind::McpFind => &facts.query,
+        ToolKind::WebFetch => &facts.target,
         ToolKind::CodeSymbols
         | ToolKind::CodeDefinition
         | ToolKind::CodeReferences
@@ -467,6 +471,26 @@ mod tests {
             assert_eq!(presentation.body, "Found three references");
             assert!(presentation.collapsible);
         }
+    }
+
+    #[test]
+    fn web_fetch_is_explicit_and_keeps_the_approved_host_visible() {
+        let presentation = present(
+            &ToolFacts {
+                name: "web.fetch".into(),
+                intent: "查询北京实时天气".into(),
+                target: "wttr.in".into(),
+                output: "current_condition".into(),
+                ..ToolFacts::default()
+            },
+            false,
+        );
+        assert_eq!(ToolKind::from_name("web.fetch"), ToolKind::WebFetch);
+        assert_eq!(presentation.label, "Fetch");
+        assert_eq!(presentation.primary, "查询北京实时天气");
+        assert_eq!(presentation.target, "wttr.in");
+        assert!(presentation.collapsible);
+        assert!(!ToolKind::WebFetch.is_exploration());
     }
 
     #[test]

@@ -32,6 +32,8 @@ func ClassifyTool(tool string, arguments map[string]any) EffectContract {
 		return NewEffectContract(EffectIdempotentExternal, key)
 	case "ask_user":
 		return NewEffectContract(EffectNonIdempotent, "")
+	case "web.fetch":
+		return NewEffectContract(EffectNonIdempotent, "")
 	default:
 		return NewEffectContract(EffectUnknown, "")
 	}

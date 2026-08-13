@@ -96,6 +96,7 @@ func Defaults(home string) Config {
 		NebutraSyncMode:           nebutra.SyncModeOff,
 		ContextEngine:             contextengine.ModeAuto,
 		MemoryProvider:            "off",
+		InteractiveApproval:       true,
 		MemoryHMSTimeoutMS:        3000,
 		MemoryHMSMaxEvidence:      8,
 		MemoryHMSProjectionPollMS: 1000,

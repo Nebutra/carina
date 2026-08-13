@@ -491,6 +491,7 @@ impl TranscriptReducer {
             "RuntimeStageChanged"
             | "FileRead"
             | "FileWriteProposed"
+            | "NetworkRequested"
             | "ToolRequested"
             | "ToolApproved"
             | "ToolDenied"
@@ -541,6 +542,11 @@ impl TranscriptReducer {
     }
 
     fn reduce_tool_event(&mut self, blocks: &mut Vec<TranscriptBlock>, event: WireEvent) -> bool {
+        if detail(&event.payload, "kind").as_deref() == Some("interaction")
+            || detail(&event.payload, "tool").as_deref() == Some("ask_user")
+        {
+            return false;
+        }
         let Some(call_id) = detail(&event.payload, "call_id") else {
             return false;
         };
@@ -874,6 +880,11 @@ impl TranscriptReducer {
                 }
             }
             "tool_call" => {
+                if detail(&item.details, "kind").as_deref() == Some("interaction")
+                    || detail(&item.details, "tool").as_deref() == Some("ask_user")
+                {
+                    return;
+                }
                 let id = format!("tool:{item_id}");
                 let record = self.tools.entry(id.clone()).or_insert_with(|| ToolRecord {
                     id: id.clone(),
@@ -1357,7 +1368,10 @@ fn tool_facts(tool: String, status: &str, details: &BTreeMap<String, Value>) -> 
         workflow: nested("workflow").unwrap_or_default(),
         mcp_tool: nested("mcp_tool").unwrap_or_default(),
         agent: nested("agent").unwrap_or_default(),
-        target: nested("target").unwrap_or_default(),
+        target: nested("target")
+            .or_else(|| nested("host"))
+            .or_else(|| detail(details, "host"))
+            .unwrap_or_default(),
         diff,
         output,
         error: first_detail(details, &["error", "reason", "message"])
@@ -3122,6 +3136,54 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
     }
 
     #[test]
+    fn web_fetch_has_live_hydrate_parity_and_remains_a_visible_network_effect() {
+        let details = json!({
+            "tool":"web.fetch",
+            "kind":"network",
+            "intent":"查询北京实时天气",
+            "arguments":{"host":"wttr.in"}
+        });
+        let mut hydrated_item = item_with_id("fetch-1", "tool_call", "completed", details.clone());
+        hydrated_item.run_id = "run-fetch".into();
+        hydrated_item.turn_id = "run-fetch".into();
+        hydrated_item.item.as_mut().expect("item exists").run_id = "run-fetch".into();
+        let hydrated = TranscriptReducer::default().hydrate(vec![hydrated_item]);
+
+        let mut reducer = TranscriptReducer::default();
+        let mut live = Vec::new();
+        reducer.reduce_event(
+            &mut live,
+            wire_for_run(
+                "ToolCallRequested",
+                "run-fetch",
+                json!({
+                    "call_id":"fetch-1",
+                    "tool":"web.fetch",
+                    "kind":"network",
+                    "intent":"查询北京实时天气",
+                    "arguments":{"host":"wttr.in"}
+                }),
+            ),
+        );
+        reducer.reduce_event(
+            &mut live,
+            wire_for_run(
+                "ToolCallCompleted",
+                "run-fetch",
+                json!({"call_id":"fetch-1","tool":"web.fetch","kind":"network","status":"completed"}),
+            ),
+        );
+
+        assert_eq!(hydrated.len(), 1);
+        assert_eq!(live.len(), 1);
+        for block in [&hydrated[0], &live[0]] {
+            assert_eq!(block.tool_kind, Some(ToolKind::WebFetch));
+            assert!(block.title.contains("查询北京实时天气"));
+            assert_eq!(block.tool_members[0].title, "wttr.in");
+        }
+    }
+
+    #[test]
     fn user_message_is_a_hard_exploration_group_boundary() {
         let mut reducer = TranscriptReducer::default();
         let mut blocks = Vec::new();
@@ -3267,6 +3329,42 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         ]);
 
         assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn ask_user_lifecycle_is_owned_only_by_the_governance_overlay() {
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        for event in [
+            wire(
+                "ToolCallRequested",
+                json!({
+                    "call_id":"question-call",
+                    "tool":"ask_user",
+                    "kind":"interaction",
+                    "intent":"Need a city before querying weather"
+                }),
+            ),
+            wire(
+                "ToolCallStarted",
+                json!({"call_id":"question-call","tool":"ask_user","kind":"interaction"}),
+            ),
+            wire(
+                "ToolCallCompleted",
+                json!({"call_id":"question-call","tool":"ask_user","kind":"interaction"}),
+            ),
+        ] {
+            assert!(!reducer.reduce_event(&mut blocks, event));
+        }
+        assert!(blocks.is_empty());
+
+        let hydrated = TranscriptReducer::default().hydrate(vec![item_with_id(
+            "question-call",
+            "tool_call",
+            "completed",
+            json!({"tool":"ask_user","kind":"interaction"}),
+        )]);
+        assert!(hydrated.is_empty());
     }
 
     #[test]

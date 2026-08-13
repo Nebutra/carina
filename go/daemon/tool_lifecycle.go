@@ -442,6 +442,8 @@ func toolKind(tool string) string {
 	switch tool {
 	case "read", "list", "search", "code.search", "code.symbols", "code.map", "code.def", "code.refs", "code.impact", "mcp_find":
 		return "read"
+	case "web.fetch":
+		return "network"
 	case "patch", "memory":
 		return "write"
 	case "run":
@@ -464,6 +466,8 @@ func redactedToolArguments(act *action) map[string]any {
 		args["path"] = act.Path
 	case "search":
 		args["pattern"] = act.Pattern
+	case "web.fetch":
+		args["host"] = webFetchHost(act.URL)
 	case "run":
 		args["argc"] = len(act.Command)
 		if len(act.Command) > 0 {

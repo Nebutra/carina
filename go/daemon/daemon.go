@@ -301,6 +301,7 @@ type Daemon struct {
 	liveModelsMu             sync.Mutex
 	liveModelsCache          map[string]liveModelsCacheEntry
 	liveModelsHTTP           *http.Client     // optional; tests inject httptest; nil => default client
+	webFetchHTTP             *http.Client     // optional; tests inject a deterministic transport
 	disabledProviders        map[string]bool  // normalized provider IDs blocked before registration and task routing
 	usage                    *usageStore      // durable per-task/session model usage and cost accounting
 	goals                    *goalStore       // one durable operator-controlled goal per session

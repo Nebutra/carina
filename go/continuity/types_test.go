@@ -24,6 +24,9 @@ func TestToolEffectRegistryFailsClosed(t *testing.T) {
 	if got := ClassifyTool("memory", nil); got.ReplaySafe {
 		t.Fatalf("unkeyed external effect must not replay: %+v", got)
 	}
+	if got := ClassifyTool("web.fetch", nil); got.Class != EffectNonIdempotent || got.ReplaySafe {
+		t.Fatalf("web.fetch is time-varying external input and must not replay: %+v", got)
+	}
 }
 
 func TestUnknownEffectIsNotReplaySafe(t *testing.T) {

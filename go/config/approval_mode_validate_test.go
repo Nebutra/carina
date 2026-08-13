@@ -37,3 +37,10 @@ func TestApprovalModeValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultsUseInteractiveAskMode(t *testing.T) {
+	cfg := Defaults("/tmp/home")
+	if cfg.ApprovalMode != "" || !cfg.InteractiveApproval {
+		t.Fatalf("defaults must pause for requires_approval: mode=%q interactive=%v", cfg.ApprovalMode, cfg.InteractiveApproval)
+	}
+}

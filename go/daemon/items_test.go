@@ -705,6 +705,42 @@ func TestProjectSessionItemsExecutionCompletedFallback(t *testing.T) {
 	}
 }
 
+func TestProjectSessionItemsKeepsAskUserInGovernanceOnly(t *testing.T) {
+	items := projectSessionItems("sess_1", []itemAuditEvent{
+		{EventID: "evt_question", SessionID: "sess_1", TaskID: "run_1", Type: "ToolRequested", Payload: map[string]any{
+			"status": "user_question_requested",
+			"request": map[string]any{
+				"question_id": "question_1",
+				"prompt":      "Which city?",
+			},
+		}},
+		{EventID: "evt_call", SessionID: "sess_1", TaskID: "run_1", Type: "ToolCallRequested", Payload: map[string]any{
+			"call_id": "call_1", "tool": "ask_user", "kind": "interaction", "status": "pending",
+		}},
+		{EventID: "evt_started", SessionID: "sess_1", TaskID: "run_1", Type: "ToolCallStarted", Payload: map[string]any{
+			"call_id": "call_1", "tool": "ask_user", "kind": "interaction", "status": "running",
+		}},
+		{EventID: "evt_done", SessionID: "sess_1", TaskID: "run_1", Type: "ToolCallCompleted", Payload: map[string]any{
+			"call_id": "call_1", "tool": "ask_user", "kind": "interaction", "status": "completed",
+		}},
+	})
+	questions, toolCalls := 0, 0
+	for _, event := range items {
+		if event.Item == nil {
+			continue
+		}
+		switch event.Item.Type {
+		case "question":
+			questions++
+		case "tool_call":
+			toolCalls++
+		}
+	}
+	if questions != 1 || toolCalls != 0 {
+		t.Fatalf("ask_user must remain governance-only: questions=%d tool_calls=%d items=%+v", questions, toolCalls, items)
+	}
+}
+
 func assertEventType(t *testing.T, events []SessionItemEvent, typ string) {
 	t.Helper()
 	for _, ev := range events {

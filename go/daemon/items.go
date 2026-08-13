@@ -562,6 +562,9 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 			}
 
 		case "ToolCallRequested":
+			if interactionToolPayload(ev.Payload) {
+				continue
+			}
 			callID := stringField(ev.Payload, "call_id")
 			if callID == "" {
 				callID = fallbackItemID("tool", ev, i)
@@ -578,6 +581,9 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 			out = append(out, itemEvent("item.started", sessionID, ev, item))
 
 		case "ToolCallStarted":
+			if interactionToolPayload(ev.Payload) {
+				continue
+			}
 			callID := stringField(ev.Payload, "call_id")
 			item := toolCalls[callID]
 			if item == nil {
@@ -589,6 +595,9 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 			out = append(out, itemEvent("item.updated", sessionID, ev, item))
 
 		case "ToolCallCompleted", "ToolCallFailed", "ToolCallDenied", "ToolCallCancelled":
+			if interactionToolPayload(ev.Payload) {
+				continue
+			}
 			callID := stringField(ev.Payload, "call_id")
 			item := toolCalls[callID]
 			if item == nil {
@@ -1232,6 +1241,10 @@ func stringField(m map[string]any, key string) string {
 		}
 	}
 	return ""
+}
+
+func interactionToolPayload(payload map[string]any) bool {
+	return stringField(payload, "kind") == "interaction" || stringField(payload, "tool") == "ask_user"
 }
 
 func stringSliceField(m map[string]any, key string) []string {
