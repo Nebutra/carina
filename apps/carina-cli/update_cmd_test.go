@@ -63,7 +63,7 @@ func TestStandaloneUpdateDownloadsVerifiesAndReplacesWholeBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "updated 0.8.19 -> 0.8.20") || !strings.Contains(out, "restart the current workspace runtime") {
+	if !strings.Contains(out, "updated 0.8.20 -> 0.8.20") || !strings.Contains(out, "restart the current workspace runtime") {
 		t.Fatalf("update output missing lifecycle guidance:\n%s", out)
 	}
 	if *assetHits != 2 {
