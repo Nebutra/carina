@@ -343,12 +343,12 @@ mod tests {
             provider("unrelated", "Unrelated"),
         ];
         providers[0].models = vec![
-            model("grok-4.6", "x-ai/grok-4.6", "Grok 4.6"),
-            model("gpt-5", "openai/gpt-5", "GPT-5"),
+            model("openrouter/x-ai/grok-4.6", "x-ai/grok-4.6", "Grok 4.6"),
+            model("openrouter/openai/gpt-5", "openai/gpt-5", "GPT-5"),
         ];
         providers[1].models = vec![
-            model("grok-4.5", "grok-4.5", "Grok 4.5"),
-            model("grok-4.6", "grok-4.6", "Grok 4.6"),
+            model("xai/grok-4.5", "grok-4.5", "Grok 4.5"),
+            model("xai/grok-4.6", "grok-4.6", "Grok 4.6"),
         ];
 
         for query in ["grok", "x-ai/grok-4.6", "Grok 4.5"] {

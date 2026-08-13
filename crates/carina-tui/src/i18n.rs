@@ -1381,7 +1381,7 @@ pub fn text(locale: Locale, id: MessageId) -> &'static str {
         (ZhHans, ConnectProvider) => "连接服务商",
         (ZhHans, ConnectProviderDetail) => "选择 Carina 可在此工作区使用的模型服务。",
         (ZhHans, Providers) => "服务商",
-        (ZhHans, SearchProviders) => "按名称或 ID 搜索全部 {count} 个服务商",
+        (ZhHans, SearchProviders) => "按服务商或模型名称 / ID 搜索全部 {count} 个服务商",
         (ZhHans, NoMatchingProviders) => "没有匹配的服务商",
         (ZhHans, NoMatchingProvidersDetail) => "修改搜索内容，或按 Esc 清空。",
         (ZhHans, Connection) => "连接",
@@ -2291,7 +2291,7 @@ fn en(id: MessageId) -> &'static str {
         ConnectProvider => "Connect a provider",
         ConnectProviderDetail => "Choose the model endpoint Carina may use for this workspace.",
         Providers => "Providers",
-        SearchProviders => "Search all {count} providers by name or ID",
+        SearchProviders => "Search all {count} providers by provider or model name / ID",
         NoMatchingProviders => "No matching providers",
         NoMatchingProvidersDetail => "Change the query or press Esc to clear it.",
         Connection => "Connection",
@@ -2542,7 +2542,7 @@ fn zh_hant(id: MessageId) -> &'static str {
         ConnectProvider => "連接服務商",
         ConnectProviderDetail => "選擇 Carina 可在此工作區使用的模型服務。",
         Providers => "服務商",
-        SearchProviders => "依名稱或 ID 搜尋全部 {count} 個服務商",
+        SearchProviders => "依服務商或模型名稱 / ID 搜尋全部 {count} 個服務商",
         NoMatchingProviders => "沒有符合的服務商",
         NoMatchingProvidersDetail => "修改搜尋內容，或按 Esc 清除。",
         Connection => "連接",
@@ -2811,10 +2811,10 @@ fn translated_compact(id: MessageId, lang: usize) -> &'static str {
         ],
         Providers => ["プロバイダー", "제공자", "Proveedores", "Fournisseurs"],
         SearchProviders => [
-            "名前または ID で全 {count} 件を検索",
-            "이름 또는 ID로 전체 {count}개 검색",
-            "Buscar los {count} proveedores por nombre o ID",
-            "Rechercher les {count} fournisseurs par nom ou ID",
+            "プロバイダーまたはモデルの名前 / ID で全 {count} 件を検索",
+            "공급자 또는 모델 이름 / ID로 전체 {count}개 검색",
+            "Buscar los {count} proveedores por nombre / ID del proveedor o modelo",
+            "Rechercher les {count} fournisseurs par nom / ID du fournisseur ou du modèle",
         ],
         NoMatchingProviders => [
             "一致するプロバイダーがありません",
@@ -7140,7 +7140,7 @@ mod tests {
                 MessageId::SearchProviders,
                 &[("count", "159")]
             ),
-            "按名称或 ID 搜索全部 159 个服务商"
+            "按服务商或模型名称 / ID 搜索全部 159 个服务商"
         );
         assert_eq!(
             count(
@@ -7197,7 +7197,7 @@ mod tests {
                 MessageId::SearchProviders,
                 &[("count", "1\u{1b}[31m")]
             ),
-            "Search all 1[31m providers by name or ID"
+            "Search all 1[31m providers by provider or model name / ID"
         );
     }
 
