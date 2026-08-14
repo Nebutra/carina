@@ -93,6 +93,30 @@ func (e *RuntimeCompatibilityError) Error() string {
 	return fmt.Sprintf("runtime is incompatible with this Carina client: missing RPC methods %v", e.MissingMethods)
 }
 
+// RuntimeConfigurationMismatchError identifies a correctly owned workspace
+// runtime whose last-good configuration does not match the caller's resolved
+// spec. It is deliberately separate from runtime identity: callers may ask
+// the verified endpoint to reload, or replace an idle owned process, without
+// weakening the workspace/runtime/socket/epoch proof.
+type RuntimeConfigurationMismatchError struct {
+	Description         RuntimeDescription
+	ExpectedFingerprint string
+	ObservedFingerprint string
+	RefreshError        error
+}
+
+func (e *RuntimeConfigurationMismatchError) Error() string {
+	message := fmt.Sprintf(
+		"runtime configuration mismatch: expected %q, observed %q",
+		e.ExpectedFingerprint,
+		e.ObservedFingerprint,
+	)
+	if e.RefreshError != nil {
+		message += ": refresh failed: " + e.RefreshError.Error()
+	}
+	return message
+}
+
 // Connect dials and validates a runtime without starting it.
 func Connect(spec localruntime.Spec) (*rpc.Client, RuntimeDescription, error) {
 	if err := spec.Validate(); err != nil {
@@ -136,15 +160,29 @@ func ConnectOrStart(spec localruntime.Spec) (*rpc.Client, RuntimeDescription, er
 		return client, description, nil
 	}
 	var compatibility *RuntimeCompatibilityError
-	if errors.As(err, &compatibility) {
-		if len(compatibility.Description.Obligations) > 0 {
-			return nil, RuntimeDescription{}, fmt.Errorf("runtime upgrade deferred while active obligations remain: %v: %w", compatibility.Description.Obligations, compatibility)
+	var configuration *RuntimeConfigurationMismatchError
+	switch {
+	case errors.As(err, &compatibility):
+		description = compatibility.Description
+		if len(description.Obligations) > 0 {
+			return nil, RuntimeDescription{}, fmt.Errorf("runtime upgrade deferred while active obligations remain: %v: %w", description.Obligations, compatibility)
 		}
+	case errors.As(err, &configuration):
+		description = configuration.Description
+		if len(description.Obligations) > 0 {
+			return nil, RuntimeDescription{}, fmt.Errorf("runtime configuration refresh deferred while active obligations remain: %v: %w", description.Obligations, configuration)
+		}
+	default:
+		if !errors.Is(err, rpc.ErrDaemonUnreachable) {
+			return nil, RuntimeDescription{}, err
+		}
+	}
+	if compatibility != nil || configuration != nil {
 		if _, stopErr := StopRuntime(spec, false); stopErr != nil {
-			return nil, RuntimeDescription{}, fmt.Errorf("replace incompatible workspace runtime: %w", stopErr)
+			return nil, RuntimeDescription{}, fmt.Errorf("replace stale workspace runtime: %w", stopErr)
 		}
 		if waitErr := waitRuntimeUnreachable(spec.Paths.SocketPath); waitErr != nil {
-			return nil, RuntimeDescription{}, fmt.Errorf("replace incompatible workspace runtime: %w", waitErr)
+			return nil, RuntimeDescription{}, fmt.Errorf("replace stale workspace runtime: %w", waitErr)
 		}
 		err = rpc.ErrDaemonUnreachable
 	}
@@ -193,7 +231,7 @@ func runtimeDescribe(client *rpc.Client, spec localruntime.Spec) (RuntimeDescrip
 	if err := client.Call("runtime.describe", map[string]any{}, &description); err != nil {
 		return RuntimeDescription{}, fmt.Errorf("runtime describe: %w", err)
 	}
-	if err := validateRuntimeDescription(spec, description); err != nil {
+	if err := validateRuntimeIdentity(spec, description); err != nil {
 		return RuntimeDescription{}, err
 	}
 	return description, nil
@@ -220,7 +258,7 @@ func runtimeHandshake(client *rpc.Client, spec localruntime.Spec) (RuntimeDescri
 	}, &initialized); err != nil {
 		return RuntimeDescription{}, fmt.Errorf("runtime initialize: %w", err)
 	}
-	if err := validateRuntimeDescription(spec, initialized.Runtime); err != nil {
+	if err := validateRuntimeIdentity(spec, initialized.Runtime); err != nil {
 		return RuntimeDescription{}, err
 	}
 	if initialized.Runtime.Epoch != description.Epoch {
@@ -232,7 +270,66 @@ func runtimeHandshake(client *rpc.Client, spec localruntime.Spec) (RuntimeDescri
 			MissingMethods: missing,
 		}
 	}
-	return initialized.Runtime, nil
+	return refreshRuntimeConfiguration(client, spec, initialized.Runtime)
+}
+
+func refreshRuntimeConfiguration(client *rpc.Client, spec localruntime.Spec, description RuntimeDescription) (RuntimeDescription, error) {
+	configurationErr := runtimeConfigurationMismatch(spec, description)
+	if configurationErr == nil {
+		return description, nil
+	}
+	var reloaded struct {
+		Reloaded bool `json:"reloaded"`
+	}
+	if err := client.Call("daemon.reload", map[string]any{}, &reloaded); err != nil {
+		return staleRuntimeConfiguration(spec, configurationErr, err)
+	}
+	if !reloaded.Reloaded {
+		return staleRuntimeConfiguration(spec, configurationErr, errors.New("daemon did not confirm reload"))
+	}
+	refreshed, err := RuntimeDescribe(client, spec)
+	if err != nil {
+		if restoreErr := localruntime.WriteSpec(spec.Paths.SpecPath, spec); restoreErr != nil {
+			return RuntimeDescription{}, fmt.Errorf("restore authoritative runtime spec after failed reload: %w", restoreErr)
+		}
+		return RuntimeDescription{}, fmt.Errorf("describe runtime after configuration reload: %w", err)
+	}
+	if refreshed.Epoch != description.Epoch {
+		if restoreErr := localruntime.WriteSpec(spec.Paths.SpecPath, spec); restoreErr != nil {
+			return RuntimeDescription{}, fmt.Errorf("restore authoritative runtime spec after changed reload epoch: %w", restoreErr)
+		}
+		return RuntimeDescription{}, &rpc.Error{
+			Code:    rpc.CodeRuntimeIdentityMismatch,
+			Message: "runtime epoch changed during configuration reload",
+			Data:    map[string]any{"before": description.Epoch, "after": refreshed.Epoch},
+		}
+	}
+	if configurationErr = runtimeConfigurationMismatch(spec, refreshed); configurationErr != nil {
+		return staleRuntimeConfiguration(spec, configurationErr, nil)
+	}
+	return refreshed, nil
+}
+
+func staleRuntimeConfiguration(spec localruntime.Spec, configurationErr *RuntimeConfigurationMismatchError, refreshErr error) (RuntimeDescription, error) {
+	// Older daemons may resolve different compiled defaults and rewrite the
+	// shared spec during reload. Restore the caller's authoritative spec so an
+	// idle replacement starts from the configuration we just validated.
+	if err := localruntime.WriteSpec(spec.Paths.SpecPath, spec); err != nil {
+		return RuntimeDescription{}, fmt.Errorf("restore authoritative runtime spec after stale reload: %w", err)
+	}
+	configurationErr.RefreshError = refreshErr
+	return RuntimeDescription{}, configurationErr
+}
+
+func runtimeConfigurationMismatch(spec localruntime.Spec, description RuntimeDescription) *RuntimeConfigurationMismatchError {
+	if description.ConfigFingerprint == spec.Config.Fingerprint {
+		return nil
+	}
+	return &RuntimeConfigurationMismatchError{
+		Description:         description,
+		ExpectedFingerprint: spec.Config.Fingerprint,
+		ObservedFingerprint: description.ConfigFingerprint,
+	}
 }
 
 func requireRuntimeMethods(available []string, required ...string) error {
@@ -275,18 +372,18 @@ func waitRuntimeUnreachable(socket string) error {
 	return fmt.Errorf("runtime did not stop before restart deadline")
 }
 
-func validateRuntimeDescription(spec localruntime.Spec, description RuntimeDescription) error {
+func validateRuntimeIdentity(spec localruntime.Spec, description RuntimeDescription) error {
 	expected := map[string]string{
 		"mode": string(spec.Mode), "workspace_id": spec.Workspace.ID,
 		"workspace_root": spec.Workspace.CanonicalRoot, "runtime_id": spec.RuntimeID,
 		"socket_path": spec.Paths.SocketPath, "state_dir": spec.Paths.StateDir,
-		"runtime_dir": spec.Paths.RuntimeDir, "config_fingerprint": spec.Config.Fingerprint,
+		"runtime_dir": spec.Paths.RuntimeDir,
 	}
 	observed := map[string]string{
 		"mode": description.Mode, "workspace_id": description.WorkspaceID,
 		"workspace_root": description.WorkspaceRoot, "runtime_id": description.RuntimeID,
 		"socket_path": description.SocketPath, "state_dir": description.StateDir,
-		"runtime_dir": description.RuntimeDir, "config_fingerprint": description.ConfigFingerprint,
+		"runtime_dir": description.RuntimeDir,
 	}
 	mismatches := map[string]map[string]string{}
 	for key, want := range expected {

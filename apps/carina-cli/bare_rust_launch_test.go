@@ -54,6 +54,27 @@ func TestBuildRustUIArgsPassesFirstClassScreenMode(t *testing.T) {
 	}
 }
 
+func TestAppendRuntimeIdentityArgsCarriesVerifiedWorkspaceRuntime(t *testing.T) {
+	got := appendRuntimeIdentityArgs([]string{"--socket", "/tmp/carina.sock"}, &localdaemon.RuntimeDescription{
+		WorkspaceID: "ws1_verified",
+		RuntimeID:   "runtime_verified",
+		Epoch:       "runtime_process",
+	})
+	joined := strings.Join(got, " ")
+	for _, field := range []string{
+		"--expected-workspace-id ws1_verified",
+		"--expected-runtime-id runtime_verified",
+		"--expected-epoch runtime_process",
+	} {
+		if !strings.Contains(joined, field) {
+			t.Fatalf("runtime identity args %#v missing %q", got, field)
+		}
+	}
+	if got := appendRuntimeIdentityArgs([]string{"--socket", "/tmp/legacy.sock"}, nil); !reflect.DeepEqual(got, []string{"--socket", "/tmp/legacy.sock"}) {
+		t.Fatalf("legacy runtime unexpectedly gained workspace identity args: %#v", got)
+	}
+}
+
 func TestBuildRuntimeDiagnosticArgsRetainsSafeRecoveryContext(t *testing.T) {
 	compatibility := &localdaemon.RuntimeCompatibilityError{
 		Description: localdaemon.RuntimeDescription{

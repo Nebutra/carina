@@ -481,6 +481,27 @@ pub struct RuntimeIdentity {
     pub pid: i64,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeExpectation {
+    pub workspace_id: String,
+    pub runtime_id: String,
+    pub epoch: String,
+}
+
+impl RuntimeExpectation {
+    pub fn is_complete(&self) -> bool {
+        !self.workspace_id.trim().is_empty()
+            && !self.runtime_id.trim().is_empty()
+            && !self.epoch.trim().is_empty()
+    }
+
+    pub fn matches(&self, actual: &RuntimeIdentity) -> bool {
+        actual.workspace_id == self.workspace_id
+            && actual.runtime_id == self.runtime_id
+            && actual.epoch == self.epoch
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct RuntimeCapabilities {
     #[serde(default)]
@@ -1580,6 +1601,35 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn runtime_expectation_requires_and_matches_the_complete_attachment() {
+        let expected = RuntimeExpectation {
+            workspace_id: "ws1_verified".into(),
+            runtime_id: "runtime_verified".into(),
+            epoch: "runtime_process".into(),
+        };
+        assert!(expected.is_complete());
+        assert!(expected.matches(&RuntimeIdentity {
+            workspace_id: expected.workspace_id.clone(),
+            runtime_id: expected.runtime_id.clone(),
+            epoch: expected.epoch.clone(),
+            ..RuntimeIdentity::default()
+        }));
+        assert!(
+            !RuntimeExpectation {
+                epoch: " ".into(),
+                ..expected.clone()
+            }
+            .is_complete()
+        );
+        assert!(!expected.matches(&RuntimeIdentity {
+            workspace_id: expected.workspace_id.clone(),
+            runtime_id: expected.runtime_id.clone(),
+            epoch: "runtime_other".into(),
+            ..RuntimeIdentity::default()
+        }));
+    }
 
     #[test]
     fn plan_approval_decodes_canonical_task_and_legacy_execution_fields() {

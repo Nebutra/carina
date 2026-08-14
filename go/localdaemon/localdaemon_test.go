@@ -130,6 +130,177 @@ func TestRuntimeHandshakeRejectsMissingConversationImportMethods(t *testing.T) {
 	}
 }
 
+func TestRuntimeHandshakeReloadsVerifiedRuntimeConfiguration(t *testing.T) {
+	spec := runtimeSpecFixture(t)
+	stale := matchingDescription(spec)
+	stale.ConfigFingerprint = "cfg1_stale"
+	refreshed := stale
+	refreshed.ConfigFingerprint = spec.Config.Fingerprint
+	clientConn, serverConn := net.Pipe()
+	client := rpc.NewClient(clientConn, clientConn, clientConn)
+	t.Cleanup(func() { _ = client.Close() })
+
+	serverDone := make(chan error, 1)
+	go func() {
+		defer serverConn.Close()
+		reader := bufio.NewReader(serverConn)
+		methods := []string{"runtime.describe", "runtime.initialize", "daemon.reload", "runtime.describe"}
+		for index, expectedMethod := range methods {
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				serverDone <- err
+				return
+			}
+			var request struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+			if err := json.Unmarshal(line, &request); err != nil {
+				serverDone <- err
+				return
+			}
+			if request.Method != expectedMethod {
+				serverDone <- errors.New("unexpected runtime handshake method: " + request.Method)
+				return
+			}
+			result := any(stale)
+			switch request.Method {
+			case "runtime.initialize":
+				result = map[string]any{
+					"runtime":      stale,
+					"capabilities": map[string]any{"rpc_methods": requiredRuntimeMethods},
+				}
+			case "daemon.reload":
+				result = map[string]any{"reloaded": true}
+			case "runtime.describe":
+				if index == len(methods)-1 {
+					result = refreshed
+				}
+			}
+			response, err := json.Marshal(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      request.ID,
+				"result":  result,
+			})
+			if err == nil {
+				_, err = serverConn.Write(append(response, '\n'))
+			}
+			if err != nil {
+				serverDone <- err
+				return
+			}
+		}
+		serverDone <- nil
+	}()
+
+	description, err := runtimeHandshake(client, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if description.ConfigFingerprint != spec.Config.Fingerprint || description.Epoch != stale.Epoch {
+		t.Fatalf("refreshed description = %+v", description)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRuntimeIdentitySeparatesConfigurationFreshness(t *testing.T) {
+	spec := runtimeSpecFixture(t)
+	description := matchingDescription(spec)
+	description.ConfigFingerprint = "cfg1_stale"
+	if err := validateRuntimeIdentity(spec, description); err != nil {
+		t.Fatalf("configuration drift rejected as runtime identity: %v", err)
+	}
+	configurationErr := runtimeConfigurationMismatch(spec, description)
+	if configurationErr == nil {
+		t.Fatal("stale configuration accepted as fresh")
+	}
+	if configurationErr.Description.Epoch != description.Epoch || configurationErr.ExpectedFingerprint != spec.Config.Fingerprint {
+		t.Fatalf("configuration mismatch lost verified runtime evidence: %+v", configurationErr)
+	}
+
+	description.RuntimeID = "runtime_wrong"
+	var rpcErr *rpc.Error
+	if err := validateRuntimeIdentity(spec, description); !errors.As(err, &rpcErr) || rpcErr.Code != rpc.CodeRuntimeIdentityMismatch {
+		t.Fatalf("runtime identity mismatch = %v, want rpc code %d", err, rpc.CodeRuntimeIdentityMismatch)
+	}
+}
+
+func TestStaleRuntimeReloadRestoresAuthoritativeSpecBeforeReplacement(t *testing.T) {
+	spec := runtimeSpecFixture(t)
+	stale := matchingDescription(spec)
+	stale.ConfigFingerprint = "cfg1_stale"
+	clientConn, serverConn := net.Pipe()
+	client := rpc.NewClient(clientConn, clientConn, clientConn)
+	t.Cleanup(func() { _ = client.Close() })
+
+	serverDone := make(chan error, 1)
+	go func() {
+		defer serverConn.Close()
+		reader := bufio.NewReader(serverConn)
+		for _, expectedMethod := range []string{"daemon.reload", "runtime.describe"} {
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				serverDone <- err
+				return
+			}
+			var request struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+			if err := json.Unmarshal(line, &request); err != nil {
+				serverDone <- err
+				return
+			}
+			if request.Method != expectedMethod {
+				serverDone <- errors.New("unexpected runtime refresh method: " + request.Method)
+				return
+			}
+			result := any(map[string]any{"reloaded": true})
+			if request.Method == "daemon.reload" {
+				staleSpec := spec
+				staleSpec.Config.Fingerprint = stale.ConfigFingerprint
+				if err := localruntime.WriteSpec(staleSpec.Paths.SpecPath, staleSpec); err != nil {
+					serverDone <- err
+					return
+				}
+			} else {
+				result = stale
+			}
+			response, err := json.Marshal(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      request.ID,
+				"result":  result,
+			})
+			if err == nil {
+				_, err = serverConn.Write(append(response, '\n'))
+			}
+			if err != nil {
+				serverDone <- err
+				return
+			}
+		}
+		serverDone <- nil
+	}()
+
+	_, err := refreshRuntimeConfiguration(client, spec, stale)
+	var configurationErr *RuntimeConfigurationMismatchError
+	if !errors.As(err, &configurationErr) {
+		t.Fatalf("refresh error = %v, want RuntimeConfigurationMismatchError", err)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+	restored, err := localruntime.LoadSpec(spec.Paths.SpecPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Config.Fingerprint != spec.Config.Fingerprint {
+		t.Fatalf("restored fingerprint = %q, want %q", restored.Config.Fingerprint, spec.Config.Fingerprint)
+	}
+}
+
 func TestEnsureReachableSpawnsOnceThenSucceeds(t *testing.T) {
 	origDial, origSpawn := Dial, Spawn
 	t.Cleanup(func() { Dial, Spawn = origDial, origSpawn })
@@ -333,6 +504,32 @@ func TestConnectOrStartDoesNotReplaceIncompatibleRuntimeWithObligations(t *testi
 	}
 	if spawns != 0 {
 		t.Fatalf("active incompatible runtime triggered %d spawn(s)", spawns)
+	}
+}
+
+func TestConnectOrStartDoesNotReplaceStaleConfigurationWithObligations(t *testing.T) {
+	spec := runtimeSpecFixture(t)
+	description := matchingDescription(spec)
+	description.ConfigFingerprint = "cfg1_stale"
+	description.Obligations = []string{"execution:run_active"}
+	origDial, origSpawn, origHandshake := Dial, SpawnRuntime, RuntimeHandshake
+	t.Cleanup(func() { Dial, SpawnRuntime, RuntimeHandshake = origDial, origSpawn, origHandshake })
+	Dial = func(string) (*rpc.Client, error) { return &rpc.Client{}, nil }
+	spawns := 0
+	SpawnRuntime = func(localruntime.Spec) error { spawns++; return nil }
+	RuntimeHandshake = func(*rpc.Client, localruntime.Spec) (RuntimeDescription, error) {
+		return RuntimeDescription{}, &RuntimeConfigurationMismatchError{
+			Description:         description,
+			ExpectedFingerprint: spec.Config.Fingerprint,
+			ObservedFingerprint: description.ConfigFingerprint,
+		}
+	}
+
+	if _, _, err := ConnectOrStart(spec); err == nil || !strings.Contains(err.Error(), "configuration refresh deferred") {
+		t.Fatalf("ConnectOrStart error = %v, want retained obligation diagnosis", err)
+	}
+	if spawns != 0 {
+		t.Fatalf("active stale runtime triggered %d spawn(s)", spawns)
 	}
 }
 

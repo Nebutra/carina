@@ -178,16 +178,32 @@ impl Client {
     }
 
     pub fn initialize(&mut self) -> Result<RuntimeInitialize, RpcError> {
-        let initialized: RuntimeInitialize = self.call(
-            "runtime.initialize",
-            &json!({
-                "protocol_version": "1.3.0",
-                "schema_version": "1.2.0",
-                "projection_version": "1.0.0",
-                "client_name": "carina-tui-rs",
-                "client_version": env!("CARGO_PKG_VERSION"),
-            }),
-        )?;
+        self.initialize_expected(None)
+    }
+
+    pub fn initialize_expected(
+        &mut self,
+        expected: Option<&RuntimeExpectation>,
+    ) -> Result<RuntimeInitialize, RpcError> {
+        let mut params = json!({
+            "protocol_version": "1.3.0",
+            "schema_version": "1.2.0",
+            "projection_version": "1.0.0",
+            "client_name": "carina-tui-rs",
+            "client_version": env!("CARGO_PKG_VERSION"),
+        });
+        if let Some(expected) = expected {
+            if !expected.is_complete() {
+                return Err(RpcError::Protocol(
+                    "expected runtime identity requires non-empty workspace, runtime, and epoch"
+                        .into(),
+                ));
+            }
+            params["expected_workspace_id"] = Value::String(expected.workspace_id.clone());
+            params["expected_runtime_id"] = Value::String(expected.runtime_id.clone());
+            params["expected_epoch"] = Value::String(expected.epoch.clone());
+        }
+        let initialized: RuntimeInitialize = self.call("runtime.initialize", &params)?;
         initialized.require_methods(&[
             "execution.retry",
             "execution.start",
@@ -196,6 +212,13 @@ impl Client {
             "session.events.stream",
             "session.list",
         ])?;
+        if let Some(expected) = expected
+            && !expected.matches(&initialized.runtime)
+        {
+            return Err(RpcError::Protocol(
+                "runtime.initialize returned mismatched launcher-verified identity".into(),
+            ));
+        }
         Ok(initialized)
     }
 
@@ -1017,6 +1040,69 @@ mod tests {
             .is_ambiguous_delivery()
         );
         assert!(!RpcError::EventFrame("malformed event".into()).is_ambiguous_delivery());
+    }
+
+    #[test]
+    fn initialize_sends_launcher_verified_runtime_identity() {
+        let nonce = NEXT_MEDIA_UPLOAD_ID.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "carina-tui-runtime-identity-rpc-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let socket = root.join("daemon.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let request: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["method"], "runtime.initialize");
+            assert_eq!(request["params"]["expected_workspace_id"], "ws1_verified");
+            assert_eq!(request["params"]["expected_runtime_id"], "runtime_verified");
+            assert_eq!(request["params"]["expected_epoch"], "runtime_process");
+            writeln!(
+                stream,
+                "{}",
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": request["id"],
+                    "result": {
+                        "runtime_version": "0.8.22",
+                        "protocol_version": "1.3.0",
+                        "projection_version": "1.0.0",
+                        "capabilities": {"rpc_methods": [
+                            "execution.retry",
+                            "execution.start",
+                            "model.list",
+                            "session.create",
+                            "session.events.stream",
+                            "session.list"
+                        ]},
+                        "runtime": {
+                            "workspace_id": "ws1_verified",
+                            "runtime_id": "runtime_verified",
+                            "epoch": "runtime_process"
+                        }
+                    }
+                })
+            )
+            .unwrap();
+        });
+
+        let runtime = Client::connect(&socket)
+            .unwrap()
+            .initialize_expected(Some(&RuntimeExpectation {
+                workspace_id: "ws1_verified".into(),
+                runtime_id: "runtime_verified".into(),
+                epoch: "runtime_process".into(),
+            }))
+            .unwrap();
+        assert_eq!(runtime.runtime.runtime_id, "runtime_verified");
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

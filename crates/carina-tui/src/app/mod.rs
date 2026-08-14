@@ -130,6 +130,7 @@ type TranscriptRenderCache = HashMap<String, TranscriptRenderCacheEntry>;
 pub struct Options {
     pub socket: PathBuf,
     pub workspace: PathBuf,
+    pub runtime_expectation: Option<crate::rpc::RuntimeExpectation>,
     pub session_id: Option<String>,
     pub locale: Option<String>,
     pub locale_path: Option<PathBuf>,
@@ -854,7 +855,9 @@ impl App {
         crate::clipboard_image::cleanup_orphaned_temp_images();
         let mut rpc = Client::connect(&options.socket)
             .with_context(|| format!("connect {}", options.socket.display()))?;
-        let runtime = rpc.initialize().context("initialize runtime protocol")?;
+        let runtime = rpc
+            .initialize_expected(options.runtime_expectation.as_ref())
+            .context("initialize runtime protocol")?;
         if let Some(handoff) = options.screen_handoff.as_ref()
             && !screen_handoff_identity_matches(
                 options.session_id.as_deref(),

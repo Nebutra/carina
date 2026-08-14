@@ -44,6 +44,7 @@ pub mod transcript;
 
 pub use app::{AltScreenPolicy, Options, Outcome, RuntimeModeChoice, choose_runtime_mode, run};
 pub use native_scrollback::ScrollbackWrap;
+pub use rpc::RuntimeExpectation;
 pub use startup_diagnostic::{
     RuntimeDiagnosticOptions, RuntimeDiagnosticOutcome, run_runtime_diagnostic,
 };

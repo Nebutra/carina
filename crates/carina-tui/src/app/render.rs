@@ -9361,6 +9361,7 @@ mod transcript_tests {
         let mut app = App::bootstrap(super::super::Options {
             socket,
             workspace: root.clone(),
+            runtime_expectation: None,
             session_id: None,
             locale: None,
             locale_path: None,

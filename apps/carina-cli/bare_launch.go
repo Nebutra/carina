@@ -156,6 +156,7 @@ func prepareRustUILaunch(opts interactiveOptions) (rustUILaunch, error) {
 	}
 
 	var socket string
+	var runtimeDescription *localdaemon.RuntimeDescription
 	if mode == localruntime.ModeWorkspace {
 		resolution, resolveErr := localruntime.Resolve(home, workspace, mode)
 		if resolveErr != nil {
@@ -167,7 +168,7 @@ func prepareRustUILaunch(opts interactiveOptions) (rustUILaunch, error) {
 				return rustUILaunch{}, resolveErr
 			}
 		}
-		client, _, connectErr := connectOrStartRuntime(resolution.Spec)
+		client, description, connectErr := connectOrStartRuntime(resolution.Spec)
 		if connectErr != nil {
 			var compatibility *localdaemon.RuntimeCompatibilityError
 			if errors.As(connectErr, &compatibility) {
@@ -188,6 +189,7 @@ func prepareRustUILaunch(opts interactiveOptions) (rustUILaunch, error) {
 		_ = client.Close()
 		workspace = resolution.Workspace.CanonicalRoot
 		socket = resolution.Spec.Paths.SocketPath
+		runtimeDescription = &description
 	} else {
 		cfg, loadErr := config.Load(home, workspace)
 		if loadErr != nil {
@@ -222,7 +224,20 @@ func prepareRustUILaunch(opts interactiveOptions) (rustUILaunch, error) {
 		carinaBinary,
 		altScreen,
 	)
+	args = appendRuntimeIdentityArgs(args, runtimeDescription)
 	return rustUILaunch{Binary: uiBinary, Args: args}, nil
+}
+
+func appendRuntimeIdentityArgs(args []string, description *localdaemon.RuntimeDescription) []string {
+	if description == nil {
+		return args
+	}
+	return append(
+		args,
+		"--expected-workspace-id", description.WorkspaceID,
+		"--expected-runtime-id", description.RuntimeID,
+		"--expected-epoch", description.Epoch,
+	)
 }
 
 func buildRuntimeDiagnosticArgs(opts interactiveOptions, workspace, locale, carinaBinary, logPath string, compatibility *localdaemon.RuntimeCompatibilityError) []string {

@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use carina_tui::app::{ScreenMode, read_screen_handoff};
 use carina_tui::density::DensityMode;
 use carina_tui::glyphs::GlyphPreference;
 use carina_tui::i18n::Locale;
 use carina_tui::{
-    Options, RuntimeDiagnosticOptions, RuntimeDiagnosticOutcome, choose_runtime_mode, run,
-    run_runtime_diagnostic,
+    Options, RuntimeDiagnosticOptions, RuntimeDiagnosticOutcome, RuntimeExpectation,
+    choose_runtime_mode, run, run_runtime_diagnostic,
 };
 use clap::Parser;
 
@@ -18,6 +18,12 @@ struct Args {
     socket: Option<PathBuf>,
     #[arg(long)]
     workspace: Option<PathBuf>,
+    #[arg(long, hide = true)]
+    expected_workspace_id: Option<String>,
+    #[arg(long, hide = true)]
+    expected_runtime_id: Option<String>,
+    #[arg(long, hide = true)]
+    expected_epoch: Option<String>,
     #[arg(long)]
     session: Option<String>,
     #[arg(long)]
@@ -171,9 +177,23 @@ fn try_main() -> Result<i32> {
     let carina_bin = args
         .carina_bin
         .or_else(|| std::env::var_os("CARINA_BIN").map(PathBuf::from));
+    let runtime_expectation = match (
+        args.expected_workspace_id,
+        args.expected_runtime_id,
+        args.expected_epoch,
+    ) {
+        (None, None, None) => None,
+        (Some(workspace_id), Some(runtime_id), Some(epoch)) => Some(RuntimeExpectation {
+            workspace_id,
+            runtime_id,
+            epoch,
+        }),
+        _ => bail!("expected runtime identity requires workspace, runtime, and epoch"),
+    };
     let outcome = run(Options {
         socket,
         workspace,
+        runtime_expectation,
         session_id: args.session,
         locale: args.locale,
         locale_path: args.locale_path,
