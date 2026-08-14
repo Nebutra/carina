@@ -13,6 +13,64 @@ import (
 	"github.com/Nebutra/carina/go/rpc"
 )
 
+func TestSessionItemsWatermarkIsRawAuditSnapshotAndLegacyStaysBare(t *testing.T) {
+	d := newDaemonAt(t, t.TempDir())
+	defer d.Close()
+	workspace := t.TempDir()
+	sess, err := d.store.CreateSession(workspace, "safe-edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.kern.InitSession(sess.SessionID, workspace, "safe-edit"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := d.kern.RecordEvent(sess.SessionID, "ExternalEvent", "", "go", map[string]any{"index": i}, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	legacy, err := d.handleSessionItems(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyItems, ok := legacy.([]SessionItemEvent)
+	if !ok || len(legacyItems) != 1 {
+		t.Fatalf("legacy response changed shape or projection: %#v", legacy)
+	}
+
+	result, err := d.handleSessionItems(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID, "watermark_version": 1,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, ok := result.(SessionItemsSnapshot)
+	if !ok {
+		t.Fatalf("watermark response = %#v", result)
+	}
+	if snapshot.SessionID != sess.SessionID || snapshot.DurableCursor != 3 || len(snapshot.Items) != 1 {
+		t.Fatalf("watermark must count raw audit holes: %+v", snapshot)
+	}
+	if snapshot.DurableCursor == len(snapshot.Items) {
+		t.Fatal("durable cursor was incorrectly derived from projected items")
+	}
+}
+
+func TestSessionItemsWatermarkRejectsVersionAndPaginationMixes(t *testing.T) {
+	for _, params := range []map[string]any{
+		{"session_id": "sess", "watermark_version": 0},
+		{"session_id": "sess", "watermark_version": 2},
+		{"session_id": "sess", "watermark_version": nil},
+		{"session_id": "sess", "watermark_version": 1, "limit": 10},
+		{"session_id": "sess", "watermark_version": 1, "cursor": nil},
+	} {
+		if _, err := (&Daemon{}).handleSessionItems(mustJSON(t, params)); err == nil {
+			t.Fatalf("invalid watermark params accepted: %#v", params)
+		}
+	}
+}
+
 func TestPaginateSessionItemsStableCursor(t *testing.T) {
 	authority := &projectionCursorAuthority{key: []byte("01234567890123456789012345678901")}
 	epoch := "epoch-1"
@@ -435,6 +493,39 @@ func TestProjectSessionItemsPreservesToolTimeout(t *testing.T) {
 	}
 }
 
+func TestProjectSessionItemsKeepsAskUserInGovernanceOnly(t *testing.T) {
+	events := []itemAuditEvent{
+		{EventID: "evt_1", SessionID: "sess_1", TaskID: "task_1", Type: "ToolCallRequested", Payload: map[string]any{
+			"call_id": "call_1", "tool": "ask_user", "kind": "interaction", "status": "pending",
+			"intent": "Need a location before querying weather",
+		}},
+		{EventID: "evt_2", SessionID: "sess_1", TaskID: "task_1", Type: "ToolRequested", Payload: map[string]any{
+			"status": "user_question_requested", "question_id": "question_1",
+			"request": map[string]any{"prompt": "Which city?"},
+		}},
+		{EventID: "evt_3", SessionID: "sess_1", TaskID: "task_1", Type: "ToolCallCompleted", Payload: map[string]any{
+			"call_id": "call_1", "tool": "ask_user", "kind": "interaction", "status": "completed",
+		}},
+	}
+
+	items := projectSessionItems("sess_1", events)
+	var questions, toolCalls int
+	for _, event := range items {
+		if event.Item == nil {
+			continue
+		}
+		switch event.Item.Type {
+		case "question":
+			questions++
+		case "tool_call":
+			toolCalls++
+		}
+	}
+	if questions != 1 || toolCalls != 0 {
+		t.Fatalf("ask_user must have one governance owner: questions=%d tool_calls=%d items=%+v", questions, toolCalls, items)
+	}
+}
+
 func TestProjectSessionItemsMergesLifecycleOwnedCommandDetails(t *testing.T) {
 	events := []itemAuditEvent{
 		{EventID: "evt_1", SessionID: "sess_1", TaskID: "task_1", Type: "ToolCallRequested", Payload: map[string]any{
@@ -702,42 +793,6 @@ func TestProjectSessionItemsExecutionCompletedFallback(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("ExecutionCompleted summary not projected: %+v", items)
-	}
-}
-
-func TestProjectSessionItemsKeepsAskUserInGovernanceOnly(t *testing.T) {
-	items := projectSessionItems("sess_1", []itemAuditEvent{
-		{EventID: "evt_question", SessionID: "sess_1", TaskID: "run_1", Type: "ToolRequested", Payload: map[string]any{
-			"status": "user_question_requested",
-			"request": map[string]any{
-				"question_id": "question_1",
-				"prompt":      "Which city?",
-			},
-		}},
-		{EventID: "evt_call", SessionID: "sess_1", TaskID: "run_1", Type: "ToolCallRequested", Payload: map[string]any{
-			"call_id": "call_1", "tool": "ask_user", "kind": "interaction", "status": "pending",
-		}},
-		{EventID: "evt_started", SessionID: "sess_1", TaskID: "run_1", Type: "ToolCallStarted", Payload: map[string]any{
-			"call_id": "call_1", "tool": "ask_user", "kind": "interaction", "status": "running",
-		}},
-		{EventID: "evt_done", SessionID: "sess_1", TaskID: "run_1", Type: "ToolCallCompleted", Payload: map[string]any{
-			"call_id": "call_1", "tool": "ask_user", "kind": "interaction", "status": "completed",
-		}},
-	})
-	questions, toolCalls := 0, 0
-	for _, event := range items {
-		if event.Item == nil {
-			continue
-		}
-		switch event.Item.Type {
-		case "question":
-			questions++
-		case "tool_call":
-			toolCalls++
-		}
-	}
-	if questions != 1 || toolCalls != 0 {
-		t.Fatalf("ask_user must remain governance-only: questions=%d tool_calls=%d items=%+v", questions, toolCalls, items)
 	}
 }
 

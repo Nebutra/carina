@@ -23,6 +23,8 @@ const (
 	protocolGemini          runtimeProtocol = "gemini"
 	protocolOpenAIChat      runtimeProtocol = "openai-chat"
 	protocolOpenAIResponses runtimeProtocol = "openai-responses"
+	grokBuildActionDisabled                 = "disabled"
+	grokBuildDisabledReason                 = "Grok Build is disabled by configuration"
 )
 
 var defaultProviderBaseURL = map[string]string{
@@ -67,10 +69,11 @@ type providerQuirk struct {
 	Body    map[string]json.RawMessage
 }
 
-func loadRuntimeProviderCatalog(offline bool) provider.Catalog {
+func loadRuntimeProviderCatalog(offline bool, disabled map[string]bool) provider.Catalog {
+	grokBuildDisabled := disabled[provider.GrokBuildProviderID]
 	cachePath, err := provider.DefaultCachePath()
 	if err != nil {
-		return mergeLocalProviderDiscoveries(provider.Seed())
+		return mergeLocalProviderDiscoveries(provider.Seed(), !offline && !grokBuildDisabled, grokBuildDisabled)
 	}
 	strategy := provider.RefreshOnlineIfUncached
 	if offline {
@@ -83,17 +86,45 @@ func loadRuntimeProviderCatalog(offline bool) provider.Catalog {
 	defer cancel()
 	cat, err := provider.LoadWithStrategy(ctx, provider.Options{CachePath: cachePath, ModelsURL: os.Getenv("CARINA_MODELS_URL")}, strategy)
 	if err != nil || len(cat) == 0 {
-		return mergeLocalProviderDiscoveries(provider.Seed())
+		return mergeLocalProviderDiscoveries(provider.Seed(), !offline && !grokBuildDisabled, grokBuildDisabled)
 	}
-	return mergeLocalProviderDiscoveries(mergeBuiltinRuntimeProviders(cat))
+	return mergeLocalProviderDiscoveries(mergeBuiltinRuntimeProviders(cat), !offline && !grokBuildDisabled, grokBuildDisabled)
 }
 
-func mergeLocalProviderDiscoveries(cat provider.Catalog) provider.Catalog {
+func mergeLocalProviderDiscoveries(cat provider.Catalog, discoverGrokBuild, grokBuildDisabled bool) provider.Catalog {
+	if grokBuildDisabled {
+		cat = mergeDisabledGrokBuildProvider(cat)
+	} else if discoverGrokBuild {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		discovery := provider.DetectGrokBuild(ctx)
+		cancel()
+		cat = provider.MergeGrokBuildProvider(cat, discovery)
+	}
 	profiles, err := provider.DetectCCSwitchProviders("")
 	if err != nil || len(profiles) == 0 {
 		return cat
 	}
 	return provider.MergeCCSwitchProviders(cat, profiles)
+}
+
+func mergeDisabledGrokBuildProvider(base provider.Catalog) provider.Catalog {
+	merged := make(provider.Catalog, len(base)+1)
+	for id, info := range base {
+		if normalizeProviderID(id) != provider.GrokBuildProviderID {
+			merged[id] = info
+		}
+	}
+	merged[provider.GrokBuildProviderID] = provider.Info{
+		ID: provider.GrokBuildProviderID, Name: provider.GrokBuildSourceLabel,
+		Source: &provider.Source{
+			Kind: provider.GrokBuildSourceKind, Label: provider.GrokBuildSourceLabel, App: "grok",
+			Route: provider.GrokBuildRouteCLIOAuth, AuthMode: provider.GrokBuildAuthModeCLIOAuth,
+			CredentialOwner: provider.GrokBuildCredentialOwner, Action: grokBuildActionDisabled,
+			Rank: -100, Current: false, Importable: false, Reason: grokBuildDisabledReason,
+		},
+		Models: map[string]provider.Model{},
+	}
+	return merged
 }
 
 func mergeBuiltinRuntimeProviders(cat provider.Catalog) provider.Catalog {
@@ -139,6 +170,12 @@ func hasRunnableRuntimeProvider(cat provider.Catalog, disabledProviders []string
 func hasRunnableRuntimeProviderSet(cat provider.Catalog, disabled map[string]bool, store *auth.Store) bool {
 	for _, info := range orderedRuntimeProviders(cat) {
 		if disabled[normalizeProviderID(info.ID)] {
+			continue
+		}
+		if runtimeProviderUsesGrokBuild(info) {
+			if info.Source.Current && info.Source.Action == provider.GrokBuildActionUseSession {
+				return true
+			}
 			continue
 		}
 		if detectRuntimeProtocol(info) == protocolUnsupported {
@@ -196,6 +233,9 @@ func buildRuntimeProvider(info provider.Info, store *auth.Store) modelrouter.Pro
 		return nil
 	}
 	info.ID = id
+	if runtimeProviderUsesGrokBuild(info) {
+		return nil
+	}
 	protocol := detectRuntimeProtocol(info)
 	if protocol == protocolUnsupported {
 		return nil
@@ -236,6 +276,12 @@ func runtimeProviderErrorName(info provider.Info) string {
 		}
 	}
 	return normalizeProviderID(info.ID)
+}
+
+func runtimeProviderUsesGrokBuild(info provider.Info) bool {
+	return info.Source != nil &&
+		info.Source.Kind == provider.GrokBuildSourceKind &&
+		normalizeProviderID(info.ID) == provider.GrokBuildProviderID
 }
 
 func runtimeProviderAuthChain(info provider.Info, store *auth.Store) *auth.Chain {

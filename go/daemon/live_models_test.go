@@ -96,6 +96,7 @@ func TestApplyLiveModelsAuthBearerAndAnthropic(t *testing.T) {
 }
 
 func TestModelListExpandsLiveModelsWithToken(t *testing.T) {
+	isolateLocalGrokBuild(t)
 	var sawAuth atomic.Value
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" {
@@ -245,6 +246,7 @@ func TestModelListFallsBackToCatalogWhenLiveFails(t *testing.T) {
 }
 
 func TestModelListSkipsLiveFetchWithoutCredential(t *testing.T) {
+	isolateLocalGrokBuild(t)
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)

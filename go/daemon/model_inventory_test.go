@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -103,6 +104,157 @@ func TestModelListReportsAvailabilityWithoutSecrets(t *testing.T) {
 	}
 }
 
+func TestModelListMarksReadyGrokBuildModelsDynamic(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	home := t.TempDir()
+	binDir := filepath.Join(home, "bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(binDir, "grok")
+	fixture := `#!/bin/sh
+case "$1" in
+  --version)
+    printf '%s\n' 'grok 1.0.3 (fixture)'
+    ;;
+  models)
+    printf 'You are logged in with grok.com.\n\nDefault model: grok-4.6\n\nAvailable models:\n  * grok-4.6 (default)\n  - grok-4.5\n'
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+`
+	if err := os.WriteFile(bin, []byte(fixture), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	t.Setenv("HOME", home)
+	t.Setenv("GROK_HOME", home)
+	t.Setenv("GROK_AUTH_PATH", "")
+	provider.InvalidateGrokBuildDiscovery()
+	t.Cleanup(provider.InvalidateGrokBuildDiscovery)
+
+	d := &Daemon{router: modelrouter.New(), providerCatalog: provider.Catalog{}}
+	routerReasoner := newRouterReasonerWithCatalog(d.router, "default", d.providerCatalog)
+	d.reasoner = routerReasoner
+	d.reasonerBackend = reasonerBackendRouter
+	t.Cleanup(routerReasoner.Close)
+	result, err := d.handleModelList(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findGrokBuild := func(result any) (modelInventoryProvider, bool) {
+		for _, row := range result.(map[string]any)["providers"].([]modelInventoryProvider) {
+			if row.ID == provider.GrokBuildProviderID {
+				return row, true
+			}
+		}
+		return modelInventoryProvider{}, false
+	}
+	row, found := findGrokBuild(result)
+	if !found {
+		t.Fatalf("Grok Build missing from inventory: %+v", result)
+	}
+	if !row.Registered || !row.Available || !row.DynamicModels {
+		t.Fatalf("ready Grok Build row = %+v", row)
+	}
+	modelIDs := make([]string, 0, len(row.Models))
+	for _, model := range row.Models {
+		modelIDs = append(modelIDs, model.ID)
+	}
+	if got, want := strings.Join(modelIDs, ","), "grok-build/grok-4.6,grok-build/grok-4.5"; got != want {
+		t.Fatalf("Grok Build models = %q, want %q", got, want)
+	}
+
+	for _, backend := range []string{reasonerBackendClaudeCLI, reasonerBackendCodexCLI} {
+		d.reasoner = modelInventoryTestReasoner{name: backend}
+		d.reasonerBackend = backend
+		result, err = d.handleModelList(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, found = findGrokBuild(result)
+		if !found {
+			t.Fatalf("Grok Build should remain discoverable under %s", backend)
+		}
+		if row.Registered || row.Available {
+			t.Fatalf("Grok Build must not be runnable under %s: %+v", backend, row)
+		}
+		for _, model := range row.Models {
+			if model.Available {
+				t.Fatalf("Grok Build model must not be runnable under %s: %+v", backend, model)
+			}
+		}
+	}
+}
+
+func TestModelListRefreshDiscoversNewGrokBuildOnlyUnderRouter(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	home := t.TempDir()
+	binDir := filepath.Join(home, "bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	t.Setenv("HOME", home)
+	t.Setenv("GROK_HOME", home)
+	t.Setenv("GROK_AUTH_PATH", "")
+	provider.InvalidateGrokBuildDiscovery()
+	t.Cleanup(provider.InvalidateGrokBuildDiscovery)
+
+	d := &Daemon{router: modelrouter.New(), providerCatalog: provider.Catalog{}}
+	routerReasoner := newRouterReasonerWithCatalog(d.router, "default", d.providerCatalog)
+	d.reasoner = routerReasoner
+	d.reasonerBackend = reasonerBackendRouter
+	t.Cleanup(routerReasoner.Close)
+
+	result, err := d.handleModelList(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range result.(map[string]any)["providers"].([]modelInventoryProvider) {
+		if row.ID == provider.GrokBuildProviderID {
+			t.Fatalf("absent Grok Build was advertised: %+v", row)
+		}
+	}
+
+	bin := filepath.Join(binDir, "grok")
+	fixture := `#!/bin/sh
+case "$1" in
+  --version)
+    printf '%s\n' 'grok 1.0.3 (fixture)'
+    ;;
+  models)
+    printf 'You are logged in with grok.com.\n\nDefault model: grok-4.6\n\nAvailable models:\n  * grok-4.6 (default)\n'
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+`
+	if err := os.WriteFile(bin, []byte(fixture), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	result, err = d.handleModelList(json.RawMessage(`{"refresh":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range result.(map[string]any)["providers"].([]modelInventoryProvider) {
+		if row.ID == provider.GrokBuildProviderID {
+			if !row.Registered || !row.Available || len(row.Models) != 1 || !row.Models[0].Available {
+				t.Fatalf("refreshed Grok Build route = %+v", row)
+			}
+			return
+		}
+	}
+	t.Fatal("new Grok Build installation was not discovered after refresh")
+}
+
 func TestModelListReportsConcreteDefaultAndDaemonOwnedReasoner(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "inventory-key")
 	d, _ := newLoopDaemon(t)
@@ -127,6 +279,7 @@ func TestModelListReportsConcreteDefaultAndDaemonOwnedReasoner(t *testing.T) {
 }
 
 func TestModelListBecomesExecutionReadyAfterCredentialWriteWithoutDaemonRestart(t *testing.T) {
+	isolateLocalGrokBuild(t)
 	store, err := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -228,6 +381,7 @@ func TestModelListRequiresExplicitKeylessLocalEndpoint(t *testing.T) {
 }
 
 func TestModelListPublishesInputAndToolCapabilities(t *testing.T) {
+	isolateLocalGrokBuild(t)
 	store, _ := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
 	if err := store.SetAPIKey("vision", "secret", nil); err != nil {
 		t.Fatal(err)
@@ -294,6 +448,7 @@ func TestModelListProjectsCanonicalVisionCapabilitiesThroughCCSwitch(t *testing.
 }
 
 func TestModelListProjectsCCSwitchDiscoveryWithoutSourceIDsOrSecrets(t *testing.T) {
+	isolateLocalGrokBuild(t)
 	store, _ := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
 	d := &Daemon{
 		router:    modelrouter.New(),
@@ -333,6 +488,7 @@ func TestModelListProjectsCCSwitchDiscoveryWithoutSourceIDsOrSecrets(t *testing.
 }
 
 func TestModelListExpandsCCSwitchLiveModelsWithoutPriorAuthImport(t *testing.T) {
+	isolateLocalGrokBuild(t)
 	// Credential lives only in CC Switch DB path (simulated via Lookup override
 	// of auth chain using a real httptest + in-memory store without the key).
 	var sawAuth atomic.Value
@@ -443,6 +599,7 @@ func TestModelListExpandsCCSwitchLiveModelsWithoutPriorAuthImport(t *testing.T) 
 }
 
 func TestModelListRejectsExplainUnavailableCCSwitchEvenWithStoredCredential(t *testing.T) {
+	isolateLocalGrokBuild(t)
 	store, _ := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
 	const providerID = "ccswitch-codex-managed-proxy"
 	if err := store.SetBearerToken(providerID, "stale-managed-token", map[string]string{
@@ -498,6 +655,7 @@ func TestModelListRejectsExplainUnavailableCCSwitchEvenWithStoredCredential(t *t
 }
 
 func TestModelListRequiresMatchingCCSwitchSourceRevision(t *testing.T) {
+	isolateLocalGrokBuild(t)
 	store, _ := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
 	const providerID = "ccswitch-codex-managed-proxy"
 	if err := store.SetBearerToken(providerID, "stale-secret", map[string]string{
@@ -542,6 +700,7 @@ func TestModelListRequiresMatchingCCSwitchSourceRevision(t *testing.T) {
 }
 
 func TestModelListOrdersRunnableThenManagedThenSavedThenOrdinary(t *testing.T) {
+	isolateLocalGrokBuild(t)
 	store, _ := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
 	if err := store.SetAPIKey("ready", "secret", nil); err != nil {
 		t.Fatal(err)
@@ -578,6 +737,7 @@ func TestModelListOrdersRunnableThenManagedThenSavedThenOrdinary(t *testing.T) {
 }
 
 func TestModelListRequiresCurrentCCSwitchValidationContract(t *testing.T) {
+	isolateLocalGrokBuild(t)
 	store, _ := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
 	const providerID = "ccswitch-claude-safe"
 	if err := store.SetAPIKey(providerID, "legacy-secret", map[string]string{"source": provider.CCSwitchSourceKind}); err != nil {

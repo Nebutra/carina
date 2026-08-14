@@ -137,6 +137,63 @@ func TestStreamReturnsSubscriptionIdentityAndCatchUpCursor(t *testing.T) {
 	}
 }
 
+func TestStreamCommittedResponseSkipsLegacyPostHandlerResponse(t *testing.T) {
+	s := NewServer()
+	s.RegisterStream("sub.commit", func(_ json.RawMessage, sub *Subscription) error {
+		return sub.CommitResult(map[string]any{"subscription_id": sub.ID(), "committed": true})
+	})
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+	go s.serveWithScopes(serverConn, OriginLocal, nil)
+
+	request := Request{JSONRPC: "2.0", ID: json.RawMessage("7"), Method: "sub.commit"}
+	if err := json.NewEncoder(clientConn).Encode(request); err != nil {
+		t.Fatal(err)
+	}
+	var response Response
+	if err := json.NewDecoder(clientConn).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	result, ok := response.Result.(map[string]any)
+	if !ok || result["committed"] != true {
+		t.Fatalf("committed response = %#v", response)
+	}
+
+	if err := clientConn.SetReadDeadline(time.Now().Add(30 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewDecoder(clientConn).Decode(&response); err == nil {
+		t.Fatalf("legacy response followed committed response: %#v", response)
+	} else if timeout, ok := err.(net.Error); !ok || !timeout.Timeout() {
+		t.Fatalf("second response read = %v, want timeout", err)
+	}
+}
+
+func TestFailedStreamCommitDoesNotBlockOnLegacyErrorResponse(t *testing.T) {
+	done := make(chan struct{})
+	writer := &gatedWriter{entered: make(chan struct{}), release: make(chan struct{})}
+	cw := newConnWriter(json.NewEncoder(writer), done)
+	sub := &Subscription{id: "s", w: cw, done: done, requestID: json.RawMessage("11")}
+	if err := sub.TryNotify("event", map[string]any{"n": 0}); err != nil {
+		t.Fatal(err)
+	}
+	<-writer.entered
+	for i := 0; i < cap(cw.queue); i++ {
+		if err := sub.TryNotify("event", map[string]any{"n": i + 1}); err != nil {
+			t.Fatalf("queue filled early at %d: %v", i, err)
+		}
+	}
+	if err := sub.CommitResult(map[string]any{"committed": true}); !errors.Is(err, ErrSlowConsumer) {
+		t.Fatalf("full queue commit = %v, want ErrSlowConsumer", err)
+	}
+	if !sub.responseWasAttempted() {
+		t.Fatal("failed commit did not claim the response boundary")
+	}
+	close(done)
+	close(writer.release)
+	<-cw.stopped
+}
+
 func TestNotificationListenersCoexistAndCancelIndependently(t *testing.T) {
 	clientSide, serverSide := net.Pipe()
 	defer serverSide.Close()

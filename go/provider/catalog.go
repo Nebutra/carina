@@ -73,6 +73,7 @@ type Source struct {
 	App             string `json:"app,omitempty"`
 	Route           string `json:"route,omitempty"`
 	AuthMode        string `json:"auth_mode,omitempty"`
+	DefaultModel    string `json:"default_model,omitempty"`
 	CredentialOwner string `json:"credential_owner,omitempty"`
 	Action          string `json:"action,omitempty"`
 	Revision        string `json:"revision,omitempty"`

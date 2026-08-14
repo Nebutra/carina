@@ -8,6 +8,7 @@ import (
 )
 
 func TestModelListReadinessIsDaemonOwnedAndDynamic(t *testing.T) {
+	isolateLocalGrokBuild(t)
 	t.Setenv("OPENAI_API_KEY", "runtime-key")
 	d, workspace := newLoopDaemon(t)
 	defer d.Close()

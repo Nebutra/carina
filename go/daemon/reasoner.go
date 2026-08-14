@@ -50,6 +50,14 @@ type segmentedModelResultReasoner interface {
 	ThinkModelSegments(ctx context.Context, model, stablePrefix, volatileSuffix string) (ReasonerResult, error)
 }
 
+// dedicatedProviderRouteReasoner marks reasoners that can safely execute a
+// provider route outside the generic model-router provider registry. The
+// marker is intentionally unexported so a configured backend cannot claim a
+// route merely by sharing a display name such as "model-router".
+type dedicatedProviderRouteReasoner interface {
+	supportsDedicatedProviderRoute(providerID string) bool
+}
+
 // mediaSegmentedReasoner is the capability-upgrade interface for reasoners
 // that can deliver image parts to the model (same optional-assertion pattern
 // as segmentedModelResultReasoner above). Reasoners that don't implement it
@@ -96,6 +104,7 @@ const (
 	reasonerBackendRouter    = "model-router"
 	reasonerBackendClaudeCLI = "claude-cli"
 	reasonerBackendCodexCLI  = "codex-cli"
+	reasonerBackendGrokCLI   = "grok-cli"
 	reasonerBackendNone      = ""
 )
 
@@ -147,7 +156,28 @@ func (d *Daemon) reasonerReady() bool {
 	if d.reasoner.Name() != reasonerBackendRouter {
 		return true
 	}
-	return hasRunnableRuntimeProviderSet(d.providerCatalog, d.disabledProviders, d.authStore)
+	catalog := d.providerCatalog
+	if !d.offline && !d.disabledProviders[provider.GrokBuildProviderID] {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		discovery := provider.DetectGrokBuild(ctx)
+		cancel()
+		catalog = provider.MergeGrokBuildProvider(catalog, discovery)
+	}
+	return hasRunnableRuntimeProviderSet(catalog, d.disabledProviders, d.authStore)
+}
+
+func (d *Daemon) canExecuteDedicatedProviderRoute(providerID string) bool {
+	if d == nil || d.offline || d.reasoner == nil {
+		return false
+	}
+	backend := strings.TrimSpace(d.reasonerBackend)
+	if backend == "" {
+		backend = strings.TrimSpace(d.reasoner.Name())
+	}
+	if backend != strings.TrimSpace(d.reasoner.Name()) {
+		return false
+	}
+	return reasonerSupportsDedicatedProviderRoute(d.reasoner, providerID)
 }
 
 func withReasoningEffort(ctx context.Context, effort string) context.Context {
@@ -430,6 +460,9 @@ func thinkOnce(ctx context.Context, r Reasoner, model, prompt string) (string, e
 }
 
 func thinkOnceResult(ctx context.Context, r Reasoner, model, prompt, stablePrefix, volatileSuffix string, media ...modelrouter.MediaPart) (ReasonerResult, error) {
+	if err := validateDedicatedReasonerRoute(r, model); err != nil {
+		return ReasonerResult{}, err
+	}
 	// Media-capable reasoners get the image parts alongside the segments.
 	// Everything below this block drops media silently — the transcript
 	// already carries a textual placeholder per MediaRef, so a text-only
@@ -464,6 +497,29 @@ func thinkOnceResult(ctx context.Context, r Reasoner, model, prompt, stablePrefi
 	return estimatedReasonerResult(out, err, r.Name(), model, prompt)
 }
 
+func reasonerSupportsDedicatedProviderRoute(r Reasoner, providerID string) bool {
+	routeReasoner, ok := r.(dedicatedProviderRouteReasoner)
+	return ok && routeReasoner.supportsDedicatedProviderRoute(providerID)
+}
+
+func validateDedicatedReasonerRoute(r Reasoner, model string) error {
+	providerID, _, targeted := strings.Cut(strings.TrimSpace(model), "/")
+	if !targeted || !strings.EqualFold(providerID, provider.GrokBuildProviderID) {
+		return nil
+	}
+	if providerID != provider.GrokBuildProviderID {
+		return fmt.Errorf("model provider %q is not canonical; use %q", providerID, provider.GrokBuildProviderID)
+	}
+	if !reasonerSupportsDedicatedProviderRoute(r, providerID) {
+		backend := "unavailable"
+		if r != nil && strings.TrimSpace(r.Name()) != "" {
+			backend = strings.TrimSpace(r.Name())
+		}
+		return fmt.Errorf("reasoner backend %q cannot execute model provider %q; use %s", backend, providerID, reasonerBackendRouter)
+	}
+	return nil
+}
+
 func normalizeReasonerResult(result ReasonerResult, err error, r Reasoner, model, prompt string) (ReasonerResult, error) {
 	if err != nil {
 		return ReasonerResult{}, err
@@ -495,18 +551,35 @@ func estimatedReasonerResult(out string, err error, provider, model, prompt stri
 // ---- model-router reasoner ------------------------------------------------
 
 type routerReasoner struct {
-	router            *modelrouter.Router
-	model             string
-	providerCatalog   provider.Catalog
-	claudeCodeMu      sync.Mutex
-	claudeCode        routedClaudeCodeReasoner
-	claudeCodeFactory func() (routedClaudeCodeReasoner, error)
+	router             *modelrouter.Router
+	model              string
+	providerCatalog    provider.Catalog
+	disabledProviders  map[string]bool
+	grokBuildMu        sync.Mutex
+	grokBuild          *grokBuildDelegateEntry
+	grokBuildClosed    bool
+	grokBuildFactory   func(provider.GrokBuildDiscovery) (routedGrokBuildReasoner, error)
+	grokBuildDiscovery func(context.Context) provider.GrokBuildDiscovery
+	claudeCodeMu       sync.Mutex
+	claudeCode         routedClaudeCodeReasoner
+	claudeCodeFactory  func() (routedClaudeCodeReasoner, error)
 }
 
 func newRouterReasoner(router *modelrouter.Router, model string) *routerReasoner {
 	return &routerReasoner{
 		router: router,
 		model:  model,
+		grokBuildFactory: func(discovery provider.GrokBuildDiscovery) (routedGrokBuildReasoner, error) {
+			if discovery.State != provider.GrokBuildStateReady || discovery.BinaryPath == "" {
+				return nil, errors.New(nonempty(discovery.Reason, "Grok Build is not ready"))
+			}
+			reasoner, err := newGrokCLIReasoner(discovery.BinaryPath)
+			if err == nil {
+				reasoner.version = discovery.Version
+			}
+			return reasoner, err
+		},
+		grokBuildDiscovery: provider.DetectGrokBuild,
 		claudeCodeFactory: func() (routedClaudeCodeReasoner, error) {
 			reasoner, err := newClaudeCLIReasoner()
 			if reasoner != nil {
@@ -517,13 +590,20 @@ func newRouterReasoner(router *modelrouter.Router, model string) *routerReasoner
 	}
 }
 
-func newRouterReasonerWithCatalog(router *modelrouter.Router, model string, catalog provider.Catalog) *routerReasoner {
+func newRouterReasonerWithCatalog(router *modelrouter.Router, model string, catalog provider.Catalog, disabled ...map[string]bool) *routerReasoner {
 	reasoner := newRouterReasoner(router, model)
 	reasoner.providerCatalog = catalog
+	if len(disabled) != 0 {
+		reasoner.disabledProviders = disabled[0]
+	}
 	return reasoner
 }
 
 func (r *routerReasoner) Name() string { return "model-router" }
+
+func (r *routerReasoner) supportsDedicatedProviderRoute(providerID string) bool {
+	return providerID == provider.GrokBuildProviderID
+}
 
 func (r *routerReasoner) Think(ctx context.Context, prompt string) (string, error) {
 	return r.ThinkModel(ctx, r.model, prompt)
@@ -568,6 +648,28 @@ func (r *routerReasoner) complete(ctx context.Context, model string, req modelro
 		model = "default"
 		req.Model = model
 	}
+	if cliModel, discovery, targeted, routeErr := r.grokBuildRoute(ctx, model); targeted {
+		if routeErr != nil {
+			return ReasonerResult{}, routeErr
+		}
+		if len(req.Media) != 0 {
+			return ReasonerResult{}, grokCLIError{message: "Grok Build accepts text input only", kind: "protocol"}
+		}
+		delegate, release, err := r.grokBuildDelegate(discovery)
+		if err != nil {
+			return ReasonerResult{}, grokCLIError{message: err.Error()}
+		}
+		defer release()
+		result, err := delegate.ThinkRoutedModel(ctx, cliModel, req.Prompt)
+		if err != nil {
+			if info := classifyProviderError(err); info.Category == "authentication" {
+				provider.InvalidateGrokBuildDiscovery()
+			}
+			return ReasonerResult{}, err
+		}
+		result.Usage.Provider = provider.GrokBuildProviderID
+		return result, nil
+	}
 	if providerID, cliModel, ok := r.claudeCodeRoute(model); ok {
 		delegate, err := r.claudeCodeDelegate()
 		if err != nil {
@@ -609,6 +711,168 @@ func (r *routerReasoner) complete(ctx context.Context, model string, req modelro
 	}}, nil
 }
 
+type grokBuildDiscoveryError struct {
+	state string
+}
+
+func (e grokBuildDiscoveryError) Error() string {
+	switch e.state {
+	case provider.GrokBuildStateAbsent:
+		return "Grok Build CLI is not installed"
+	case provider.GrokBuildStateSignedOut:
+		return "Grok Build is not signed in"
+	case provider.GrokBuildStateIncompatibleVersion:
+		return "Grok Build CLI version is incompatible"
+	default:
+		return "Grok Build session could not be checked"
+	}
+}
+
+func (e grokBuildDiscoveryError) ProviderError() providerErrorInfo {
+	info := providerErrorInfo{Provider: provider.GrokBuildProviderID}
+	switch e.state {
+	case provider.GrokBuildStateAbsent:
+		info.Code = "provider_cli_not_installed"
+		info.Category = "unavailable"
+		info.UserAction = "install Grok Build, then refresh Providers"
+	case provider.GrokBuildStateSignedOut:
+		info.Code = "provider_authentication_failed"
+		info.Category = "authentication"
+		info.UserAction = "run `grok login`, then refresh Providers"
+	case provider.GrokBuildStateIncompatibleVersion:
+		info.Code = "provider_cli_incompatible"
+		info.Category = "compatibility"
+		info.UserAction = "update Grok Build, then refresh Providers"
+	default:
+		info.Code = "provider_discovery_failed"
+		info.Category = "unavailable"
+		info.UserAction = "retry Providers or run `grok doctor`"
+		info.Retryable = true
+	}
+	return info
+}
+
+func (r *routerReasoner) grokBuildRoute(ctx context.Context, model string) (string, provider.GrokBuildDiscovery, bool, error) {
+	providerID, routedModel, ok := strings.Cut(strings.TrimSpace(model), "/")
+	if !ok || !strings.EqualFold(providerID, provider.GrokBuildProviderID) {
+		return "", provider.GrokBuildDiscovery{}, false, nil
+	}
+	if providerID != provider.GrokBuildProviderID {
+		return "", provider.GrokBuildDiscovery{}, true, grokCLIError{message: fmt.Sprintf("model provider %q is not canonical; use %q", providerID, provider.GrokBuildProviderID), kind: "protocol"}
+	}
+	if r.disabledProviders[providerID] {
+		return "", provider.GrokBuildDiscovery{}, true, grokCLIError{message: "Grok Build is disabled", kind: "protocol"}
+	}
+	if strings.TrimSpace(routedModel) == "" || strings.Contains(routedModel, "/") {
+		return "", provider.GrokBuildDiscovery{}, true, grokCLIError{message: "invalid Grok Build model", kind: "protocol"}
+	}
+	discover := r.grokBuildDiscovery
+	if discover == nil {
+		discover = provider.DetectGrokBuild
+	}
+	discovery := discover(ctx)
+	if err := ctx.Err(); err != nil {
+		return "", discovery, true, err
+	}
+	if discovery.State != provider.GrokBuildStateReady {
+		return "", discovery, true, grokBuildDiscoveryError{state: discovery.State}
+	}
+	modelAvailable := false
+	for _, available := range discovery.Models {
+		modelAvailable = modelAvailable || available == routedModel
+	}
+	if !modelAvailable {
+		return "", discovery, true, grokCLIError{message: "selected Grok Build model is no longer available", kind: "protocol"}
+	}
+	return routedModel, discovery, true, nil
+}
+
+type routedGrokBuildReasoner interface {
+	ThinkRoutedModel(context.Context, string, string) (ReasonerResult, error)
+	Close()
+}
+
+type grokBuildDelegateKey struct {
+	binaryPath string
+	version    string
+}
+
+type grokBuildDelegateEntry struct {
+	key      grokBuildDelegateKey
+	delegate routedGrokBuildReasoner
+	users    int
+	stale    bool
+}
+
+func grokBuildDiscoveryKey(discovery provider.GrokBuildDiscovery) grokBuildDelegateKey {
+	return grokBuildDelegateKey{
+		binaryPath: strings.TrimSpace(discovery.BinaryPath),
+		version:    strings.TrimSpace(discovery.Version),
+	}
+}
+
+func (r *routerReasoner) grokBuildDelegate(discovery provider.GrokBuildDiscovery) (routedGrokBuildReasoner, func(), error) {
+	key := grokBuildDiscoveryKey(discovery)
+	if discovery.State != provider.GrokBuildStateReady || key.binaryPath == "" {
+		return nil, nil, errors.New(nonempty(discovery.Reason, "Grok Build is not ready"))
+	}
+	r.grokBuildMu.Lock()
+	if r.grokBuildClosed {
+		r.grokBuildMu.Unlock()
+		return nil, nil, errors.New("Grok Build CLI delegation is closed")
+	}
+	if r.grokBuild != nil && r.grokBuild.key == key {
+		entry := r.grokBuild
+		entry.users++
+		r.grokBuildMu.Unlock()
+		return entry.delegate, r.grokBuildRelease(entry), nil
+	}
+	if r.grokBuildFactory == nil {
+		r.grokBuildMu.Unlock()
+		return nil, nil, errors.New("Grok Build CLI delegation is unavailable")
+	}
+	delegate, err := r.grokBuildFactory(discovery)
+	if err != nil {
+		r.grokBuildMu.Unlock()
+		return nil, nil, err
+	}
+	old := r.grokBuild
+	entry := &grokBuildDelegateEntry{key: key, delegate: delegate, users: 1}
+	r.grokBuild = entry
+	var closeOld routedGrokBuildReasoner
+	if old != nil {
+		old.stale = true
+		if old.users == 0 {
+			closeOld = old.delegate
+		}
+	}
+	r.grokBuildMu.Unlock()
+	if closeOld != nil {
+		closeOld.Close()
+	}
+	return delegate, r.grokBuildRelease(entry), nil
+}
+
+func (r *routerReasoner) grokBuildRelease(entry *grokBuildDelegateEntry) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			var closeDelegate routedGrokBuildReasoner
+			r.grokBuildMu.Lock()
+			if entry.users > 0 {
+				entry.users--
+			}
+			if entry.stale && entry.users == 0 {
+				closeDelegate = entry.delegate
+			}
+			r.grokBuildMu.Unlock()
+			if closeDelegate != nil {
+				closeDelegate.Close()
+			}
+		})
+	}
+}
+
 func (r *routerReasoner) claudeCodeRoute(model string) (string, string, bool) {
 	providerID, routedModel, ok := strings.Cut(strings.TrimSpace(model), "/")
 	if !ok || providerID == "" || routedModel == "" {
@@ -644,6 +908,21 @@ func (r *routerReasoner) claudeCodeDelegate() (routedClaudeCodeReasoner, error) 
 }
 
 func (r *routerReasoner) Close() {
+	r.grokBuildMu.Lock()
+	r.grokBuildClosed = true
+	grokEntry := r.grokBuild
+	r.grokBuild = nil
+	var grokDelegate routedGrokBuildReasoner
+	if grokEntry != nil {
+		grokEntry.stale = true
+		if grokEntry.users == 0 {
+			grokDelegate = grokEntry.delegate
+		}
+	}
+	r.grokBuildMu.Unlock()
+	if grokDelegate != nil {
+		grokDelegate.Close()
+	}
 	r.claudeCodeMu.Lock()
 	delegate := r.claudeCode
 	r.claudeCode = nil
@@ -784,10 +1063,10 @@ func newConfiguredReasoner(backend string, router *modelrouter.Router, model str
 	return newConfiguredReasonerWithCatalog(backend, router, model, nil)
 }
 
-func newConfiguredReasonerWithCatalog(backend string, router *modelrouter.Router, model string, catalog provider.Catalog) (Reasoner, error) {
+func newConfiguredReasonerWithCatalog(backend string, router *modelrouter.Router, model string, catalog provider.Catalog, disabled ...map[string]bool) (Reasoner, error) {
 	switch backend {
 	case reasonerBackendRouter:
-		return newRouterReasonerWithCatalog(router, nonempty(strings.TrimSpace(model), "default"), catalog), nil
+		return newRouterReasonerWithCatalog(router, nonempty(strings.TrimSpace(model), "default"), catalog, disabled...), nil
 	case reasonerBackendClaudeCLI:
 		if strings.TrimSpace(model) != "" {
 			return newClaudeCLIReasonerModel(strings.TrimSpace(model))

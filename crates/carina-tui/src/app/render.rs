@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+use std::cmp::Reverse;
 use std::time::Duration;
 
 #[cfg(test)]
@@ -11,6 +13,7 @@ use ratatui::widgets::{
     Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
     StatefulWidgetRef, Wrap,
 };
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use xai_ratatui_textarea::wrapping::{RtOptions, word_wrap_line};
 
@@ -352,6 +355,7 @@ impl App {
         let import_active = import_reviewing || import_validating || import_failed;
         let validation_glyph = validation_spinner(validation_elapsed, self.theme.glyphs);
         let is_ccswitch = provider.source_kind == "cc-switch";
+        let is_grok_build = provider.source_kind == "grok-build";
         let active_route = provider.source_route == "managed_proxy";
         let execution_ready = self.inventory.is_provider_runnable(provider);
         let has_compatible_models = provider_has_compatible_models(provider);
@@ -411,6 +415,20 @@ impl App {
                 },
                 self.theme.muted,
             )
+        } else if is_grok_build {
+            if provider.source_action == "disabled" {
+                (
+                    self.theme.glyphs.unavailable(),
+                    grok_build_state_label(locale, &provider.source_action),
+                    self.theme.muted,
+                )
+            } else {
+                (
+                    self.theme.glyphs.diamond_open(),
+                    grok_build_state_label(locale, &provider.source_action),
+                    self.theme.warning,
+                )
+            }
         } else if provider.registered {
             (
                 self.theme.glyphs.empty(),
@@ -448,11 +466,16 @@ impl App {
             }
         } else if is_ccswitch {
             tr(locale, MessageId::ViewDetails)
+        } else if is_grok_build && provider.source_action == "disabled" {
+            tr(locale, MessageId::GrokBuildDisabled)
+        } else if is_grok_build {
+            tr(locale, MessageId::Retry)
         } else {
             tr(locale, MessageId::Connect)
         };
         let disabled = import_validating
             || (execution_ready && !has_compatible_models)
+            || (is_grok_build && provider.source_action == "disabled")
             || (is_ccswitch && !provider.source_importable && !provider.available);
         let name = if provider.name.is_empty() {
             provider.id.as_str()
@@ -578,6 +601,7 @@ impl App {
             let execution_ready = self.inventory.is_provider_runnable(provider);
             let has_compatible_models = provider_has_compatible_models(provider);
             let active_route = provider.source_route == "managed_proxy";
+            let is_grok_build = provider.source_kind == "grok-build";
             let (state_glyph, state, state_color) = if execution_ready && !has_compatible_models {
                 (
                     self.theme.glyphs.empty(),
@@ -616,6 +640,20 @@ impl App {
                     },
                     self.theme.muted,
                 )
+            } else if is_grok_build {
+                if provider.source_action == "disabled" {
+                    (
+                        self.theme.glyphs.unavailable(),
+                        grok_build_state_label(locale, &provider.source_action),
+                        self.theme.muted,
+                    )
+                } else {
+                    (
+                        self.theme.glyphs.diamond_open(),
+                        grok_build_state_label(locale, &provider.source_action),
+                        self.theme.warning,
+                    )
+                }
             } else if provider.registered {
                 (
                     self.theme.glyphs.empty(),
@@ -712,7 +750,9 @@ impl App {
                 } else {
                     source_app_label(&provider.source_app)
                 };
-                let route_badge = if active_route {
+                let route_badge = if is_grok_build && provider.source_current {
+                    format!("  {sep}  {}", tr(locale, MessageId::GrokBuildSubscription))
+                } else if active_route {
                     format!("  {sep}  {}", tr(locale, MessageId::ActiveViaProxy))
                 } else if provider.source_current {
                     format!("  {sep}  {}", tr(locale, MessageId::CurrentProfile))
@@ -839,6 +879,8 @@ impl App {
         let import_active = import_reviewing || import_validating || import_failure.is_some();
         let validation_glyph = validation_spinner(validation_elapsed, self.theme.glyphs);
         let is_ccswitch = provider.source_kind == "cc-switch";
+        let is_grok_build = provider.source_kind == "grok-build";
+        let is_xai = provider.id == "xai";
         let active_route = provider.source_route == "managed_proxy";
         let execution_ready = self.inventory.is_provider_runnable(provider);
         let has_compatible_models = provider_has_compatible_models(provider);
@@ -860,7 +902,13 @@ impl App {
                     self.theme.glyphs.ready(),
                     tr(locale, MessageId::Ready),
                     self.theme.success,
-                    tr(locale, MessageId::ProviderAvailableDetail),
+                    if is_grok_build {
+                        tr(locale, MessageId::GrokBuildReadyDetail)
+                    } else if is_xai {
+                        tr(locale, MessageId::XaiApiBillingDetail)
+                    } else {
+                        tr(locale, MessageId::ProviderAvailableDetail)
+                    },
                 )
             } else if provider.registered && provider.available {
                 (
@@ -924,12 +972,32 @@ impl App {
                     self.theme.muted,
                     provider.source_reason.as_str(),
                 )
+            } else if is_grok_build {
+                if provider.source_action == "disabled" {
+                    (
+                        self.theme.glyphs.unavailable(),
+                        grok_build_state_label(locale, &provider.source_action),
+                        self.theme.muted,
+                        tr(locale, grok_build_guidance(&provider.source_action)),
+                    )
+                } else {
+                    (
+                        self.theme.glyphs.diamond_open(),
+                        grok_build_state_label(locale, &provider.source_action),
+                        self.theme.warning,
+                        tr(locale, grok_build_guidance(&provider.source_action)),
+                    )
+                }
             } else if provider.registered {
                 (
                     self.theme.glyphs.empty(),
                     tr(locale, MessageId::CredentialRequired),
                     self.theme.warning,
-                    tr(locale, MessageId::CredentialSafetyDetail),
+                    if is_xai {
+                        tr(locale, MessageId::XaiApiBillingDetail)
+                    } else {
+                        tr(locale, MessageId::CredentialSafetyDetail)
+                    },
                 )
             } else {
                 (
@@ -972,6 +1040,10 @@ impl App {
             }
         } else if is_ccswitch {
             tr(locale, MessageId::Unavailable)
+        } else if is_grok_build && provider.source_action == "disabled" {
+            tr(locale, MessageId::GrokBuildDisabled)
+        } else if is_grok_build {
+            tr(locale, MessageId::Retry)
         } else {
             tr(locale, MessageId::Connect)
         };
@@ -980,7 +1052,9 @@ impl App {
         } else {
             provider.source_label.as_str()
         };
-        let authentication = if provider.available {
+        let authentication = if is_grok_build {
+            tr(locale, MessageId::GrokBuildCliSession)
+        } else if provider.available {
             if provider.auth_source.is_empty() {
                 tr(locale, MessageId::Configured)
             } else {
@@ -1087,8 +1161,11 @@ impl App {
         let component = ComponentId(951);
         let disabled = import_validating
             || (execution_ready && !has_compatible_models)
+            || (is_grok_build && provider.source_action == "disabled")
             || (is_ccswitch && !provider.source_importable && !provider.available);
-        let style = if self.interactions.hovered(component) && !self.theme.no_color {
+        let style = if disabled {
+            self.theme.muted()
+        } else if self.interactions.hovered(component) && !self.theme.no_color {
             self.theme.action().add_modifier(Modifier::UNDERLINED)
         } else {
             self.theme.action()
@@ -2879,12 +2956,15 @@ impl App {
         let block_width = geometry.content.width;
         let transcript_x = geometry.content.x;
         let content_width = block_width.max(layout_contract::MIN_DIMENSION);
+        let expanded_output_budget = expanded_tool_output_budget(geometry.content.height as usize);
         let transcript_viewport = TranscriptViewport {
             locale,
             density: self.density,
             glyph_mode: self.theme.glyphs.mode,
             content_width,
             tool_expand_key: self.keybindings.expand_tools.label(),
+            tool_inspect_key: self.keybindings.inspect_tool_output.label(),
+            expanded_output_budget,
             height: geometry.content.height as usize,
             requested_scroll: self.transcript_scroll,
             follow_bottom: self.transcript_follow_bottom,
@@ -2896,6 +2976,8 @@ impl App {
             transcript_viewport.clone(),
             &mut self.transcript_height_cache,
         );
+        self.bounded_tool_output_blocks.clear();
+        let mut visible_tool_output_candidates = Vec::new();
         self.transcript_scroll = layout.viewport_start;
         self.transcript_max_scroll = layout.max_scroll;
         if selection_anchor.is_none() {
@@ -2988,14 +3070,22 @@ impl App {
                 link: self.theme.transcript_link(),
                 headings: std::array::from_fn(|index| self.theme.heading(index + 1)),
             };
+            let render_options = TranscriptRenderOptions {
+                locale,
+                density: self.density,
+                glyph_mode: self.theme.glyphs.mode,
+                content_width,
+                tool_expand_key: self.keybindings.expand_tools.label(),
+                tool_inspect_key: self.keybindings.inspect_tool_output.label(),
+                expanded_output_budget,
+            };
             let mut lines = if dimmed || block.failure.is_some() {
                 transcript_lines_with_tool_key_and_density(
                     block,
                     locale,
                     transcript_styles,
                     content_width,
-                    self.keybindings.expand_tools.label(),
-                    self.density,
+                    render_options,
                 )
             } else {
                 cached_transcript_lines_with_tool_key_and_density(
@@ -3004,10 +3094,43 @@ impl App {
                     locale,
                     transcript_styles,
                     content_width,
-                    self.keybindings.expand_tools.label(),
-                    self.density,
+                    render_options,
                 )
             };
+            let tool_output_component = ComponentId::stable("tool-output-open", &block.id);
+            let tool_output_receipt_line = bounded_tool_output_receipt_line(
+                block,
+                ToolLineContext {
+                    locale,
+                    density: self.density,
+                    styles: transcript_styles,
+                    content_width,
+                    expand_key: self.keybindings.expand_tools.label(),
+                    inspect_key: self.keybindings.inspect_tool_output.label(),
+                    expanded_output_budget,
+                },
+            );
+            let artifact_header_opens_tool_output = tool_output_receipt_line.is_none()
+                && block.kind == BlockKind::Tool
+                && super::tool_component_call_ids(block)
+                    .iter()
+                    .any(|call_id| self.tool_artifact_refs.contains_key(*call_id));
+            if let Some(receipt_line) = tool_output_receipt_line
+                && self.interactions.hovered(tool_output_component)
+                && let Some(line) = lines.get_mut(receipt_line)
+            {
+                for span in &mut line.spans {
+                    span.style = span.style.patch(self.theme.hovered());
+                }
+            }
+            if artifact_header_opens_tool_output
+                && self.interactions.hovered(tool_output_component)
+                && let Some(header) = lines.first_mut()
+            {
+                for span in &mut header.spans {
+                    span.style = span.style.patch(self.theme.hovered());
+                }
+            }
             if hovered
                 && block.is_collapsible()
                 && block.failure.is_none()
@@ -3128,7 +3251,63 @@ impl App {
                     });
                 }
             }
+            if let Some(line_index) = tool_output_receipt_line {
+                let receipt_top = item
+                    .top
+                    .saturating_add(item.header_height)
+                    .saturating_add(line_index.saturating_sub(1));
+                if let Some(action_area) = visible_transcript_rect(
+                    geometry.content,
+                    block_width,
+                    layout.viewport_start,
+                    viewport_end,
+                    receipt_top,
+                    receipt_top.saturating_add(1),
+                ) {
+                    visible_tool_output_candidates.push(VisibleToolOutputCandidate {
+                        block_id: block.id.clone(),
+                        hovered: self.interactions.hovered(tool_output_component),
+                        selected: block.selected,
+                        receipt_top,
+                    });
+                    self.interactions.register(HitRegion {
+                        component: tool_output_component,
+                        area: action_area,
+                        action: Action::OpenToolOutput(block.id.clone()),
+                    });
+                }
+            } else if artifact_header_opens_tool_output
+                && let Some(action_area) = visible_transcript_rect(
+                    geometry.content,
+                    block_width,
+                    layout.viewport_start,
+                    viewport_end,
+                    item.top,
+                    item.top.saturating_add(item.header_height),
+                )
+            {
+                visible_tool_output_candidates.push(VisibleToolOutputCandidate {
+                    block_id: block.id.clone(),
+                    hovered: self.interactions.hovered(tool_output_component),
+                    selected: block.selected,
+                    receipt_top: item.top,
+                });
+                self.interactions.register(HitRegion {
+                    component: tool_output_component,
+                    area: action_area,
+                    action: Action::OpenToolOutput(block.id.clone()),
+                });
+            }
         }
+        prioritize_visible_tool_output_candidates(
+            &mut visible_tool_output_candidates,
+            layout.viewport_start,
+            geometry.content.height as usize,
+        );
+        self.bounded_tool_output_blocks = visible_tool_output_candidates
+            .into_iter()
+            .map(|candidate| candidate.block_id)
+            .collect();
 
         self.transcript_scrollbar = layout_contract::TranscriptScrollbar::compute(
             geometry.scrollbar,
@@ -5392,6 +5571,9 @@ impl App {
                     });
                 }
             }
+            Overlay::ToolOutput(output) => {
+                self.render_tool_output_overlay(frame, area, output);
+            }
             Overlay::Queue(queue) => {
                 let popup = centered(area, 72, 22);
                 frame.render_widget(Clear, popup);
@@ -5646,6 +5828,148 @@ impl App {
                     );
                 }
             }
+        }
+    }
+
+    fn render_tool_output_overlay(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        overlay: &crate::overlay::ToolOutputOverlay,
+    ) {
+        let locale = self.ui_locale();
+        frame.render_widget(Clear, area);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(self.theme.glyphs.outer_border_type())
+            .border_style(self.theme.focus())
+            .title(format!(" {} ", tr(locale, MessageId::ToolOutputTitle)));
+        let inner = block.inner(area).inner(Margin::new(1, 0));
+        frame.render_widget(block, area);
+        let layout = tool_output_overlay_layout(inner);
+
+        let resolved = self
+            .blocks
+            .iter()
+            .position(|block| block.id == overlay.block_id)
+            .map(|index| {
+                let block = &self.blocks[index];
+                let prompt = nearest_owning_prompt(&self.blocks, index, &block.run_id);
+                (block, prompt, complete_tool_output(block))
+            });
+        let mut retained_status = None;
+        let mut row_position = None;
+        if let Some((block, prompt, output)) = resolved {
+            retained_status = self.tool_output_retained_status(block);
+            let title = block.localized_title(locale);
+            let context = vec![
+                Line::from(vec![
+                    Span::styled(
+                        tr(locale, MessageId::ToolOutputPrompt),
+                        self.theme.transcript_metadata(),
+                    ),
+                    Span::styled(
+                        format!("  {title}"),
+                        self.theme.focus().add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(Span::styled(
+                    truncate_cells(prompt, layout.context.width as usize, self.theme.glyphs),
+                    Style::default().fg(self.theme.text),
+                )),
+            ];
+            if layout.context.height > 0 {
+                frame.render_widget(
+                    Paragraph::new(context).wrap(Wrap { trim: false }).block(
+                        Block::default()
+                            .borders(Borders::BOTTOM)
+                            .border_type(self.theme.glyphs.outer_border_type())
+                            .border_style(Style::default().fg(self.theme.border)),
+                    ),
+                    layout.context,
+                );
+            }
+            let window = tool_output_visual_window(
+                output.as_ref(),
+                layout.body.width as usize,
+                layout.body.height as usize,
+                overlay.scroll,
+            );
+            self.tool_output_max_scroll = window.max_scroll;
+            self.sync_tool_output_scroll(&overlay.block_id, window.scroll);
+            row_position = Some(tool_output_row_position(
+                &window,
+                layout.body.height as usize,
+            ));
+            frame.render_widget(
+                Paragraph::new(window.lines).style(Style::default().fg(self.theme.text)),
+                layout.body,
+            );
+        } else {
+            self.tool_output_max_scroll = 0;
+            self.sync_tool_output_scroll(&overlay.block_id, 0);
+            frame.render_widget(
+                Paragraph::new(tr(locale, MessageId::ToolOutputMissing))
+                    .style(Style::default().fg(self.theme.muted)),
+                layout.body,
+            );
+        }
+        if layout.footer.height > 0 {
+            match retained_status {
+                Some(ToolOutputRetainedStatus::Loading) => frame.render_widget(
+                    Paragraph::new(tr(locale, MessageId::ToolOutputLoading))
+                        .style(Style::default().fg(self.theme.muted)),
+                    layout.footer,
+                ),
+                Some(ToolOutputRetainedStatus::Failed(error)) => frame.render_widget(
+                    Paragraph::new(tr_format(
+                        locale,
+                        MessageId::ToolOutputLoadFailed,
+                        &[("error", error.as_str())],
+                    ))
+                    .style(Style::default().fg(self.theme.danger)),
+                    layout.footer,
+                ),
+                None => frame.render_widget(
+                    Paragraph::new(tool_output_footer_line(
+                        tr(locale, MessageId::ToolOutputHint),
+                        row_position.as_deref(),
+                        layout.footer.width as usize,
+                    ))
+                    .style(Style::default().fg(self.theme.muted)),
+                    layout.footer,
+                ),
+            }
+        }
+    }
+
+    fn tool_output_retained_status(
+        &self,
+        block: &TranscriptBlock,
+    ) -> Option<ToolOutputRetainedStatus> {
+        let mut error = None;
+        for id in std::iter::once(block.id.as_str())
+            .chain(block.tool_members.iter().map(|member| member.id.as_str()))
+        {
+            let call_id = id.strip_prefix("tool:").unwrap_or(id);
+            let Some(load) = self.tool_artifact_loads.get(call_id) else {
+                continue;
+            };
+            if load.loading {
+                return Some(ToolOutputRetainedStatus::Loading);
+            }
+            if error.is_none() && !load.error.is_empty() {
+                error = Some(load.error.clone());
+            }
+        }
+        error.map(ToolOutputRetainedStatus::Failed)
+    }
+
+    fn sync_tool_output_scroll(&mut self, block_id: &str, scroll: usize) {
+        if let Some(Overlay::ToolOutput(active)) = self.overlays.active_mut()
+            && active.block_id == block_id
+        {
+            active.scroll = scroll;
         }
     }
 
@@ -7265,6 +7589,27 @@ fn provider_state_column_width(glyph: &str, state: &str) -> u16 {
         .max(layout_contract::PANEL_PADDING)
 }
 
+fn grok_build_state_label(locale: Locale, action: &str) -> &'static str {
+    tr(
+        locale,
+        match action {
+            "login_cli" => MessageId::GrokBuildSignInRequired,
+            "update_cli" => MessageId::GrokBuildUpdateRequired,
+            "disabled" => MessageId::GrokBuildDisabled,
+            _ => MessageId::GrokBuildCheckFailed,
+        },
+    )
+}
+
+fn grok_build_guidance(action: &str) -> MessageId {
+    match action {
+        "login_cli" => MessageId::GrokBuildLoginDetail,
+        "update_cli" => MessageId::GrokBuildUpdateDetail,
+        "disabled" => MessageId::GrokBuildDisabledDetail,
+        _ => MessageId::GrokBuildRetryDetail,
+    }
+}
+
 fn provider_has_compatible_models(provider: &ModelProvider) -> bool {
     provider.models.iter().any(|model| model.available)
 }
@@ -7403,11 +7748,33 @@ struct TranscriptViewport {
     glyph_mode: GlyphMode,
     content_width: u16,
     tool_expand_key: &'static str,
+    tool_inspect_key: &'static str,
+    expanded_output_budget: usize,
     height: usize,
     requested_scroll: usize,
     follow_bottom: bool,
     selection_anchor: Option<usize>,
     scroll_anchor: Option<TranscriptScrollAnchor>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TranscriptRenderOptions {
+    locale: Locale,
+    density: DensityMode,
+    glyph_mode: GlyphMode,
+    content_width: u16,
+    tool_expand_key: &'static str,
+    tool_inspect_key: &'static str,
+    expanded_output_budget: usize,
+}
+
+impl TranscriptRenderOptions {
+    fn styles(self) -> TranscriptStyles {
+        TranscriptStyles {
+            glyphs: Glyphs::new(self.glyph_mode),
+            ..TranscriptStyles::default()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -7454,12 +7821,23 @@ impl TranscriptLayout {
             glyph_mode,
             content_width,
             tool_expand_key,
+            tool_inspect_key,
+            expanded_output_budget,
             height: viewport_height,
             requested_scroll,
             follow_bottom,
             selection_anchor,
             scroll_anchor,
         } = viewport;
+        let render_options = TranscriptRenderOptions {
+            locale,
+            density,
+            glyph_mode,
+            content_width,
+            tool_expand_key,
+            tool_inspect_key,
+            expanded_output_budget,
+        };
         let mut items = Vec::with_capacity(blocks.len());
         let mut top = 0_usize;
         let mut previous_visible_index = None;
@@ -7474,7 +7852,9 @@ impl TranscriptLayout {
                             && entry.locale == locale
                             && entry.density == density
                             && entry.glyph_mode == glyph_mode
-                            && entry.expand_key == tool_expand_key =>
+                            && entry.expand_key == tool_expand_key
+                            && entry.inspect_key == tool_inspect_key
+                            && entry.expanded_output_budget == expanded_output_budget =>
                     {
                         (entry.height, entry.header_height)
                     }
@@ -7482,11 +7862,7 @@ impl TranscriptLayout {
                         let (height, header_height) =
                             transcript_block_height_with_tool_key_and_density(
                                 block,
-                                locale,
-                                content_width,
-                                tool_expand_key,
-                                density,
-                                glyph_mode,
+                                render_options,
                             );
                         height_cache.insert(
                             block.id.clone(),
@@ -7497,6 +7873,8 @@ impl TranscriptLayout {
                                 density,
                                 glyph_mode,
                                 expand_key: tool_expand_key,
+                                inspect_key: tool_inspect_key,
+                                expanded_output_budget,
                                 height,
                                 header_height,
                             },
@@ -7548,11 +7926,7 @@ impl TranscriptLayout {
                         let row = if exact_index.is_some() {
                             transcript_row_for_anchor(
                                 block,
-                                locale,
-                                content_width,
-                                tool_expand_key,
-                                density,
-                                glyph_mode,
+                                render_options,
                                 anchor.logical_line,
                                 anchor.sub_rows,
                             )
@@ -7597,11 +7971,15 @@ impl TranscriptLayout {
             .min(item.height.saturating_sub(1));
         let (logical_line, sub_rows) = transcript_anchor_for_row(
             block,
-            viewport.locale,
-            viewport.content_width,
-            viewport.tool_expand_key,
-            viewport.density,
-            viewport.glyph_mode,
+            TranscriptRenderOptions {
+                locale: viewport.locale,
+                density: viewport.density,
+                glyph_mode: viewport.glyph_mode,
+                content_width: viewport.content_width,
+                tool_expand_key: viewport.tool_expand_key,
+                tool_inspect_key: viewport.tool_inspect_key,
+                expanded_output_budget: viewport.expanded_output_budget,
+            },
             rows_into_block,
         );
         Some(TranscriptScrollAnchor {
@@ -7615,29 +7993,20 @@ impl TranscriptLayout {
 
 fn transcript_logical_line_rows(
     block: &TranscriptBlock,
-    locale: Locale,
-    content_width: u16,
-    tool_expand_key: &'static str,
-    density: DensityMode,
-    glyph_mode: GlyphMode,
+    options: TranscriptRenderOptions,
 ) -> Vec<usize> {
-    let styles = TranscriptStyles {
-        glyphs: Glyphs::new(glyph_mode),
-        ..TranscriptStyles::default()
-    };
     transcript_lines_with_tool_key_and_density(
         block,
-        locale,
-        styles,
+        options.locale,
+        options.styles(),
         layout_contract::TRANSCRIPT_READING_MAX_WIDTH,
-        tool_expand_key,
-        density,
+        options,
     )
     .into_iter()
     .map(|line| {
         Paragraph::new(vec![line])
             .wrap(Wrap { trim: false })
-            .line_count(content_width)
+            .line_count(options.content_width)
             .max(1)
     })
     .collect()
@@ -7645,21 +8014,10 @@ fn transcript_logical_line_rows(
 
 fn transcript_anchor_for_row(
     block: &TranscriptBlock,
-    locale: Locale,
-    content_width: u16,
-    tool_expand_key: &'static str,
-    density: DensityMode,
-    glyph_mode: GlyphMode,
+    options: TranscriptRenderOptions,
     row: usize,
 ) -> (usize, usize) {
-    let rows = transcript_logical_line_rows(
-        block,
-        locale,
-        content_width,
-        tool_expand_key,
-        density,
-        glyph_mode,
-    );
+    let rows = transcript_logical_line_rows(block, options);
     let mut start = 0_usize;
     for (logical_line, height) in rows.iter().copied().enumerate() {
         if row < start.saturating_add(height) {
@@ -7673,25 +8031,13 @@ fn transcript_anchor_for_row(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn transcript_row_for_anchor(
     block: &TranscriptBlock,
-    locale: Locale,
-    content_width: u16,
-    tool_expand_key: &'static str,
-    density: DensityMode,
-    glyph_mode: GlyphMode,
+    options: TranscriptRenderOptions,
     logical_line: usize,
     sub_rows: usize,
 ) -> usize {
-    let rows = transcript_logical_line_rows(
-        block,
-        locale,
-        content_width,
-        tool_expand_key,
-        density,
-        glyph_mode,
-    );
+    let rows = transcript_logical_line_rows(block, options);
     let line = logical_line.min(rows.len().saturating_sub(1));
     let line_start = rows.iter().take(line).sum::<usize>();
     line_start.saturating_add(sub_rows.min(rows.get(line).copied().unwrap_or(1).saturating_sub(1)))
@@ -7706,41 +8052,38 @@ fn transcript_block_height_with_tool_key(
 ) -> (usize, usize) {
     transcript_block_height_with_tool_key_and_density(
         block,
-        locale,
-        content_width,
-        tool_expand_key,
-        DensityMode::Compact,
-        GlyphMode::Unicode,
+        TranscriptRenderOptions {
+            locale,
+            density: DensityMode::Compact,
+            glyph_mode: GlyphMode::Unicode,
+            content_width,
+            tool_expand_key,
+            tool_inspect_key: crate::keybinding::KeyBindings::default()
+                .inspect_tool_output
+                .label(),
+            expanded_output_budget: layout_contract::TOOL_OUTPUT_MAX_BUDGET,
+        },
     )
 }
 
 fn transcript_block_height_with_tool_key_and_density(
     block: &TranscriptBlock,
-    locale: Locale,
-    content_width: u16,
-    tool_expand_key: &'static str,
-    density: DensityMode,
-    glyph_mode: GlyphMode,
+    options: TranscriptRenderOptions,
 ) -> (usize, usize) {
-    let styles = TranscriptStyles {
-        glyphs: Glyphs::new(glyph_mode),
-        ..TranscriptStyles::default()
-    };
     let lines = transcript_lines_with_tool_key_and_density(
         block,
-        locale,
-        styles,
-        content_width,
-        tool_expand_key,
-        density,
+        options.locale,
+        options.styles(),
+        options.content_width,
+        options,
     );
     let header_height = Paragraph::new(vec![lines[0].clone()])
         .wrap(Wrap { trim: false })
-        .line_count(content_width)
+        .line_count(options.content_width)
         .max(layout_contract::MIN_DIMENSION as usize);
     let height = Paragraph::new(lines)
         .wrap(Wrap { trim: false })
-        .line_count(content_width)
+        .line_count(options.content_width)
         .max(layout_contract::MIN_DIMENSION as usize);
     (height, header_height)
 }
@@ -7862,8 +8205,17 @@ fn transcript_lines_with_tool_key(
         locale,
         styles,
         content_width,
-        tool_expand_key,
-        DensityMode::Compact,
+        TranscriptRenderOptions {
+            locale,
+            density: DensityMode::Compact,
+            glyph_mode: styles.glyphs.mode,
+            content_width,
+            tool_expand_key,
+            tool_inspect_key: crate::keybinding::KeyBindings::default()
+                .inspect_tool_output
+                .label(),
+            expanded_output_budget: layout_contract::TOOL_OUTPUT_MAX_BUDGET,
+        },
     )
 }
 
@@ -7872,9 +8224,15 @@ fn transcript_lines_with_tool_key_and_density(
     locale: Locale,
     styles: TranscriptStyles,
     content_width: u16,
-    tool_expand_key: &'static str,
-    density: DensityMode,
+    options: TranscriptRenderOptions,
 ) -> Vec<Line<'static>> {
+    let TranscriptRenderOptions {
+        density,
+        tool_expand_key,
+        tool_inspect_key,
+        expanded_output_budget,
+        ..
+    } = options;
     let TranscriptStyles {
         glyphs,
         label: label_style,
@@ -8124,6 +8482,8 @@ fn transcript_lines_with_tool_key_and_density(
         styles,
         content_width,
         expand_key: tool_expand_key,
+        inspect_key: tool_inspect_key,
+        expanded_output_budget,
     };
     if block.kind == BlockKind::Tool && block.tool_members.len() > 1 {
         lines.extend(tool_group_lines(block, tool_context));
@@ -8186,6 +8546,8 @@ struct ToolLineContext {
     styles: TranscriptStyles,
     content_width: u16,
     expand_key: &'static str,
+    inspect_key: &'static str,
+    expanded_output_budget: usize,
 }
 
 /// Dim secondary target for intent-first single-tool rows.
@@ -8216,9 +8578,9 @@ fn tool_group_lines(block: &TranscriptBlock, context: ToolLineContext) -> Vec<Li
     );
     let mut lines = Vec::new();
     for member in block.tool_members.iter().take(visibility.visible) {
-        lines.push(tool_group_member_line(
+        lines.extend(tool_group_member_lines(
             member,
-            context.styles,
+            context,
             block.tool_kind == Some(crate::tool_projection::ToolKind::Explore),
         ));
         if !member.body.is_empty() {
@@ -8226,7 +8588,14 @@ fn tool_group_lines(block: &TranscriptBlock, context: ToolLineContext) -> Vec<Li
                 &member.body,
                 member.body_kind,
                 block.expanded,
-                context,
+                ToolLineContext {
+                    expanded_output_budget: if block.expanded {
+                        usize::MAX
+                    } else {
+                        context.expanded_output_budget
+                    },
+                    ..context
+                },
                 true,
             ));
         }
@@ -8240,14 +8609,24 @@ fn tool_group_lines(block: &TranscriptBlock, context: ToolLineContext) -> Vec<Li
             false,
         ));
     }
+    if block.expanded
+        && block
+            .tool_members
+            .iter()
+            .filter(|member| !member.body.is_empty())
+            .all(|member| member.body_kind != BlockBodyKind::Diff)
+    {
+        lines = bounded_plain_visual_rows(lines, context, false);
+    }
     lines
 }
 
-fn tool_group_member_line(
+fn tool_group_member_lines(
     member: &ToolGroupMember,
-    styles: TranscriptStyles,
+    context: ToolLineContext,
     show_kind: bool,
-) -> Line<'static> {
+) -> Vec<Line<'static>> {
+    let styles = context.styles;
     let (marker, marker_style) = if member.is_failure() {
         (styles.glyphs.failure(), styles.removed)
     } else if member.is_running() {
@@ -8268,8 +8647,7 @@ fn tool_group_member_line(
     } else {
         member.title.clone()
     };
-    Line::from(vec![
-        Span::styled(styles.glyphs.tool_gutter(), styles.metadata),
+    let line = Line::from(vec![
         Span::styled(marker, marker_style),
         Span::styled(title, styles.text),
         Span::styled(
@@ -8296,7 +8674,15 @@ fn tool_group_member_line(
             },
             styles.metadata,
         ),
-    ])
+    ]);
+    wrap_styled_lines(
+        [line],
+        usize::from(context.content_width),
+        &StyledPrefix::repeating(vec![Span::styled(
+            styles.glyphs.tool_gutter(),
+            styles.metadata,
+        )]),
+    )
 }
 
 fn tool_detail_lines(
@@ -8361,7 +8747,368 @@ fn tool_detail_lines(
             nested,
         ));
     }
+    if expanded {
+        lines = bounded_plain_visual_rows(lines, context, nested);
+    }
     lines
+}
+
+fn expanded_tool_output_budget(viewport_height: usize) -> usize {
+    viewport_height.saturating_sub(2).clamp(
+        layout_contract::TOOL_OUTPUT_MIN_BUDGET,
+        layout_contract::TOOL_OUTPUT_MAX_BUDGET,
+    )
+}
+
+fn bounded_plain_visual_rows(
+    lines: Vec<Line<'static>>,
+    context: ToolLineContext,
+    nested: bool,
+) -> Vec<Line<'static>> {
+    let budget = context.expanded_output_budget;
+    let Some(head) = bounded_plain_receipt_index(lines.len(), budget) else {
+        return lines;
+    };
+    let budget = budget.max(layout_contract::TOOL_OUTPUT_MIN_BUDGET);
+    let retained = budget.saturating_sub(1).max(2);
+    let tail = retained.saturating_sub(head);
+    let omitted = lines.len().saturating_sub(head + tail);
+    let mut bounded = Vec::with_capacity(head + 1 + tail);
+    bounded.extend(lines.iter().take(head).cloned());
+    bounded.push(tool_omission_line(
+        omitted,
+        MessageId::ToolVisualRowOmitted,
+        MessageId::ToolVisualRowsOmitted,
+        ToolLineContext {
+            expand_key: context.inspect_key,
+            ..context
+        },
+        nested,
+    ));
+    bounded.extend(lines.into_iter().skip(head + omitted));
+    bounded
+}
+
+fn bounded_plain_receipt_index(total_rows: usize, budget: usize) -> Option<usize> {
+    let budget = budget.max(layout_contract::TOOL_OUTPUT_MIN_BUDGET);
+    (total_rows > budget).then(|| budget.saturating_sub(1).max(2).div_ceil(2))
+}
+
+fn bounded_tool_output_receipt_line(
+    block: &TranscriptBlock,
+    context: ToolLineContext,
+) -> Option<usize> {
+    if block.kind != BlockKind::Tool || !block.expanded {
+        return None;
+    }
+    let unbounded = ToolLineContext {
+        expanded_output_budget: usize::MAX,
+        ..context
+    };
+    let detail_rows = if block.tool_members.len() > 1 {
+        if block
+            .tool_members
+            .iter()
+            .filter(|member| !member.body.is_empty())
+            .any(|member| member.body_kind == BlockBodyKind::Diff)
+        {
+            return None;
+        }
+        let mut rows = Vec::new();
+        for member in &block.tool_members {
+            rows.extend(tool_group_member_lines(
+                member,
+                unbounded,
+                block.tool_kind == Some(crate::tool_projection::ToolKind::Explore),
+            ));
+            if !member.body.is_empty() {
+                rows.extend(unbounded_plain_tool_detail_lines(
+                    &member.body,
+                    member.body_kind,
+                    unbounded,
+                    true,
+                ));
+            }
+        }
+        rows.len()
+    } else if !block.body.is_empty() && block.body_kind != BlockBodyKind::Diff {
+        unbounded_plain_tool_detail_lines(&block.body, block.body_kind, unbounded, false).len()
+    } else {
+        return None;
+    };
+    bounded_plain_receipt_index(detail_rows, context.expanded_output_budget)
+        .map(|detail_line| detail_line + 1)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VisibleToolOutputCandidate {
+    block_id: String,
+    hovered: bool,
+    selected: bool,
+    receipt_top: usize,
+}
+
+fn prioritize_visible_tool_output_candidates(
+    candidates: &mut [VisibleToolOutputCandidate],
+    viewport_start: usize,
+    viewport_height: usize,
+) {
+    let reading_focus = viewport_start.saturating_add(viewport_height.saturating_sub(1) / 2);
+    candidates.sort_by_key(|candidate| {
+        (
+            candidate.hovered,
+            candidate.selected,
+            Reverse(candidate.receipt_top.abs_diff(reading_focus)),
+            candidate.receipt_top,
+        )
+    });
+}
+
+fn unbounded_plain_tool_detail_lines(
+    body: &str,
+    body_kind: BlockBodyKind,
+    context: ToolLineContext,
+    nested: bool,
+) -> Vec<Line<'static>> {
+    let prefix = if nested {
+        StyledPrefix::repeating(vec![
+            Span::styled(context.styles.glyphs.tool_gutter(), context.styles.metadata),
+            Span::raw("  "),
+        ])
+    } else {
+        StyledPrefix::repeating(vec![Span::styled(
+            context.styles.glyphs.tool_gutter(),
+            context.styles.metadata,
+        )])
+    };
+    wrap_styled_lines(
+        body.split('\n')
+            .map(|line| styled_detail_line(line, body_kind, context.styles)),
+        usize::from(context.content_width),
+        &prefix,
+    )
+}
+
+fn nearest_owning_prompt<'a>(
+    blocks: &'a [TranscriptBlock],
+    block_index: usize,
+    run_id: &str,
+) -> &'a str {
+    let preceding = &blocks[..block_index];
+    preceding
+        .iter()
+        .rev()
+        .find(|block| block.kind == BlockKind::User && !run_id.is_empty() && block.run_id == run_id)
+        .or_else(|| {
+            preceding
+                .iter()
+                .rev()
+                .find(|block| block.kind == BlockKind::User)
+        })
+        .map(|block| block.body.as_str())
+        .unwrap_or_default()
+}
+
+fn complete_tool_output(block: &TranscriptBlock) -> Cow<'_, str> {
+    if block.tool_members.len() > 1 {
+        return Cow::Owned(
+            block
+                .tool_members
+                .iter()
+                .filter(|member| !member.body.is_empty())
+                .map(|member| {
+                    if member.title.is_empty() {
+                        member.body.clone()
+                    } else {
+                        format!("{}\n{}", member.title, member.body)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+        );
+    }
+    Cow::Borrowed(&block.body)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ToolOutputRetainedStatus {
+    Loading,
+    Failed(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ToolOutputOverlayLayout {
+    context: Rect,
+    body: Rect,
+    footer: Rect,
+}
+
+fn tool_output_overlay_layout(inner: Rect) -> ToolOutputOverlayLayout {
+    let body_height = u16::from(inner.height > 0);
+    let footer_height = u16::from(inner.height > body_height);
+    let context_height = inner
+        .height
+        .saturating_sub(body_height + footer_height)
+        .min(layout_contract::TOOL_OUTPUT_CONTEXT_HEIGHT);
+    let body_height = inner.height.saturating_sub(context_height + footer_height);
+    let context = Rect::new(inner.x, inner.y, inner.width, context_height);
+    let body = Rect::new(inner.x, context.bottom(), inner.width, body_height);
+    let footer = Rect::new(inner.x, body.bottom(), inner.width, footer_height);
+    ToolOutputOverlayLayout {
+        context,
+        body,
+        footer,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ToolOutputVisualWindow {
+    lines: Vec<Line<'static>>,
+    total_rows: usize,
+    max_scroll: usize,
+    scroll: usize,
+}
+
+fn tool_output_row_position(window: &ToolOutputVisualWindow, visible_height: usize) -> String {
+    let first = window.scroll.saturating_add(1).min(window.total_rows);
+    let last = window
+        .scroll
+        .saturating_add(visible_height)
+        .min(window.total_rows);
+    format!("{first}-{last} / {}", window.total_rows)
+}
+
+fn tool_output_footer_line(hint: &str, row_position: Option<&str>, width: usize) -> Line<'static> {
+    let Some(row_position) = row_position else {
+        return Line::from(hint.to_owned());
+    };
+    let hint_width = UnicodeWidthStr::width(hint);
+    let position_width = UnicodeWidthStr::width(row_position);
+    if hint_width.saturating_add(position_width).saturating_add(2) <= width {
+        return Line::from(format!(
+            "{hint}{}{row_position}",
+            " ".repeat(width - hint_width - position_width)
+        ));
+    }
+    if position_width <= width {
+        return Line::from(format!(
+            "{}{row_position}",
+            " ".repeat(width - position_width)
+        ));
+    }
+    Line::from(hint.to_owned())
+}
+
+fn tool_output_visual_window(
+    output: &str,
+    width: usize,
+    height: usize,
+    requested_scroll: usize,
+) -> ToolOutputVisualWindow {
+    let width = width.max(1);
+    let total_rows = output
+        .split('\n')
+        .map(|line| tool_output_logical_row_count(line, width))
+        .sum::<usize>()
+        .max(1);
+    let max_scroll = total_rows.saturating_sub(height.max(1));
+    let scroll = requested_scroll.min(max_scroll);
+    let window_end = scroll.saturating_add(height);
+    let mut lines = Vec::with_capacity(height);
+    let mut line_top = 0_usize;
+    for logical in output.split('\n') {
+        let row_count = tool_output_logical_row_count(logical, width);
+        let line_bottom = line_top.saturating_add(row_count);
+        if line_bottom > scroll && line_top < window_end {
+            let start = scroll.saturating_sub(line_top);
+            let end = window_end.min(line_bottom).saturating_sub(line_top);
+            lines.extend(tool_output_logical_window(logical, width, start, end));
+        }
+        line_top = line_bottom;
+        if line_top >= window_end && lines.len() >= height {
+            break;
+        }
+    }
+    ToolOutputVisualWindow {
+        lines,
+        total_rows,
+        max_scroll,
+        scroll,
+    }
+}
+
+fn tool_output_logical_row_count(line: &str, width: usize) -> usize {
+    let width = width.max(1);
+    if line.is_ascii() {
+        return line.len().max(1).div_ceil(width);
+    }
+    let mut rows = 1_usize;
+    let mut used = 0_usize;
+    for grapheme in line.graphemes(true) {
+        let grapheme_width = UnicodeWidthStr::width(grapheme);
+        if used > 0 && used.saturating_add(grapheme_width) > width {
+            rows = rows.saturating_add(1);
+            used = 0;
+        }
+        used = if grapheme_width > width {
+            width
+        } else {
+            used.saturating_add(grapheme_width)
+        };
+    }
+    rows
+}
+
+fn tool_output_logical_window(
+    line: &str,
+    width: usize,
+    start: usize,
+    end: usize,
+) -> Vec<Line<'static>> {
+    if start >= end {
+        return Vec::new();
+    }
+    let width = width.max(1);
+    if line.is_ascii() {
+        return (start..end)
+            .map(|row| {
+                let byte_start = row.saturating_mul(width).min(line.len());
+                let byte_end = byte_start.saturating_add(width).min(line.len());
+                Line::from(line[byte_start..byte_end].to_owned())
+            })
+            .collect();
+    }
+    let mut rows = Vec::with_capacity(end.saturating_sub(start));
+    let mut current = String::new();
+    let mut used = 0_usize;
+    let mut row = 0_usize;
+    for grapheme in line.graphemes(true) {
+        let grapheme_width = UnicodeWidthStr::width(grapheme);
+        if used > 0 && used.saturating_add(grapheme_width) > width {
+            if row >= start && row < end {
+                rows.push(Line::from(std::mem::take(&mut current)));
+            } else {
+                current.clear();
+            }
+            row = row.saturating_add(1);
+            if row >= end {
+                return rows;
+            }
+            used = 0;
+        }
+        if row >= start {
+            current.push_str(grapheme);
+        }
+        used = if grapheme_width > width {
+            width
+        } else {
+            used.saturating_add(grapheme_width)
+        };
+    }
+    if row >= start && row < end {
+        rows.push(Line::from(current));
+    }
+    rows
 }
 
 fn styled_detail_line(
@@ -8725,9 +9472,10 @@ fn tool_hint_line(hint: String, context: ToolLineContext, nested: bool) -> Line<
 }
 
 #[cfg(test)]
+#[cfg(test)]
 fn transcript_role_prefix(
     marker: &'static str,
-    label: &'static str,
+    label: &str,
     label_style: Style,
     continuation_style: Style,
     content_width: u16,
@@ -8810,8 +9558,17 @@ fn cached_transcript_lines_with_tool_key(
         locale,
         styles,
         content_width,
-        tool_expand_key,
-        DensityMode::Compact,
+        TranscriptRenderOptions {
+            locale,
+            density: DensityMode::Compact,
+            glyph_mode: styles.glyphs.mode,
+            content_width,
+            tool_expand_key,
+            tool_inspect_key: crate::keybinding::KeyBindings::default()
+                .inspect_tool_output
+                .label(),
+            expanded_output_budget: layout_contract::TOOL_OUTPUT_MAX_BUDGET,
+        },
     )
 }
 
@@ -8821,9 +9578,15 @@ fn cached_transcript_lines_with_tool_key_and_density(
     locale: Locale,
     styles: TranscriptStyles,
     content_width: u16,
-    tool_expand_key: &'static str,
-    density: DensityMode,
+    options: TranscriptRenderOptions,
 ) -> Vec<Line<'static>> {
+    let TranscriptRenderOptions {
+        density,
+        tool_expand_key,
+        tool_inspect_key,
+        expanded_output_budget,
+        ..
+    } = options;
     if let Some(entry) = cache.get(&block.id)
         && entry.revision == block.layout_revision
         && entry.width == content_width
@@ -8831,17 +9594,13 @@ fn cached_transcript_lines_with_tool_key_and_density(
         && entry.density == density
         && entry.glyph_mode == styles.glyphs.mode
         && entry.expand_key == tool_expand_key
+        && entry.inspect_key == tool_inspect_key
+        && entry.expanded_output_budget == expanded_output_budget
     {
         return entry.lines.clone();
     }
-    let lines = transcript_lines_with_tool_key_and_density(
-        block,
-        locale,
-        styles,
-        content_width,
-        tool_expand_key,
-        density,
-    );
+    let lines =
+        transcript_lines_with_tool_key_and_density(block, locale, styles, content_width, options);
     cache.insert(
         block.id.clone(),
         TranscriptRenderCacheEntry {
@@ -8851,6 +9610,8 @@ fn cached_transcript_lines_with_tool_key_and_density(
             density,
             glyph_mode: styles.glyphs.mode,
             expand_key: tool_expand_key,
+            inspect_key: tool_inspect_key,
+            expanded_output_budget,
             lines: lines.clone(),
         },
     );
@@ -9145,6 +9906,7 @@ fn source_app_label(app: &str) -> &str {
         "claude" => "Claude Code",
         "codex" => "Codex",
         "gemini" => "Gemini",
+        "grok" => "Grok Build",
         other => other,
     }
 }
@@ -9266,6 +10028,20 @@ mod transcript_tests {
         Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
     use ratatui::style::Color;
+
+    #[test]
+    fn disabled_grok_build_has_explicit_status_and_guidance() {
+        for locale in Locale::ALL {
+            assert_eq!(
+                grok_build_state_label(locale, "disabled"),
+                tr(locale, MessageId::GrokBuildDisabled)
+            );
+            assert_eq!(
+                grok_build_guidance("disabled"),
+                MessageId::GrokBuildDisabledDetail
+            );
+        }
+    }
 
     fn production_render_app() -> (App, std::path::PathBuf, std::thread::JoinHandle<()>) {
         production_render_app_with_model_refreshes(0)
@@ -9467,6 +10243,58 @@ mod transcript_tests {
             }]
         }))
         .unwrap()
+    }
+
+    fn model_preference_session(revision: u64) -> Session {
+        Session {
+            session_id: "sess-model-preference".into(),
+            name: String::new(),
+            workspace_id: "ws".into(),
+            workspace_root: "/tmp/model-preference".into(),
+            status: "active".into(),
+            next_model: "provider-a/model-a".into(),
+            next_reasoning_effort: "medium".into(),
+            model_preference_revision: revision,
+            plan_mode: false,
+            permission_profile: "safe-edit".into(),
+            approval_mode: "on_request".into(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            latest_run_id: String::new(),
+            latest_run_agent: String::new(),
+            latest_run_result_kind: String::new(),
+            execution_status: "ready".into(),
+            summary: String::new(),
+            continuity: None,
+        }
+    }
+
+    fn prepare_model_preference_app(app: &mut App, revision: u64) {
+        let mut providers = vec![
+            header_provider("provider-a", "Provider A", "provider-a/model-a", "Model A"),
+            header_provider("provider-b", "Provider B", "provider-b/model-b", "Model B"),
+        ];
+        for provider in &mut providers {
+            provider.models[0].reasoning_efforts = vec!["medium".into(), "high".into()];
+            provider.models[0].default_reasoning_effort = "medium".into();
+        }
+        app.inventory.providers = providers;
+        app.models = app.inventory.available_models();
+        let session = model_preference_session(revision);
+        app.selected_model = session.next_model.clone();
+        app.selected_reasoning_effort = session.next_reasoning_effort.clone();
+        app.command_registry_session = session.session_id.clone();
+        app.sessions = vec![session.clone()];
+        app.active_session = Some(session);
+    }
+
+    fn model_preference_selection(revision: u64) -> crate::rpc::SessionModelSelection {
+        crate::rpc::SessionModelSelection {
+            session_id: "sess-model-preference".into(),
+            next_model: "provider-b/model-b".into(),
+            next_reasoning_effort: "high".into(),
+            model_preference_revision: revision,
+        }
     }
 
     fn count_label(value: &str, label: &str) -> usize {
@@ -9698,6 +10526,164 @@ mod transcript_tests {
     }
 
     #[test]
+    fn model_preference_higher_revision_updates_session_picker_and_header() {
+        let (mut app, root, server) = production_render_app();
+        prepare_model_preference_app(&mut app, 4);
+
+        assert!(app.apply_model_preference(model_preference_selection(5)));
+        let active = app.active_session.as_ref().unwrap();
+        assert_eq!(active.model_preference_revision, 5);
+        assert_eq!(active.next_model, "provider-b/model-b");
+        assert_eq!(app.sessions[0].model_preference_revision, 5);
+        assert_eq!(app.selected_model, "provider-b/model-b");
+        assert_eq!(app.selected_reasoning_effort, "high");
+        let (_, model, reasoning) = app.product_header_metadata();
+        assert_eq!(model, "Model B");
+        assert!(reasoning.contains("high"));
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn model_preference_stale_and_duplicate_revisions_are_ignored() {
+        let (mut app, root, server) = production_render_app();
+        prepare_model_preference_app(&mut app, 5);
+
+        for revision in [4, 5] {
+            assert!(!app.apply_model_preference(model_preference_selection(revision)));
+            assert_eq!(app.selected_model, "provider-a/model-a");
+            assert_eq!(
+                app.active_session
+                    .as_ref()
+                    .unwrap()
+                    .model_preference_revision,
+                5
+            );
+        }
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn model_preference_live_event_updates_state_without_advancing_durable_cursor() {
+        let (mut app, root, server) = production_render_app();
+        prepare_model_preference_app(&mut app, 5);
+        app.blocks.push(TranscriptBlock::local_user(
+            "local-user".into(),
+            "keep the transcript".into(),
+        ));
+        let before = app.blocks.len();
+        app.event_cursor = 11;
+        let durable_cursor_before = app.event_cursor;
+        let payload = serde_json::json!({
+            "session_id": "sess-model-preference",
+            "next_model": "provider-b/model-b",
+            "next_reasoning_effort": "high",
+            "model_preference_revision": 6
+        })
+        .as_object()
+        .unwrap()
+        .clone()
+        .into_iter()
+        .collect();
+        app.pending_async
+            .push_back(super::super::AsyncMessage::Event {
+                generation: app.event_generation,
+                value: Box::new(Ok(crate::rpc::ReceivedEvent {
+                    event: crate::rpc::WireEvent {
+                        session_id: "sess-model-preference".into(),
+                        kind: "session.model.preference.changed".into(),
+                        payload,
+                        ..crate::rpc::WireEvent::default()
+                    },
+                    received_at: std::time::Instant::now(),
+                    replayed: false,
+                })),
+            });
+
+        app.apply_async();
+        assert_eq!(app.blocks.len(), before);
+        assert_eq!(app.event_cursor, durable_cursor_before);
+        assert_eq!(app.selected_model, "provider-b/model-b");
+        assert_eq!(
+            app.active_session
+                .as_ref()
+                .unwrap()
+                .model_preference_revision,
+            6
+        );
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn model_preference_conflict_preserves_composer_draft() {
+        let (mut app, root, server) = production_render_app();
+        prepare_model_preference_app(&mut app, 5);
+        app.composer.set_text("keep this exact draft");
+        let error = crate::rpc::RpcError::Remote {
+            code: -32011,
+            message: "model_preference_conflict".into(),
+            data: Some(serde_json::json!({
+                "current": {
+                    "session_id": "sess-model-preference",
+                    "next_model": "provider-b/model-b",
+                    "next_reasoning_effort": "high",
+                    "model_preference_revision": 6
+                }
+            })),
+        };
+
+        assert!(app.reconcile_model_preference_conflict(&error));
+        assert_eq!(app.composer.text(), "keep this exact draft");
+        assert_eq!(app.selected_model, "provider-b/model-b");
+        assert_eq!(
+            app.notice.render(Locale::En, app.theme.glyphs),
+            tr(Locale::En, MessageId::ModelPreferenceChangedDraftKept)
+        );
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn model_preference_pending_submission_freezes_captured_revision() {
+        let (mut app, root, server) = production_render_app();
+        prepare_model_preference_app(&mut app, 5);
+        app.pending_submission = Some(super::super::PendingSubmission {
+            session_id: "sess-model-preference".into(),
+            prompt: "preserve submission identity".into(),
+            model: "provider-a/model-a".into(),
+            reasoning_effort: "medium".into(),
+            model_preference_revision: 5,
+            agent: String::new(),
+            locale: "en".into(),
+            submission_id: "submission-1".into(),
+            media_refs: Vec::new(),
+            local_id: "local-1".into(),
+        });
+
+        assert!(app.apply_model_preference(model_preference_selection(6)));
+        let pending = app.pending_submission.as_ref().unwrap();
+        assert_eq!(pending.model_preference_revision, 5);
+        assert_eq!(pending.model, "provider-a/model-a");
+        assert_eq!(pending.reasoning_effort, "medium");
+        assert_eq!(
+            app.active_session
+                .as_ref()
+                .unwrap()
+                .model_preference_revision,
+            6
+        );
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn conversation_header_exposes_reasoning_inside_the_model_route() {
         let (mut app, root, server) = production_render_app();
         app.options.locale = Some(Locale::ZhHans.product_id().into());
@@ -9875,6 +10861,7 @@ mod transcript_tests {
             status: "active".into(),
             next_model: "provider-b/model-b".into(),
             next_reasoning_effort: String::new(),
+            model_preference_revision: 0,
             plan_mode: false,
             permission_profile: "safe-edit".into(),
             approval_mode: "on_request".into(),
@@ -12707,6 +13694,7 @@ mod transcript_tests {
             status: "active".into(),
             next_model: "provider/model".into(),
             next_reasoning_effort: "high".into(),
+            model_preference_revision: 0,
             plan_mode: true,
             permission_profile: "safe-edit".into(),
             approval_mode: "on_request".into(),
@@ -12811,6 +13799,55 @@ mod transcript_tests {
                 .action_at(Position::new(column as u16, row as u16)),
             None,
             "a zero-model provider must not expose a runnable action"
+        );
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn disabled_grok_build_is_not_rendered_as_a_failed_probe() {
+        let (mut app, root, server) = production_render_app();
+        app.phase = Phase::Provider;
+        let provider = &mut app.inventory.providers[0];
+        provider.id = "grok-build".into();
+        provider.name = "Grok Build".into();
+        provider.registered = false;
+        provider.available = false;
+        provider.source_kind = "grok-build".into();
+        provider.source_action = "disabled".into();
+        provider.models.clear();
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let rendered = rendered_frame_text(terminal.backend().buffer());
+
+        assert!(
+            rendered.contains(tr(Locale::En, MessageId::GrokBuildDisabled)),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Enable Grok Build in Carina's"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains(tr(Locale::En, MessageId::GrokBuildCheckFailed)),
+            "{rendered}"
+        );
+        let (row, line) = rendered
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| line.contains("Disabled"))
+            .last()
+            .expect("disabled action label");
+        let byte = line.find("Disabled").expect("disabled action column");
+        let column = UnicodeWidthStr::width(&line[..byte]);
+        assert_eq!(
+            app.interactions
+                .action_at(Position::new(column as u16, row as u16)),
+            None,
+            "disabled Grok Build must not expose a retry action"
         );
 
         server.join().unwrap();
@@ -13755,6 +14792,10 @@ mod transcript_tests {
             tool_expand_key: crate::keybinding::KeyBindings::default()
                 .expand_tools
                 .label(),
+            tool_inspect_key: crate::keybinding::KeyBindings::default()
+                .inspect_tool_output
+                .label(),
+            expanded_output_budget: expanded_tool_output_budget(height),
             height,
             requested_scroll,
             follow_bottom,
@@ -14002,6 +15043,9 @@ mod transcript_tests {
         let expand_key = crate::keybinding::KeyBindings::default()
             .expand_tools
             .label();
+        let inspect_key = crate::keybinding::KeyBindings::default()
+            .inspect_tool_output
+            .label();
         let mut cache = HashMap::from([(
             "stable".into(),
             TranscriptHeightCacheEntry {
@@ -14011,6 +15055,8 @@ mod transcript_tests {
                 density: DensityMode::Compact,
                 glyph_mode: GlyphMode::Unicode,
                 expand_key,
+                inspect_key,
+                expanded_output_budget: expanded_tool_output_budget(20),
                 height: 7,
                 header_height: 3,
             },
@@ -14044,6 +15090,9 @@ mod transcript_tests {
         let expand_key = crate::keybinding::KeyBindings::default()
             .expand_tools
             .label();
+        let inspect_key = crate::keybinding::KeyBindings::default()
+            .inspect_tool_output
+            .label();
         let mut cache = HashMap::from([(
             "stable".into(),
             TranscriptRenderCacheEntry {
@@ -14053,6 +15102,8 @@ mod transcript_tests {
                 density: DensityMode::Compact,
                 glyph_mode: GlyphMode::Unicode,
                 expand_key,
+                inspect_key,
+                expanded_output_budget: layout_contract::TOOL_OUTPUT_MAX_BUDGET,
                 lines: vec![Line::from("cached rows")],
             },
         )]);
@@ -14072,8 +15123,15 @@ mod transcript_tests {
             Locale::En,
             TranscriptStyles::default(),
             80,
-            expand_key,
-            DensityMode::Comfortable,
+            TranscriptRenderOptions {
+                locale: Locale::En,
+                density: DensityMode::Comfortable,
+                glyph_mode: GlyphMode::Unicode,
+                content_width: 80,
+                tool_expand_key: expand_key,
+                tool_inspect_key: inspect_key,
+                expanded_output_budget: layout_contract::TOOL_OUTPUT_MAX_BUDGET,
+            },
         );
         assert_ne!(density_refreshed[0].spans[0].content, "cached rows");
         assert_eq!(cache["stable"].density, DensityMode::Comfortable);
@@ -14323,6 +15381,8 @@ mod transcript_tests {
             styles: TranscriptStyles::default(),
             content_width: 80,
             expand_key: "F12",
+            inspect_key: "Ctrl-T",
+            expanded_output_budget: layout_contract::TOOL_OUTPUT_MAX_BUDGET,
         };
         let lines = tool_detail_lines(&body, BlockBodyKind::Diff, true, context, false);
         let visible = plain(&lines);
@@ -14349,6 +15409,570 @@ mod transcript_tests {
             narrow.len(),
             "CJK diff and its escape hatch must stay inside owned rows"
         );
+    }
+
+    #[test]
+    fn expanded_plain_output_keeps_exact_visual_head_tail_receipt() {
+        let context = ToolLineContext {
+            locale: Locale::En,
+            density: DensityMode::Compact,
+            styles: TranscriptStyles::default(),
+            content_width: 12,
+            expand_key: "Ctrl-O",
+            inspect_key: "Ctrl-T",
+            expanded_output_budget: 5,
+        };
+        let minified = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        let lines = plain(&tool_detail_lines(
+            minified,
+            BlockBodyKind::Plain,
+            true,
+            context,
+            false,
+        ));
+        assert_eq!(lines.len(), 5);
+        assert!(lines[2].contains("Ctrl-T"));
+        assert!(lines[2].contains('3'), "{lines:?}");
+        assert!(lines.first().unwrap().contains("abcdefghij"));
+        assert!(lines[3].contains("OPQRSTUVWX"), "{lines:?}");
+        assert!(lines.last().unwrap().contains("YZ"), "{lines:?}");
+
+        let multiline = (1..=9)
+            .map(|line| format!("row-{line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let lines = plain(&tool_detail_lines(
+            &multiline,
+            BlockBodyKind::Plain,
+            true,
+            context,
+            false,
+        ));
+        assert_eq!(lines.len(), 5);
+        assert!(lines[2].contains("Ctrl-T"));
+        assert!(lines[2].contains('5'), "{lines:?}");
+        assert!(lines[0].contains("row-1"));
+        assert!(lines[4].contains("row-9"));
+    }
+
+    #[test]
+    fn expanded_plain_output_budget_handles_cjk_ascii_and_narrow_widths() {
+        for glyph_mode in [GlyphMode::Unicode, GlyphMode::Ascii] {
+            for width in [8, 18, 80] {
+                let context = ToolLineContext {
+                    locale: Locale::ZhHans,
+                    density: DensityMode::Compact,
+                    styles: TranscriptStyles {
+                        glyphs: Glyphs::new(glyph_mode),
+                        ..TranscriptStyles::default()
+                    },
+                    content_width: width,
+                    expand_key: "Ctrl-O",
+                    inspect_key: "Ctrl-T",
+                    expanded_output_budget: 6,
+                };
+                let body = format!("{}{}", "信息熵完整符号图".repeat(12), "ascii".repeat(12));
+                let lines = tool_detail_lines(&body, BlockBodyKind::Plain, true, context, false);
+                assert!(lines.len() <= 6, "mode={glyph_mode:?} width={width}");
+                let mut tool = block(BlockKind::Tool, &body);
+                tool.expanded = true;
+                let unbounded_rows =
+                    unbounded_plain_tool_detail_lines(&body, BlockBodyKind::Plain, context, false)
+                        .len();
+                assert_eq!(
+                    bounded_tool_output_receipt_line(&tool, context),
+                    bounded_plain_receipt_index(unbounded_rows, 6).map(|line| line + 1),
+                    "mode={glyph_mode:?} width={width}"
+                );
+                if unbounded_rows > 6 && width > 8 {
+                    assert!(plain(&lines).join("\n").contains("Ctrl-T"));
+                }
+                if width == 8 {
+                    assert!(unbounded_rows > 6);
+                    assert_eq!(bounded_tool_output_receipt_line(&tool, context), Some(4));
+                    assert!(!plain(&lines).join("\n").contains("Ctrl-T"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn expanded_group_bounds_wrapped_member_headers_and_bodies_as_visual_rows() {
+        let context = ToolLineContext {
+            locale: Locale::En,
+            density: DensityMode::Compact,
+            styles: TranscriptStyles::default(),
+            content_width: 12,
+            expand_key: "Ctrl-O",
+            inspect_key: "Ctrl-T",
+            expanded_output_budget: 6,
+        };
+        let mut group = read_group(
+            vec![
+                tool_member(
+                    "wrapped-header-one",
+                    "src/a/very/long/path/to/the/first/member.rs",
+                    "",
+                    "completed",
+                    "first body row with enough detail to wrap repeatedly",
+                ),
+                tool_member(
+                    "wrapped-header-two",
+                    "src/a/very/long/path/to/the/second/member.rs",
+                    "",
+                    "completed",
+                    "second body row with enough detail to wrap repeatedly",
+                ),
+            ],
+            true,
+        );
+        group.id = "tool:wrapped-group".into();
+
+        let unbounded_context = ToolLineContext {
+            expanded_output_budget: usize::MAX,
+            ..context
+        };
+        let unbounded = tool_group_lines(&group, unbounded_context);
+        let bounded = tool_group_lines(&group, context);
+        let expected_omitted = unbounded
+            .len()
+            .saturating_sub(context.expanded_output_budget.saturating_sub(1));
+        let receipt_index = bounded
+            .iter()
+            .position(|line| plain(std::slice::from_ref(line))[0].contains("Ctrl-T"))
+            .expect("bounded group receipt");
+
+        assert_eq!(bounded.len(), context.expanded_output_budget);
+        assert_eq!(
+            bounded_tool_output_receipt_line(&group, context),
+            Some(receipt_index + 1),
+        );
+        assert!(
+            plain(&bounded)[receipt_index].contains(&expected_omitted.to_string()),
+            "expected exact omitted visual-row count {expected_omitted}: {:?}",
+            plain(&bounded)
+        );
+        assert!(bounded.iter().all(|line| {
+            Paragraph::new(vec![line.clone()])
+                .wrap(Wrap { trim: false })
+                .line_count(context.content_width)
+                == 1
+        }));
+    }
+
+    #[test]
+    fn ctrl_t_candidates_prioritize_hover_selection_then_nearest_visible_receipt() {
+        let mut candidates = vec![
+            VisibleToolOutputCandidate {
+                block_id: "hovered".into(),
+                hovered: true,
+                selected: false,
+                receipt_top: 90,
+            },
+            VisibleToolOutputCandidate {
+                block_id: "selected".into(),
+                hovered: false,
+                selected: true,
+                receipt_top: 50,
+            },
+            VisibleToolOutputCandidate {
+                block_id: "nearest".into(),
+                hovered: false,
+                selected: false,
+                receipt_top: 14,
+            },
+            VisibleToolOutputCandidate {
+                block_id: "farther".into(),
+                hovered: false,
+                selected: false,
+                receipt_top: 4,
+            },
+        ];
+
+        prioritize_visible_tool_output_candidates(&mut candidates, 10, 10);
+
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.block_id.as_str())
+                .collect::<Vec<_>>(),
+            ["farther", "nearest", "selected", "hovered"]
+        );
+    }
+
+    #[test]
+    fn ctrl_t_ignores_a_bounded_receipt_below_the_visible_block_header() {
+        let (mut app, root, server) = production_render_app();
+        let mut first = block(BlockKind::Tool, &"first evidence ".repeat(80));
+        first.id = "tool:first-visible-receipt".into();
+        first.expanded = true;
+        let mut second = block(BlockKind::Tool, &"second evidence ".repeat(80));
+        second.id = "tool:second-hidden-receipt".into();
+        second.expanded = true;
+        app.blocks = vec![first, second];
+        app.transcript_follow_bottom = false;
+        app.transcript_scroll = 1;
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 10)).unwrap();
+
+        terminal
+            .draw(|frame| app.render_transcript(frame, frame.area()))
+            .unwrap();
+
+        let first_action = Action::OpenToolOutput("tool:first-visible-receipt".into());
+        let second_action = Action::OpenToolOutput("tool:second-hidden-receipt".into());
+        let area = Rect::new(0, 0, 40, 10);
+        assert!(!action_positions(&app, area, first_action).is_empty());
+        assert!(action_positions(&app, area, second_action).is_empty());
+        assert_eq!(
+            app.bounded_tool_output_blocks,
+            ["tool:first-visible-receipt"]
+        );
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert!(matches!(
+            app.overlays.active(),
+            Some(Overlay::ToolOutput(output))
+                if output.block_id == "tool:first-visible-receipt"
+        ));
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn tool_output_overlay_retains_prompt_and_scrolls_without_mutating_disclosure() {
+        let (mut app, root, server) = production_render_app();
+        let mut user = block(BlockKind::User, "inspect the complete evidence");
+        user.id = "user:run-viewer".into();
+        user.run_id = "run-viewer".into();
+        let body = (1..=80)
+            .map(|line| format!("evidence row {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut tool = block(BlockKind::Tool, &body);
+        tool.id = "tool:viewer".into();
+        tool.run_id = "run-viewer".into();
+        tool.expanded = true;
+        app.blocks = vec![user, tool];
+        app.tool_disclosure_overrides
+            .insert("tool:viewer".into(), true);
+
+        app.apply_action(Action::OpenToolOutput("tool:viewer".into()));
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 18)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let initial = rendered_frame_text(terminal.backend().buffer());
+        assert!(initial.contains("inspect the complete evidence"));
+        assert!(initial.contains("evidence row 1"));
+        assert!(app.tool_output_max_scroll > 0);
+
+        app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE))
+            .unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let end = rendered_frame_text(terminal.backend().buffer());
+        assert!(end.contains("inspect the complete evidence"));
+        assert!(end.contains("evidence row 80"));
+        assert!(end.contains("70-80 / 80"));
+        assert!(app.tool_disclosure_overrides["tool:viewer"]);
+
+        app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE))
+            .unwrap();
+        assert!(matches!(
+            app.overlays.active(),
+            Some(Overlay::ToolOutput(output)) if output.scroll == 0
+        ));
+        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE))
+            .unwrap();
+        assert!(matches!(
+            app.overlays.active(),
+            Some(Overlay::ToolOutput(output)) if output.scroll == 12
+        ));
+        app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE))
+            .unwrap();
+        assert!(matches!(
+            app.overlays.active(),
+            Some(Overlay::ToolOutput(output)) if output.scroll == 0
+        ));
+        app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 40,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(matches!(
+            app.overlays.active(),
+            Some(Overlay::ToolOutput(output)) if output.scroll == app.tool_output_max_scroll
+        ));
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 40,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(matches!(
+            app.overlays.active(),
+            Some(Overlay::ToolOutput(output)) if output.scroll < app.tool_output_max_scroll
+        ));
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn tool_output_window_reaches_eight_megabyte_minified_tail_beyond_u16_scroll() {
+        let output = format!("{}TAIL-EVIDENCE", "x".repeat(8 * 1024 * 1024));
+
+        let window = tool_output_visual_window(&output, 8, 3, usize::MAX);
+        let visible = plain(&window.lines).join("");
+
+        assert!(window.total_rows > u16::MAX as usize);
+        assert!(window.max_scroll > u16::MAX as usize);
+        assert_eq!(window.scroll, window.max_scroll);
+        assert!(window.lines.len() <= 3);
+        assert!(
+            visible.contains("TAIL-EVIDENCE"),
+            "tail window: {visible:?}"
+        );
+    }
+
+    #[test]
+    fn tool_output_window_wraps_unicode_by_display_cells() {
+        let output = "甲乙A🙂B丙丁";
+
+        let window = tool_output_visual_window(output, 4, 2, usize::MAX);
+        let rows = plain(&window.lines);
+
+        assert_eq!(window.total_rows, 3);
+        assert_eq!(window.scroll, 1);
+        assert_eq!(rows, ["A🙂B", "丙丁"]);
+        assert!(
+            rows.iter()
+                .all(|row| UnicodeWidthStr::width(row.as_str()) <= 4)
+        );
+    }
+
+    #[test]
+    fn tool_output_layout_preserves_a_body_row_on_short_terminals() {
+        for height in [0, 1, 2, 4, 8] {
+            let inner = Rect::new(3, 7, 20, height);
+            let layout = tool_output_overlay_layout(inner);
+
+            assert!(layout.context.bottom() <= inner.bottom());
+            assert!(layout.body.bottom() <= inner.bottom());
+            assert!(layout.footer.bottom() <= inner.bottom());
+            assert_eq!(layout.context.bottom(), layout.body.top());
+            assert_eq!(layout.body.bottom(), layout.footer.top());
+            assert_eq!(layout.footer.bottom(), inner.bottom());
+            assert_eq!(layout.body.height > 0, height > 0);
+        }
+    }
+
+    #[test]
+    fn tool_output_footer_prefers_position_then_hint_as_width_allows() {
+        let hint = "Up/Down scroll";
+
+        assert_eq!(
+            plain(&[tool_output_footer_line(hint, Some("2-4 / 9"), 28)])[0],
+            "Up/Down scroll       2-4 / 9"
+        );
+        assert_eq!(
+            plain(&[tool_output_footer_line(hint, Some("2-4 / 9"), 9)])[0],
+            "  2-4 / 9"
+        );
+        assert_eq!(
+            plain(&[tool_output_footer_line(hint, Some("20-40 / 900"), 5)])[0],
+            hint
+        );
+    }
+
+    #[test]
+    fn tool_output_resize_clamps_scroll_and_keeps_tail_visible() {
+        let (mut app, root, server) = production_render_app();
+        let mut tool = block(BlockKind::Tool, &format!("{}TAIL", "x".repeat(2_000)));
+        tool.id = "tool:resize-viewer".into();
+        app.blocks = vec![tool];
+        app.apply_action(Action::OpenToolOutput("tool:resize-viewer".into()));
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(20, 10)).unwrap();
+
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE))
+            .unwrap();
+        terminal
+            .resize(Rect::new(0, 0, 80, 6))
+            .expect("resize terminal");
+        terminal.draw(|frame| app.render(frame)).unwrap();
+
+        let rendered = rendered_frame_text(terminal.backend().buffer());
+        assert!(rendered.contains("TAIL"), "{rendered}");
+        assert!(matches!(
+            app.overlays.active(),
+            Some(Overlay::ToolOutput(output))
+                if output.scroll == app.tool_output_max_scroll
+        ));
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn tool_output_loading_and_member_failure_retain_preview() {
+        let (mut app, root, server) = production_render_app();
+        let mut group = read_group(
+            vec![
+                tool_member("failed-member", "two.rs", "", "completed", "PREVIEW-TWO"),
+                tool_member("loading-member", "one.rs", "", "completed", "PREVIEW-ONE"),
+            ],
+            true,
+        );
+        group.id = "exploration:retained-artifacts".into();
+        app.blocks = vec![group];
+        app.tool_artifact_loads.insert(
+            "failed-member".into(),
+            crate::overlay::RetainedLoad {
+                generation: 1,
+                session_id: "session".into(),
+                loading: false,
+                error: "artifact unavailable".into(),
+            },
+        );
+        app.tool_artifact_loads.insert(
+            "loading-member".into(),
+            crate::overlay::RetainedLoad::begin(1, "session".into()),
+        );
+        app.apply_action(Action::OpenToolOutput(
+            "exploration:retained-artifacts".into(),
+        ));
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 14)).unwrap();
+
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let loading = rendered_frame_text(terminal.backend().buffer());
+        assert!(loading.contains("PREVIEW-ONE"));
+        assert!(loading.contains("PREVIEW-TWO"));
+        assert!(loading.contains(tr(Locale::En, MessageId::ToolOutputLoading)));
+
+        app.tool_artifact_loads.remove("loading-member");
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let failed = rendered_frame_text(terminal.backend().buffer());
+        assert!(failed.contains("PREVIEW-ONE"));
+        assert!(failed.contains("PREVIEW-TWO"));
+        assert!(failed.contains("artifact unavailable"));
+        let buffer = terminal.backend().buffer();
+        assert!((buffer.area.y..buffer.area.bottom()).any(|y| {
+            (buffer.area.x..buffer.area.right()).any(|x| {
+                let cell = &buffer[(x, y)];
+                cell.symbol() != " " && cell.fg == app.theme.danger
+            })
+        }));
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn truncated_tool_preview_pointer_and_ctrl_t_share_typed_action() {
+        let (mut app, root, server) = production_render_app();
+        let mut tool = block(BlockKind::Tool, &"minified".repeat(80));
+        tool.id = "tool:bounded-entry".into();
+        tool.expanded = true;
+        app.blocks = vec![tool];
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 12)).unwrap();
+        terminal
+            .draw(|frame| app.render_transcript(frame, frame.area()))
+            .unwrap();
+        let action = Action::OpenToolOutput("tool:bounded-entry".into());
+        let positions = action_positions(&app, terminal.backend().buffer().area, action.clone());
+        assert!(!positions.is_empty());
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: positions[0].x,
+            row: positions[0].y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(matches!(
+            app.overlays.active(),
+            Some(Overlay::ToolOutput(_))
+        ));
+        app.apply_action(Action::CloseOverlay);
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert!(matches!(
+            app.overlays.active(),
+            Some(Overlay::ToolOutput(output)) if output.block_id == "tool:bounded-entry"
+        ));
+        assert_eq!(
+            app.tool_disclosure_overrides.get("tool:bounded-entry"),
+            None
+        );
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn empty_historical_artifact_header_is_clickable_and_ctrl_t_starts_loading() {
+        let (mut app, root, server) = production_render_app();
+        let mut tool = block(BlockKind::Tool, "");
+        tool.id = "tool:historical-artifact".into();
+        tool.title = "Read  archived.log".into();
+        tool.collapsible = false;
+        app.blocks = vec![tool];
+        app.tool_artifact_refs.insert(
+            "historical-artifact".into(),
+            crate::rpc::ToolArtifactRef {
+                session_id: "session-history".into(),
+                run_id: "run-history".into(),
+                call_id: "historical-artifact".into(),
+                artifact_id: "artifact-history".into(),
+            },
+        );
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 10)).unwrap();
+
+        terminal
+            .draw(|frame| app.render_transcript(frame, frame.area()))
+            .unwrap();
+        let action = Action::OpenToolOutput("tool:historical-artifact".into());
+        let positions = action_positions(&app, terminal.backend().buffer().area, action.clone());
+        assert!(!positions.is_empty());
+        assert_eq!(app.bounded_tool_output_blocks, ["tool:historical-artifact"]);
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: positions[0].x,
+            row: positions[0].y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(matches!(
+            app.overlays.active(),
+            Some(Overlay::ToolOutput(output))
+                if output.block_id == "tool:historical-artifact"
+        ));
+        assert!(
+            app.tool_artifact_loads
+                .get("historical-artifact")
+                .is_some_and(|load| load.loading)
+        );
+
+        app.apply_action(Action::CloseOverlay);
+        terminal
+            .draw(|frame| app.render_transcript(frame, frame.area()))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert!(matches!(
+            app.overlays.active(),
+            Some(Overlay::ToolOutput(output))
+                if output.block_id == "tool:historical-artifact"
+        ));
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

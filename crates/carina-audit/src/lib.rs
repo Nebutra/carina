@@ -325,6 +325,10 @@ impl AuditLog {
 
     /// Replays the full event stream in append order.
     pub fn read_all(&self) -> Result<Vec<Event>, AuditError> {
+        // Appends and snapshot reads share one critical section so readers
+        // never observe an incomplete JSONL record and the returned length is
+        // an exact exclusive durable cursor for this snapshot.
+        let _state = self.state.lock().unwrap();
         read_all_from(&self.path)
     }
 
@@ -651,6 +655,39 @@ mod tests {
         let report = log.verify().unwrap();
         assert!(report.ok, "{:?}", report.reason);
         assert_eq!(report.event_count, threads * per_thread);
+        drop(log);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_snapshot_lengths_are_exact_durable_prefixes() {
+        let dir = tmp("snapshot-prefix");
+        let log = std::sync::Arc::new(AuditLog::open(&dir, "s").unwrap());
+        let writer = {
+            let log = log.clone();
+            std::thread::spawn(move || {
+                for i in 0..100 {
+                    log.append_with_cursor(&Event::new(
+                        "s",
+                        EventType::FileRead,
+                        serde_json::json!({"i": i}),
+                    ))
+                    .unwrap();
+                }
+            })
+        };
+
+        let mut previous = 0;
+        while !writer.is_finished() {
+            let snapshot = log.read_all().unwrap();
+            assert!(snapshot.len() >= previous);
+            for (index, event) in snapshot.iter().enumerate() {
+                assert!(!event.event_hash.is_empty(), "incomplete event at {index}");
+            }
+            previous = snapshot.len();
+        }
+        writer.join().unwrap();
+        assert_eq!(log.read_all().unwrap().len(), 100);
         drop(log);
         std::fs::remove_dir_all(&dir).unwrap();
     }

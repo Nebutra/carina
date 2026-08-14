@@ -77,11 +77,15 @@ type ConnectionObserver interface {
 
 // Subscription pushes server notifications to one connection.
 type Subscription struct {
-	id     string
-	w      *connWriter
-	done   chan struct{}
-	close  func() error
-	result any
+	id                string
+	w                 *connWriter
+	done              chan struct{}
+	close             func() error
+	requestID         json.RawMessage
+	responseMu        sync.Mutex
+	responseAttempted bool
+	responseCommitted bool
+	result            any
 }
 
 var subscriptionSequence atomic.Uint64
@@ -93,6 +97,32 @@ func (s *Subscription) ID() string { return s.id }
 // SetResult lets a stream handler return catch-up metadata in the subscribe
 // response without changing the handler signature.
 func (s *Subscription) SetResult(result any) { s.result = result }
+
+var ErrSubscriptionResponseCommitted = errors.New("rpc: subscription response already committed")
+
+// CommitResult is the single-use attachment boundary for stream handlers that
+// must order the subscribe response before live notifications. It performs a
+// non-blocking handoff to the connection's single writer; an attempted commit
+// is consumed even when the queue is full or the connection is closed.
+func (s *Subscription) CommitResult(result any) error {
+	s.responseMu.Lock()
+	defer s.responseMu.Unlock()
+	if s.responseAttempted {
+		return ErrSubscriptionResponseCommitted
+	}
+	s.responseAttempted = true
+	err := s.w.tryEnqueue(Response{JSONRPC: "2.0", ID: s.requestID, Result: result})
+	if err == nil {
+		s.responseCommitted = true
+	}
+	return err
+}
+
+func (s *Subscription) responseWasAttempted() bool {
+	s.responseMu.Lock()
+	defer s.responseMu.Unlock()
+	return s.responseAttempted
+}
 
 // Notify sends a server notification (no id) to the subscriber. The frame is
 // enqueued on the connection's single-writer drain loop (connWriter), so it
@@ -566,8 +596,20 @@ func (s *Server) serveWithScopes(conn net.Conn, origin Origin, scopes []Scope) {
 				_ = w.enqueue(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeMethodNotFound, Message: "method not classified: " + req.Method}})
 				continue
 			}
-			sub := &Subscription{id: nextSubscriptionID(), w: w, done: done, close: conn.Close}
-			if err := streamHandler(req.Params, sub); err != nil {
+			sub := &Subscription{
+				id: nextSubscriptionID(), w: w, done: done, close: conn.Close,
+				requestID: append(json.RawMessage(nil), req.ID...),
+			}
+			err := streamHandler(req.Params, sub)
+			// A handler that attempted an atomic response commit owns the entire
+			// response boundary. On success the frame is already queued; on
+			// failure the handler closes the connection so a buffered prefix is
+			// discarded. A legacy blocking enqueue here could deadlock on the
+			// same full queue that made the atomic commit fail.
+			if sub.responseWasAttempted() {
+				continue
+			}
+			if err != nil {
 				_ = w.enqueue(Response{JSONRPC: "2.0", ID: req.ID, Error: responseError(err)})
 				continue
 			}

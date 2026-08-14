@@ -34,6 +34,10 @@ func TestRuntimeInitializeNegotiatesMajorAndCapabilities(t *testing.T) {
 	if caps["artifact_media_refs"] != false || caps["event_schema_version"] != kernel.EventSchemaVersion {
 		t.Fatalf("unregistered artifact media or event schema drift = %+v", caps)
 	}
+	watermark, ok := caps["session_items_watermark"].(map[string]any)
+	if !ok || watermark["version"] != 1 {
+		t.Fatalf("session.items watermark capability = %#v", caps["session_items_watermark"])
+	}
 	bad, _ := json.Marshal(map[string]any{"protocol_version": "2.0.0"})
 	if _, err = d.handleRuntimeInitialize(bad); err == nil {
 		t.Fatal("incompatible major accepted")

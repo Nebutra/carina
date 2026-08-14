@@ -27,27 +27,28 @@ import (
 const SessionVersion = 1
 
 type Session struct {
-	Version              int       `json:"version,omitempty"`
-	SessionID            string    `json:"session_id"`
-	Name                 string    `json:"name,omitempty"`
-	WorkspaceID          string    `json:"workspace_id"`
-	WorkspaceRoot        string    `json:"workspace_root"`
-	Status               string    `json:"status"` // active | paused | closed
-	PermissionProfile    string    `json:"permission_profile"`
-	ApprovalMode         string    `json:"approval_mode,omitempty"` // untrusted|on_request|never
-	NextModel            string    `json:"next_model,omitempty"`    // default model override for subsequent tasks
-	NextReasoningEffort  string    `json:"next_reasoning_effort,omitempty"`
-	PlanMode             bool      `json:"plan_mode,omitempty"`
-	ParentID             string    `json:"parent_id,omitempty"` // set for subagent sessions
-	ForkedFromTaskID     string    `json:"forked_from_task_id,omitempty"`
-	ForkedThroughTurn    int       `json:"forked_through_turn,omitempty"`
-	ForkRequestID        string    `json:"fork_request_id,omitempty"`
-	ForkFingerprint      string    `json:"fork_fingerprint,omitempty"`
-	ImportSource         string    `json:"import_source,omitempty"`
-	ImportConversationID string    `json:"import_conversation_id,omitempty"`
-	ImportSourcePath     string    `json:"import_source_path,omitempty"`
-	Depth                int       `json:"depth"` // 0 = main; bounded to prevent runaway nesting
-	CreatedAt            time.Time `json:"created_at"`
+	Version                 int       `json:"version,omitempty"`
+	SessionID               string    `json:"session_id"`
+	Name                    string    `json:"name,omitempty"`
+	WorkspaceID             string    `json:"workspace_id"`
+	WorkspaceRoot           string    `json:"workspace_root"`
+	Status                  string    `json:"status"` // active | paused | closed
+	PermissionProfile       string    `json:"permission_profile"`
+	ApprovalMode            string    `json:"approval_mode,omitempty"` // untrusted|on_request|never
+	NextModel               string    `json:"next_model,omitempty"`    // default model override for subsequent tasks
+	NextReasoningEffort     string    `json:"next_reasoning_effort,omitempty"`
+	ModelPreferenceRevision uint64    `json:"model_preference_revision,omitempty"`
+	PlanMode                bool      `json:"plan_mode,omitempty"`
+	ParentID                string    `json:"parent_id,omitempty"` // set for subagent sessions
+	ForkedFromTaskID        string    `json:"forked_from_task_id,omitempty"`
+	ForkedThroughTurn       int       `json:"forked_through_turn,omitempty"`
+	ForkRequestID           string    `json:"fork_request_id,omitempty"`
+	ForkFingerprint         string    `json:"fork_fingerprint,omitempty"`
+	ImportSource            string    `json:"import_source,omitempty"`
+	ImportConversationID    string    `json:"import_conversation_id,omitempty"`
+	ImportSourcePath        string    `json:"import_source_path,omitempty"`
+	Depth                   int       `json:"depth"` // 0 = main; bounded to prevent runaway nesting
+	CreatedAt               time.Time `json:"created_at"`
 }
 
 func (s *Store) Rename(sessionID, name string) (*Session, error) {
@@ -78,20 +79,55 @@ func (s *Store) SetNextModel(sessionID, model string) (*Session, error) {
 }
 
 func (s *Store) SetNextModelPreference(sessionID, model, effort string) (*Session, error) {
+	updated, _, err := s.SetNextModelPreferenceIfRevision(sessionID, model, effort, nil)
+	return updated, err
+}
+
+type ModelPreferenceRevisionConflict struct {
+	Expected uint64
+	Actual   uint64
+}
+
+func (e *ModelPreferenceRevisionConflict) Error() string {
+	return fmt.Sprintf("sessionstore: model preference revision conflict: expected %d, actual %d", e.Expected, e.Actual)
+}
+
+// SetNextModelPreferenceIfRevision atomically compares and updates the model
+// preference tuple. A nil expected revision preserves legacy last-writer-wins
+// behavior while versioned clients get optimistic concurrency control.
+func (s *Store) SetNextModelPreferenceIfRevision(sessionID, model, effort string, expected *uint64) (*Session, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.sessions[sessionID]
 	if !ok {
-		return nil, fmt.Errorf("sessionstore: unknown session %s", sessionID)
+		return nil, false, fmt.Errorf("sessionstore: unknown session %s", sessionID)
+	}
+	changed := sess.NextModel != model || sess.NextReasoningEffort != effort
+	// A repeated delivery of an already-applied write is an idempotent success,
+	// even when it still carries the pre-write expected revision.
+	if !changed {
+		copy := *sess
+		return &copy, false, nil
+	}
+	if expected != nil && *expected != sess.ModelPreferenceRevision {
+		copy := *sess
+		return &copy, false, &ModelPreferenceRevisionConflict{
+			Expected: *expected,
+			Actual:   sess.ModelPreferenceRevision,
+		}
 	}
 	updated := *sess
 	updated.NextModel = model
 	updated.NextReasoningEffort = effort
+	updated.ModelPreferenceRevision++
+	if updated.ModelPreferenceRevision == 0 {
+		updated.ModelPreferenceRevision = 1
+	}
 	if err := s.persist(&updated); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	s.sessions[sessionID] = &updated
-	return &updated, nil
+	return &updated, true, nil
 }
 
 func (s *Store) SetPlanMode(sessionID string, on bool) (*Session, error) {

@@ -660,6 +660,7 @@ mod tests {
             status: "active".into(),
             next_model: "openai/gpt-5".into(),
             next_reasoning_effort: "high".into(),
+            model_preference_revision: 0,
             plan_mode: false,
             permission_profile: "safe-edit".into(),
             approval_mode: "on_request".into(),

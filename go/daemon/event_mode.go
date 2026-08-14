@@ -28,11 +28,11 @@ func parseEventMode(value string) (eventMode, error) {
 func projectEvent(mode eventMode, event any, replayCursor ...int) (any, bool) {
 	raw, err := json.Marshal(event)
 	if err != nil {
-		return event, true
+		return nil, false
 	}
 	var value map[string]any
 	if json.Unmarshal(raw, &value) != nil {
-		return event, true
+		return nil, false
 	}
 	cursor := 0
 	if len(replayCursor) > 0 {

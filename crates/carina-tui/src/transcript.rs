@@ -325,17 +325,12 @@ impl TranscriptReducer {
         let Some(record) = self.tools.get_mut(&id) else {
             return false;
         };
-        let output = if truncated {
-            // Issue #20: truncation teaches the escape hatch (expand key).
-            format!(
-                "{output}\n\n[Output truncated; Ctrl-O expand tools; open the artifact for the complete result]"
-            )
-        } else {
-            output
-        };
         record
             .details
             .insert("artifact_output".into(), Value::String(output));
+        record
+            .details
+            .insert("artifact_output_truncated".into(), Value::Bool(truncated));
         upsert_block(blocks, tool_block(record))
     }
 
@@ -4028,7 +4023,7 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
     }
 
     #[test]
-    fn truncated_artifact_output_is_explicit_in_the_tool_component() {
+    fn truncated_artifact_output_preserves_content_without_inventing_recovery() {
         let mut reducer = TranscriptReducer::default();
         let mut blocks = Vec::new();
         reducer.reduce_event(
@@ -4040,8 +4035,15 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         );
 
         assert!(reducer.apply_tool_output(&mut blocks, "call-1", "partial output".into(), true,));
-        assert!(blocks[0].body.contains("partial output"));
-        assert!(blocks[0].body.contains("Output truncated"));
+        assert_eq!(blocks[0].body, "partial output");
+        assert!(!blocks[0].body.contains("Ctrl-O"));
+        assert!(!blocks[0].body.contains("artifact"));
+        assert_eq!(
+            reducer.tools["tool:call-1"]
+                .details
+                .get("artifact_output_truncated"),
+            Some(&Value::Bool(true))
+        );
     }
 
     #[test]
@@ -5119,5 +5121,34 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         assert_eq!(failure.retry_root_run_id, "run-1");
         assert_eq!(failure.attempt_count, 1);
         assert_eq!(blocks[0].body, "legacy failure");
+    }
+
+    #[test]
+    fn imported_messages_keep_external_source_labels_and_are_not_branchable() {
+        let details = |role: &str, content: &str| {
+            json!({
+                "imported": true,
+                "source": "claude-code",
+                "role": role,
+                "content": content,
+            })
+        };
+        let mut reducer = TranscriptReducer::default();
+        let blocks = reducer.hydrate(vec![
+            item_with_id("import-user", "user", "completed", details("user", "hello")),
+            item_with_id(
+                "import-assistant",
+                "agent_message",
+                "completed",
+                details("assistant", "historical answer"),
+            ),
+        ]);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].title, "Claude Code import");
+        assert_eq!(blocks[0].kind, BlockKind::User);
+        assert!(!blocks[0].branchable);
+        assert_eq!(blocks[1].title, "Claude Code import");
+        assert_eq!(blocks[1].kind, BlockKind::Assistant);
+        assert_eq!(blocks[1].body, "historical answer");
     }
 }

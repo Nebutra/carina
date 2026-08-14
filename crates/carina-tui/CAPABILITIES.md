@@ -43,6 +43,7 @@ States:
 | Syntax highlighting | **wired** | `syntax.rs` + markdown fenced code path | #18 |
 | Diff line numbers + word-level | **wired** | `diff_render.rs` + tool Diff body | #19 |
 | Tool intent + grouping + truncation hatch | **wired** | daemon `ToolCallRequested.intent`; `tool_projection` fallback; `transcript` group/expand tests | #20 |
+| Bounded evidence + full tool-output viewer | **wired** | visual-row head/receipt/tail budget; visible pointer/`Ctrl-T` entry; fixed owning-prompt band; paged artifact reads to 8 MiB; retained loading/failure state; unbounded logical scroll with EN/zh-Hans, Unicode/ASCII, short-terminal and resize regressions | runtime truth geometry |
 | Semantic lifecycle + live/replay parity | **wired** | canonical protocol catalog; durable daemon event identity; `ExecutionLifecycleReducer`; transcript component-tree parity | ISSUE-002 |
 | Model-aware failure recovery cells | **wired** | current/original `execution.retry` routing; immutable linked audit evidence; stable retry-chain projection; visible pointer/Tab actions | ISSUE-014 / 08-11 failure recovery UX |
 | Installed skill slash discovery | **wired** | daemon skill prompt registry; trusted-root marketplace policy; slash command tests | ISSUE-016 |
@@ -64,6 +65,7 @@ States:
 | Portable symbol tiers | **wired** | Automatic, Unicode, explicit Nerd Font, and ASCII preferences; live `/symbols` + Settings preview; width-locked semantic registry; structured `tui_glyphs` config; environment ownership disclosed | V008 visual density |
 | Unified composer chrome | **wired** | State-derived zero/one/two-row `ComposerChrome` above a bottom-anchored composer; quiet idle, notice replacement, dual run/activity clocks, protected Queue/context warnings; `/queue` and pointer share `Action::OpenQueue`; 60/80/120/160 fallback geometry tests | V007 visual density |
 | Runtime route + reading geometry truth | **wired** | typed `execution.status` + `ActiveRunPresentation`; Running/paused route separated from Next picker preference; centered `TranscriptGeometry` owns wrap/render/actions/wheel/scrollbar/page size at 120/160/180 with Unicode/ASCII parity | runtime truth geometry |
+| Revisioned model preference | **wired** | `session.model.get/set` revision tuple; CAS conflict recovery; submit/retry preference fence; live-only typed change event that does not advance durable cursor; running route remains separate from Next preference | model preference concurrency |
 | Visual density regression gate | **wired** | Production App matrix for both densities at 80/120/160 × EN/zh-Hans; Unicode style-run goldens; ASCII/color/polarity/selection contracts; Make + CI gate | V011 visual density |
 | Assistant content-type channel | **wired** | action JSON suppressed (`tool=done`→summary); whole-body JSON → pretty `json` markdown fence; else prose/markdown | transcript projection |
 | Managed-proxy context window alias | **wired** | `ccswitch-*/model` resolves via openai/azure catalog; footer uses real window not 32k guess | daemon compaction_budget |

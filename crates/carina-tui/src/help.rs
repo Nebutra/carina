@@ -90,6 +90,10 @@ pub fn conversation_key_hints(bindings: KeyBindings, locale: Locale) -> Vec<Help
             description: text(locale, MessageId::HelpShortcutExpandTools).into(),
         },
         HelpEntry {
+            key: bindings.inspect_tool_output.label().into(),
+            description: text(locale, MessageId::HelpShortcutInspectToolOutput).into(),
+        },
+        HelpEntry {
             key: bindings.interrupt.label().into(),
             description: text(locale, MessageId::HelpShortcutInterrupt).into(),
         },

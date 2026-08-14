@@ -289,7 +289,7 @@ func reasoningEffortFamily(providerID, modelID string) string {
 	switch providerID {
 	case "openai", "openrouter", "azure", "azure-openai":
 		return "openai"
-	case "xai":
+	case "xai", "grok-build":
 		return "xai"
 	case "anthropic":
 		return "anthropic"

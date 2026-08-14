@@ -196,6 +196,10 @@ pub enum MessageId {
     ActiveRoute,
     SavedProfile,
     CliOauth,
+    GrokBuildSignInRequired,
+    GrokBuildUpdateRequired,
+    GrokBuildCheckFailed,
+    GrokBuildDisabled,
     Unavailable,
     CredentialRequired,
     NotRegistered,
@@ -239,6 +243,7 @@ pub enum MessageId {
     ExecutionWorking,
     SubmitFailedDraftKept,
     SubmissionUnknownDraftKept,
+    ModelPreferenceChangedDraftKept,
     SteeringQueued,
     NoActiveExecutionRun,
     CancellationRequested,
@@ -434,6 +439,7 @@ pub enum MessageId {
     HelpFooter,
     HelpShortcutHelp,
     HelpShortcutExpandTools,
+    HelpShortcutInspectToolOutput,
     HelpShortcutInterrupt,
     HelpShortcutHardCancel,
     HelpShortcutSteer,
@@ -450,6 +456,14 @@ pub enum MessageId {
     NoPromptHistory,
     WorkspaceHistoryUnavailableNoPrompts,
     ProviderAvailableDetail,
+    GrokBuildReadyDetail,
+    GrokBuildLoginDetail,
+    GrokBuildUpdateDetail,
+    GrokBuildRetryDetail,
+    GrokBuildDisabledDetail,
+    GrokBuildCliSession,
+    GrokBuildSubscription,
+    XaiApiBillingDetail,
     ProviderBackendNotReadyDetail,
     ProviderValidationDetail,
     ActiveProxyImportDetail,
@@ -759,6 +773,14 @@ pub enum MessageId {
     ToolLinesOmitted,
     ToolCallOmitted,
     ToolCallsOmitted,
+    ToolVisualRowOmitted,
+    ToolVisualRowsOmitted,
+    ToolOutputTitle,
+    ToolOutputPrompt,
+    ToolOutputHint,
+    ToolOutputLoading,
+    ToolOutputMissing,
+    ToolOutputLoadFailed,
 }
 
 impl MessageId {
@@ -795,6 +817,10 @@ impl MessageId {
         Self::ActiveRoute,
         Self::SavedProfile,
         Self::CliOauth,
+        Self::GrokBuildSignInRequired,
+        Self::GrokBuildUpdateRequired,
+        Self::GrokBuildCheckFailed,
+        Self::GrokBuildDisabled,
         Self::Unavailable,
         Self::CredentialRequired,
         Self::NotRegistered,
@@ -838,6 +864,7 @@ impl MessageId {
         Self::ExecutionWorking,
         Self::SubmitFailedDraftKept,
         Self::SubmissionUnknownDraftKept,
+        Self::ModelPreferenceChangedDraftKept,
         Self::SteeringQueued,
         Self::NoActiveExecutionRun,
         Self::CancellationRequested,
@@ -1033,6 +1060,7 @@ impl MessageId {
         Self::HelpFooter,
         Self::HelpShortcutHelp,
         Self::HelpShortcutExpandTools,
+        Self::HelpShortcutInspectToolOutput,
         Self::HelpShortcutInterrupt,
         Self::HelpShortcutHardCancel,
         Self::HelpShortcutSteer,
@@ -1049,6 +1077,14 @@ impl MessageId {
         Self::NoPromptHistory,
         Self::WorkspaceHistoryUnavailableNoPrompts,
         Self::ProviderAvailableDetail,
+        Self::GrokBuildReadyDetail,
+        Self::GrokBuildLoginDetail,
+        Self::GrokBuildUpdateDetail,
+        Self::GrokBuildRetryDetail,
+        Self::GrokBuildDisabledDetail,
+        Self::GrokBuildCliSession,
+        Self::GrokBuildSubscription,
+        Self::XaiApiBillingDetail,
         Self::ProviderBackendNotReadyDetail,
         Self::ProviderValidationDetail,
         Self::ActiveProxyImportDetail,
@@ -1358,6 +1394,14 @@ impl MessageId {
         Self::ToolLinesOmitted,
         Self::ToolCallOmitted,
         Self::ToolCallsOmitted,
+        Self::ToolVisualRowOmitted,
+        Self::ToolVisualRowsOmitted,
+        Self::ToolOutputTitle,
+        Self::ToolOutputPrompt,
+        Self::ToolOutputHint,
+        Self::ToolOutputLoading,
+        Self::ToolOutputMissing,
+        Self::ToolOutputLoadFailed,
     ];
 }
 
@@ -2388,6 +2432,9 @@ fn en(id: MessageId) -> &'static str {
         SubmissionUnknownDraftKept => {
             "Submission status is unknown; your draft was kept. Press Enter to safely reconcile the same submission."
         }
+        ModelPreferenceChangedDraftKept => {
+            "The session model changed elsewhere. The current selection was refreshed and your draft was kept."
+        }
         SteeringQueued => "Message added to the current response",
         NoActiveExecutionRun => "There is no response to stop",
         CancellationRequested => "Stopping the current response",
@@ -2632,6 +2679,9 @@ fn zh_hant(id: MessageId) -> &'static str {
         ExecutionWorking => "正在處理",
         SubmitFailedDraftKept => "提交失敗；草稿已保留：{error}",
         SubmissionUnknownDraftKept => "提交狀態不明；草稿已保留。按 Enter 安全確認同一次提交。",
+        ModelPreferenceChangedDraftKept => {
+            "會話模型已在其他位置變更。已重新整理目前選擇，草稿仍保留。"
+        }
         SteeringQueued => "訊息已加入目前回覆",
         NoActiveExecutionRun => "目前沒有可停止的回覆",
         CancellationRequested => "正在停止目前回覆",
@@ -3071,6 +3121,12 @@ fn translated_compact(id: MessageId, lang: usize) -> &'static str {
             "제출 상태를 알 수 없습니다. 초안은 보존되었습니다. Enter를 눌러 동일한 제출을 안전하게 확인하세요.",
             "Se desconoce el estado del envío; se conservó el borrador. Pulsa Enter para conciliar de forma segura el mismo envío.",
             "L’état de l’envoi est inconnu ; le brouillon est conservé. Appuyez sur Entrée pour réconcilier le même envoi en toute sécurité.",
+        ],
+        ModelPreferenceChangedDraftKept => [
+            "セッションのモデルが別の場所で変更されました。現在の選択を更新し、下書きは保持しました。",
+            "세션 모델이 다른 곳에서 변경되었습니다. 현재 선택을 새로 고쳤고 초안은 보존되었습니다.",
+            "El modelo de la sesión cambió en otro lugar. Se actualizó la selección y se conservó el borrador.",
+            "Le modèle de la session a changé ailleurs. La sélection a été actualisée et le brouillon conservé.",
         ],
         SteeringQueued => [
             "メッセージを現在の応答に追加しました",
@@ -3697,6 +3753,114 @@ fn translated_compact(id: MessageId, lang: usize) -> &'static str {
 fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
     use MessageId::*;
     let values = match id {
+        GrokBuildSignInRequired => [
+            "Sign in required",
+            "需要登录",
+            "需要登入",
+            "ログインが必要",
+            "로그인 필요",
+            "Inicio de sesión requerido",
+            "Connexion requise",
+        ],
+        GrokBuildUpdateRequired => [
+            "Update required",
+            "需要更新",
+            "需要更新",
+            "更新が必要",
+            "업데이트 필요",
+            "Actualización requerida",
+            "Mise à jour requise",
+        ],
+        GrokBuildCheckFailed => [
+            "Check failed",
+            "检测失败",
+            "檢測失敗",
+            "確認に失敗",
+            "확인 실패",
+            "Comprobación fallida",
+            "Vérification échouée",
+        ],
+        GrokBuildDisabled => [
+            "Disabled",
+            "已禁用",
+            "已停用",
+            "無効",
+            "비활성화됨",
+            "Deshabilitado",
+            "Désactivé",
+        ],
+        GrokBuildReadyDetail => [
+            "Uses your signed-in Grok Build session. Usage applies to its subscription account; Carina never copies the OAuth credential.",
+            "使用已登录的 Grok Build 会话，额度计入其订阅账户；Carina 不会复制 OAuth 凭证。",
+            "使用已登入的 Grok Build 工作階段，額度計入其訂閱帳戶；Carina 不會複製 OAuth 憑證。",
+            "ログイン済みの Grok Build セッションを使用します。利用量はそのサブスクリプションに計上され、Carina は OAuth 認証情報をコピーしません。",
+            "로그인된 Grok Build 세션을 사용합니다. 사용량은 해당 구독 계정에 적용되며 Carina는 OAuth 자격 증명을 복사하지 않습니다.",
+            "Usa la sesión iniciada de Grok Build. El uso se carga a su suscripción; Carina no copia la credencial OAuth.",
+            "Utilise la session Grok Build connectée. L’usage est imputé à son abonnement ; Carina ne copie jamais l’identifiant OAuth.",
+        ],
+        GrokBuildLoginDetail => [
+            "Run `grok login`, then retry here. Grok Build keeps ownership of the OAuth session.",
+            "请运行 `grok login`，然后在此重试。OAuth 会话始终由 Grok Build 管理。",
+            "請執行 `grok login`，然後在此重試。OAuth 工作階段始終由 Grok Build 管理。",
+            "`grok login` を実行してから、ここで再試行してください。OAuth セッションは Grok Build が管理します。",
+            "`grok login`을 실행한 뒤 여기서 다시 시도하세요. OAuth 세션은 Grok Build가 관리합니다.",
+            "Ejecuta `grok login` y vuelve a intentarlo aquí. Grok Build conserva la sesión OAuth.",
+            "Exécutez `grok login`, puis réessayez ici. Grok Build reste propriétaire de la session OAuth.",
+        ],
+        GrokBuildUpdateDetail => [
+            "Update Grok Build, then retry detection here.",
+            "请更新 Grok Build，然后在此重新检测。",
+            "請更新 Grok Build，然後在此重新檢測。",
+            "Grok Build を更新してから、ここで再検出してください。",
+            "Grok Build를 업데이트한 뒤 여기서 다시 확인하세요.",
+            "Actualiza Grok Build y vuelve a detectarlo aquí.",
+            "Mettez Grok Build à jour, puis relancez la détection ici.",
+        ],
+        GrokBuildRetryDetail => [
+            "Carina could not verify Grok Build. Run `grok doctor`, then retry here.",
+            "Carina 无法验证 Grok Build。请运行 `grok doctor`，然后在此重试。",
+            "Carina 無法驗證 Grok Build。請執行 `grok doctor`，然後在此重試。",
+            "Carina は Grok Build を確認できませんでした。`grok doctor` を実行してから再試行してください。",
+            "Carina가 Grok Build를 확인하지 못했습니다. `grok doctor` 실행 후 다시 시도하세요.",
+            "Carina no pudo verificar Grok Build. Ejecuta `grok doctor` y vuelve a intentarlo.",
+            "Carina n’a pas pu vérifier Grok Build. Exécutez `grok doctor`, puis réessayez.",
+        ],
+        GrokBuildDisabledDetail => [
+            "Enable Grok Build in Carina's provider configuration, then refresh Providers.",
+            "请在 Carina 的 Provider 配置中启用 Grok Build，然后刷新 Provider。",
+            "請在 Carina 的 Provider 設定中啟用 Grok Build，然後重新整理 Provider。",
+            "Carina の Provider 設定で Grok Build を有効にしてから、Provider を更新してください。",
+            "Carina의 Provider 설정에서 Grok Build를 활성화한 뒤 Provider를 새로 고치세요.",
+            "Activa Grok Build en la configuración de proveedores de Carina y actualiza la lista.",
+            "Activez Grok Build dans la configuration des fournisseurs Carina, puis actualisez la liste.",
+        ],
+        GrokBuildCliSession => [
+            "Grok Build OAuth session",
+            "Grok Build OAuth 会话",
+            "Grok Build OAuth 工作階段",
+            "Grok Build OAuth セッション",
+            "Grok Build OAuth 세션",
+            "Sesión OAuth de Grok Build",
+            "Session OAuth Grok Build",
+        ],
+        GrokBuildSubscription => [
+            "subscription quota",
+            "订阅额度",
+            "訂閱額度",
+            "サブスクリプション枠",
+            "구독 할당량",
+            "cuota de suscripción",
+            "quota d’abonnement",
+        ],
+        XaiApiBillingDetail => [
+            "Uses an xAI API key and xAI API billing. It does not use Grok Build subscription quota.",
+            "使用 xAI API Key 和 xAI API 账单，不会消费 Grok Build 订阅额度。",
+            "使用 xAI API Key 和 xAI API 帳單，不會消耗 Grok Build 訂閱額度。",
+            "xAI API キーと xAI API 課金を使用します。Grok Build のサブスクリプション枠は使用しません。",
+            "xAI API 키와 xAI API 청구를 사용하며 Grok Build 구독 할당량은 사용하지 않습니다.",
+            "Usa una clave y la facturación de la API de xAI. No consume la cuota de Grok Build.",
+            "Utilise une clé et la facturation de l’API xAI. Le quota Grok Build n’est pas utilisé.",
+        ],
         BackToProvider => [
             "Back to provider",
             "返回服务商",
@@ -4614,6 +4778,15 @@ fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
             "모델 사용",
             "Usar modelo",
             "Utiliser le modèle",
+        ],
+        ModelPreferenceChangedDraftKept => [
+            "The session model changed elsewhere. The current selection was refreshed and your draft was kept.",
+            "会话模型已在其他位置变更。已刷新当前选择，草稿仍保留。",
+            "會話模型已在其他位置變更。已重新整理目前選擇，草稿仍保留。",
+            "セッションのモデルが別の場所で変更されました。現在の選択を更新し、下書きは保持しました。",
+            "세션 모델이 다른 곳에서 변경되었습니다. 현재 선택을 새로 고쳤고 초안은 보존되었습니다.",
+            "El modelo de la sesión cambió en otro lugar. Se actualizó la selección y se conservó el borrador.",
+            "Le modèle de la session a changé ailleurs. La sélection a été actualisée et le brouillon conservé.",
         ],
         ConversationRefreshRequired => [
             "Conversation refresh required",
@@ -6338,6 +6511,15 @@ fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
             "expandir salida de herramientas",
             "développer la sortie des outils",
         ],
+        HelpShortcutInspectToolOutput => [
+            "inspect full tool output",
+            "查看完整工具输出",
+            "查看完整工具輸出",
+            "ツール出力をすべて表示",
+            "전체 도구 출력 보기",
+            "ver la salida completa de la herramienta",
+            "voir la sortie complète de l’outil",
+        ],
         HelpShortcutInterrupt => [
             "pause at the next safe point",
             "在下一个安全点暂停",
@@ -6905,6 +7087,78 @@ fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
             "... {count} llamadas omitidas · {key} expandir",
             "... {count} appels omis · {key} développer",
         ],
+        ToolVisualRowOmitted => [
+            "{count} {key} · visual row omitted · view all",
+            "{count} {key} · 省略显示行 · 查看全部",
+            "{count} {key} · 省略顯示列 · 查看全部",
+            "{count} {key} · 表示行を省略 · すべて表示",
+            "{count} {key} · 표시 행 생략 · 전체 보기",
+            "{count} {key} · fila visual omitida · ver todo",
+            "{count} {key} · ligne visuelle omise · tout afficher",
+        ],
+        ToolVisualRowsOmitted => [
+            "{count} {key} · visual rows omitted · view all",
+            "{count} {key} · 省略显示行 · 查看全部",
+            "{count} {key} · 省略顯示列 · 查看全部",
+            "{count} {key} · 表示行を省略 · すべて表示",
+            "{count} {key} · 표시 행 생략 · 전체 보기",
+            "{count} {key} · filas visuales omitidas · ver todo",
+            "{count} {key} · lignes visuelles omises · tout afficher",
+        ],
+        ToolOutputTitle => [
+            "Full tool output",
+            "完整工具输出",
+            "完整工具輸出",
+            "ツール出力全体",
+            "전체 도구 출력",
+            "Salida completa de la herramienta",
+            "Sortie complète de l’outil",
+        ],
+        ToolOutputPrompt => [
+            "Owning prompt",
+            "所属用户输入",
+            "所屬使用者輸入",
+            "元のユーザー入力",
+            "원본 사용자 입력",
+            "Solicitud de origen",
+            "Demande d’origine",
+        ],
+        ToolOutputHint => [
+            "Up/Down scroll · Home/End jump · Esc close",
+            "上下滚动 · Home/End 跳转 · Esc 关闭",
+            "上下捲動 · Home/End 跳轉 · Esc 關閉",
+            "上下でスクロール · Home/End で移動 · Esc で閉じる",
+            "위/아래 스크롤 · Home/End 이동 · Esc 닫기",
+            "Arriba/Abajo desplaza · Home/End salta · Esc cierra",
+            "Haut/Bas défile · Home/End saute · Esc ferme",
+        ],
+        ToolOutputLoading => [
+            "Loading complete output…",
+            "正在加载完整输出…",
+            "正在載入完整輸出…",
+            "完全な出力を読み込み中…",
+            "전체 출력 불러오는 중…",
+            "Cargando la salida completa…",
+            "Chargement de la sortie complète…",
+        ],
+        ToolOutputMissing => [
+            "This tool output is no longer available.",
+            "此工具输出已不可用。",
+            "此工具輸出已不可用。",
+            "このツール出力は利用できなくなりました。",
+            "이 도구 출력은 더 이상 사용할 수 없습니다.",
+            "Esta salida de herramienta ya no está disponible.",
+            "Cette sortie d’outil n’est plus disponible.",
+        ],
+        ToolOutputLoadFailed => [
+            "Could not load the tool output: {error}",
+            "无法加载工具输出：{error}",
+            "無法載入工具輸出：{error}",
+            "ツール出力を読み込めませんでした: {error}",
+            "도구 출력을 불러오지 못했습니다: {error}",
+            "No se pudo cargar la salida de la herramienta: {error}",
+            "Impossible de charger la sortie de l’outil : {error}",
+        ],
         _ => return None,
     };
     Some(
@@ -7259,6 +7513,54 @@ mod tests {
                 assert!(rendered.contains("F12"));
                 assert!(!rendered.contains("{count}"));
                 assert!(!rendered.contains("{key}"));
+            }
+        }
+    }
+
+    #[test]
+    fn tool_output_load_failure_is_localized_and_preserves_the_error() {
+        for locale in Locale::ALL {
+            let rendered = format(
+                locale,
+                MessageId::ToolOutputLoadFailed,
+                &[("error", "connection closed")],
+            );
+            assert!(
+                rendered.contains("connection closed"),
+                "{locale:?}: {rendered}"
+            );
+            assert!(!rendered.contains("{error}"), "{locale:?}: {rendered}");
+        }
+        assert_ne!(
+            text(Locale::En, MessageId::ToolOutputLoadFailed),
+            text(Locale::ZhHans, MessageId::ToolOutputLoadFailed)
+        );
+    }
+
+    #[test]
+    fn tool_output_loading_copy_is_available_in_every_locale() {
+        for locale in Locale::ALL {
+            let loading = text(locale, MessageId::ToolOutputLoading);
+            assert!(!loading.is_empty(), "{locale:?}");
+            assert!(loading.ends_with('…'), "{locale:?}: {loading}");
+        }
+    }
+
+    #[test]
+    fn grok_build_and_xai_billing_copy_is_available_in_every_locale() {
+        for locale in Locale::ALL {
+            for id in [
+                MessageId::GrokBuildReadyDetail,
+                MessageId::GrokBuildLoginDetail,
+                MessageId::GrokBuildUpdateDetail,
+                MessageId::GrokBuildRetryDetail,
+                MessageId::GrokBuildDisabledDetail,
+                MessageId::GrokBuildDisabled,
+                MessageId::GrokBuildCliSession,
+                MessageId::GrokBuildSubscription,
+                MessageId::XaiApiBillingDetail,
+            ] {
+                assert!(!text(locale, id).trim().is_empty(), "{locale:?}: {id:?}");
             }
         }
     }

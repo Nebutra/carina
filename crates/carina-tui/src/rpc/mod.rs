@@ -19,6 +19,8 @@ use thiserror::Error;
 
 const MEDIA_UPLOAD_CHUNK_BYTES: usize = 512 << 10;
 const MAX_MEDIA_UPLOAD_BYTES: usize = 4 << 20;
+const ARTIFACT_TEXT_PAGE_BYTES: usize = 1 << 20;
+const MAX_ARTIFACT_TEXT_BYTES: usize = 8 << 20;
 static NEXT_MEDIA_UPLOAD_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Serialize)]
@@ -71,6 +73,21 @@ impl ReceivedEvent {
 impl RpcError {
     pub fn is_ambiguous_delivery(&self) -> bool {
         matches!(self, Self::Io(_) | Self::Protocol(_))
+    }
+
+    pub fn model_preference_conflict(&self) -> Option<SessionModelSelection> {
+        let Self::Remote {
+            code,
+            message,
+            data,
+        } = self
+        else {
+            return None;
+        };
+        if *code != -32011 || message != "model_preference_conflict" {
+            return None;
+        }
+        serde_json::from_value(data.as_ref()?.get("current")?.clone()).ok()
     }
 }
 
@@ -224,6 +241,10 @@ impl Client {
 
     pub fn model_inventory(&mut self) -> Result<ModelInventory, RpcError> {
         self.call("model.list", &json!({}))
+    }
+
+    pub fn model_inventory_refresh(&mut self) -> Result<ModelInventory, RpcError> {
+        self.call("model.list", &json!({"refresh": true}))
     }
 
     pub fn model_inventory_for(
@@ -412,8 +433,13 @@ impl Client {
         session_id: &str,
         model: &str,
         reasoning_effort: &str,
+        expected_model_preference_revision: u64,
     ) -> Result<SessionModelSelection, RpcError> {
-        let mut params = json!({"session_id": session_id, "model": model});
+        let mut params = json!({
+            "session_id": session_id,
+            "model": model,
+            "expected_model_preference_revision": expected_model_preference_revision,
+        });
         if !reasoning_effort.trim().is_empty() {
             params["reasoning_effort"] = json!(reasoning_effort.trim());
         }
@@ -428,6 +454,24 @@ impl Client {
 
     pub fn items(&mut self, session_id: &str) -> Result<Vec<SessionItemEvent>, RpcError> {
         self.call("session.items", &json!({"session_id": session_id}))
+    }
+
+    pub fn items_watermarked(
+        &mut self,
+        session_id: &str,
+        runtime: &RuntimeInitialize,
+    ) -> Result<SessionItemsSnapshot, RpcError> {
+        if runtime.capabilities.session_items_watermark.version != 1 {
+            return Err(RpcError::Protocol(
+                "runtime does not support session.items watermark version 1".into(),
+            ));
+        }
+        let snapshot: SessionItemsSnapshot = self.call(
+            "session.items",
+            &json!({"session_id": session_id, "watermark_version": 1}),
+        )?;
+        snapshot.validate_identity(session_id, &runtime.runtime)?;
+        Ok(snapshot)
     }
 
     pub fn prompt_history(
@@ -503,6 +547,74 @@ impl Client {
             }),
         )?;
         decode_artifact_text(response)
+    }
+
+    pub fn complete_artifact_text(
+        &mut self,
+        reference: &ToolArtifactRef,
+    ) -> Result<ArtifactText, RpcError> {
+        let mut offset = 0usize;
+        let mut media_type = String::new();
+        let mut bytes = Vec::new();
+        loop {
+            let response: ArtifactReadResponse = self.call(
+                "artifact.read",
+                &json!({
+                    "session_id": reference.session_id,
+                    "run_id": reference.run_id,
+                    "call_id": reference.call_id,
+                    "artifact_id": reference.artifact_id,
+                    "offset": offset,
+                    "limit": ARTIFACT_TEXT_PAGE_BYTES,
+                }),
+            )?;
+            validate_text_media_type(&response.metadata.media_type)?;
+            if media_type.is_empty() {
+                media_type.clone_from(&response.metadata.media_type);
+            } else if !response
+                .metadata
+                .media_type
+                .eq_ignore_ascii_case(&media_type)
+            {
+                return Err(RpcError::Protocol(
+                    "artifact media type changed between pages".into(),
+                ));
+            }
+            if response.offset != offset || response.next_offset < response.offset {
+                return Err(RpcError::Protocol(
+                    "artifact pagination returned a non-contiguous offset".into(),
+                ));
+            }
+            let page = base64::engine::general_purpose::STANDARD
+                .decode(response.content_base64)
+                .map_err(|error| RpcError::Protocol(format!("invalid artifact base64: {error}")))?;
+            if response.next_offset != response.offset.saturating_add(page.len()) {
+                return Err(RpcError::Protocol(
+                    "artifact pagination byte count did not match its cursor".into(),
+                ));
+            }
+            if bytes.len().saturating_add(page.len()) > MAX_ARTIFACT_TEXT_BYTES {
+                return Err(RpcError::Protocol(format!(
+                    "text artifact exceeds {MAX_ARTIFACT_TEXT_BYTES} bytes"
+                )));
+            }
+            bytes.extend_from_slice(&page);
+            if response.eof {
+                break;
+            }
+            if response.next_offset <= offset || page.is_empty() {
+                return Err(RpcError::Protocol(
+                    "artifact pagination did not advance".into(),
+                ));
+            }
+            offset = response.next_offset;
+        }
+        let content = String::from_utf8(bytes)
+            .map_err(|error| RpcError::Protocol(format!("artifact is not UTF-8: {error}")))?;
+        Ok(ArtifactText {
+            content,
+            truncated: false,
+        })
     }
 
     pub fn upload_media(
@@ -605,6 +717,7 @@ impl Client {
         session_id: &str,
         prompt: &str,
         model: &str,
+        model_preference_revision: u64,
         agent: &str,
         locale: &str,
         client_submission_id: &str,
@@ -616,6 +729,7 @@ impl Client {
                 "session_id": session_id,
                 "prompt": prompt,
                 "model": model,
+                "model_preference_revision": model_preference_revision,
                 "agent": agent,
                 "locale": locale,
                 "client_submission_id": client_submission_id,
@@ -630,6 +744,7 @@ impl Client {
         routing: RetryRouting,
         current_model: &str,
         current_reasoning_effort: &str,
+        model_preference_revision: u64,
         client_submission_id: &str,
     ) -> Result<ExecutionRun, RpcError> {
         let mut params = json!({
@@ -640,6 +755,7 @@ impl Client {
         if routing == RetryRouting::Current {
             params["current_model"] = json!(current_model.trim());
             params["current_reasoning_effort"] = json!(current_reasoning_effort.trim());
+            params["model_preference_revision"] = json!(model_preference_revision);
         }
         self.call("execution.retry", &params)
     }
@@ -806,16 +922,7 @@ impl Client {
 }
 
 fn decode_artifact_text(response: ArtifactReadResponse) -> Result<ArtifactText, RpcError> {
-    let media_type = response.metadata.media_type.to_ascii_lowercase();
-    if !(media_type.starts_with("text/")
-        || media_type.starts_with("application/json")
-        || media_type.starts_with("application/xml"))
-    {
-        return Err(RpcError::Protocol(format!(
-            "artifact is not textual ({})",
-            response.metadata.media_type
-        )));
-    }
+    validate_text_media_type(&response.metadata.media_type)?;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(response.content_base64)
         .map_err(|error| RpcError::Protocol(format!("invalid artifact base64: {error}")))?;
@@ -825,6 +932,20 @@ fn decode_artifact_text(response: ArtifactReadResponse) -> Result<ArtifactText, 
         content,
         truncated: !response.eof,
     })
+}
+
+fn validate_text_media_type(media_type: &str) -> Result<(), RpcError> {
+    let media_type = media_type.to_ascii_lowercase();
+    if !(media_type.starts_with("text/")
+        || media_type.starts_with("application/json")
+        || media_type.starts_with("application/xml"))
+    {
+        return Err(RpcError::Protocol(format!(
+            "artifact is not textual ({})",
+            media_type
+        )));
+    }
+    Ok(())
 }
 
 pub fn spawn_event_stream(
@@ -1152,6 +1273,125 @@ mod tests {
     }
 
     #[test]
+    fn provider_refresh_requests_fresh_local_discovery() {
+        let nonce = NEXT_MEDIA_UPLOAD_ID.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "carina-tui-provider-refresh-rpc-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let socket = root.join("daemon.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let request: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["method"], "model.list");
+            assert_eq!(request["params"]["refresh"], true);
+            writeln!(
+                stream,
+                "{}",
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": request["id"],
+                    "result": {"providers": [], "reasoner": {"available": false}}
+                })
+            )
+            .unwrap();
+        });
+
+        let inventory = Client::connect(&socket)
+            .unwrap()
+            .model_inventory_refresh()
+            .unwrap();
+        assert!(inventory.providers.is_empty());
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn watermarked_items_are_capability_gated_and_identity_fenced() {
+        let nonce = NEXT_MEDIA_UPLOAD_ID.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "carina-tui-items-watermark-rpc-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let socket = root.join("daemon.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            for mismatch in [false, true] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut line = String::new();
+                BufReader::new(stream.try_clone().unwrap())
+                    .read_line(&mut line)
+                    .unwrap();
+                let request: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["method"], "session.items");
+                assert_eq!(request["params"]["session_id"], "sess-1");
+                assert_eq!(request["params"]["watermark_version"], 1);
+                assert!(request["params"].get("cursor").is_none());
+                assert!(request["params"].get("limit").is_none());
+                writeln!(
+                    stream,
+                    "{}",
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "result": {
+                            "session_id": if mismatch { "sess-other" } else { "sess-1" },
+                            "runtime_id": "runtime-1",
+                            "runtime_epoch": "epoch-1",
+                            "runtime_process_epoch": 4,
+                            "durable_cursor": 9,
+                            "items": []
+                        }
+                    })
+                )
+                .unwrap();
+            }
+            let (_stream, _) = listener.accept().unwrap();
+        });
+        let runtime: RuntimeInitialize = serde_json::from_value(json!({
+            "runtime_version": "0.9.0",
+            "protocol_version": "1.3.0",
+            "projection_version": "1.0.0",
+            "capabilities": {"session_items_watermark": {"version": 1}},
+            "runtime": {
+                "runtime_id": "runtime-1",
+                "epoch": "epoch-1",
+                "process_epoch": 4
+            }
+        }))
+        .unwrap();
+
+        let snapshot = Client::connect(&socket)
+            .unwrap()
+            .items_watermarked("sess-1", &runtime)
+            .unwrap();
+        assert_eq!(snapshot.durable_cursor, 9);
+        let error = Client::connect(&socket)
+            .unwrap()
+            .items_watermarked("sess-1", &runtime)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("mismatched session/runtime identity"));
+        let mut legacy = runtime;
+        legacy.capabilities.session_items_watermark.version = 0;
+        let error = Client::connect(&socket)
+            .unwrap()
+            .items_watermarked("sess-1", &legacy)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("does not support"));
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn workspace_files_uses_typed_session_scoped_relative_inventory() {
         let nonce = NEXT_MEDIA_UPLOAD_ID.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
@@ -1261,6 +1501,65 @@ mod tests {
     }
 
     #[test]
+    fn session_model_set_sends_expected_revision_and_decodes_legacy_revision() {
+        let nonce = NEXT_MEDIA_UPLOAD_ID.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "carina-tui-model-preference-rpc-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let socket = root.join("daemon.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            for (index, expected_revision) in [7, 0].into_iter().enumerate() {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut line = String::new();
+                BufReader::new(stream.try_clone().unwrap())
+                    .read_line(&mut line)
+                    .unwrap();
+                let request: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["method"], "session.model.set");
+                assert_eq!(request["params"]["session_id"], "sess-1");
+                assert_eq!(request["params"]["model"], "provider/model");
+                assert_eq!(request["params"]["reasoning_effort"], "high");
+                assert_eq!(
+                    request["params"]["expected_model_preference_revision"],
+                    expected_revision
+                );
+                let mut result = json!({
+                    "session_id": "sess-1",
+                    "next_model": "provider/model",
+                    "next_reasoning_effort": "high"
+                });
+                if index == 0 {
+                    result["model_preference_revision"] = json!(8);
+                }
+                writeln!(
+                    stream,
+                    "{}",
+                    json!({"jsonrpc": "2.0", "id": request["id"], "result": result})
+                )
+                .unwrap();
+                stream.flush().unwrap();
+            }
+        });
+
+        let current = Client::connect(&socket)
+            .unwrap()
+            .set_session_model("sess-1", "provider/model", "high", 7)
+            .unwrap();
+        assert_eq!(current.model_preference_revision, 8);
+        let legacy = Client::connect(&socket)
+            .unwrap()
+            .set_session_model("sess-1", "provider/model", "high", 0)
+            .unwrap();
+        assert_eq!(legacy.model_preference_revision, 0);
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn retry_execution_sends_the_selected_routing_semantics() {
         let nonce = NEXT_MEDIA_UPLOAD_ID.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
@@ -1284,9 +1583,11 @@ mod tests {
                 if routing == "current" {
                     assert_eq!(request["params"]["current_model"], "provider/current");
                     assert_eq!(request["params"]["current_reasoning_effort"], "medium");
+                    assert_eq!(request["params"]["model_preference_revision"], 9);
                 } else {
                     assert!(request["params"].get("current_model").is_none());
                     assert!(request["params"].get("current_reasoning_effort").is_none());
+                    assert!(request["params"].get("model_preference_revision").is_none());
                 }
                 assert_eq!(
                     request["params"]["client_submission_id"],
@@ -1317,6 +1618,7 @@ mod tests {
                 RetryRouting::Current,
                 "provider/current",
                 "medium",
+                9,
                 "retry-0",
             )
             .unwrap();
@@ -1328,6 +1630,7 @@ mod tests {
                 RetryRouting::Original,
                 "provider/current",
                 "medium",
+                9,
                 "retry-1",
             )
             .unwrap();
@@ -1516,6 +1819,7 @@ mod tests {
             reader.read_line(&mut line).unwrap();
             let request: Value = serde_json::from_str(&line).unwrap();
             assert_eq!(request["method"], "execution.start");
+            assert_eq!(request["params"]["model_preference_revision"], 11);
             assert_eq!(
                 request["params"]["input_media_refs"]
                     .as_array()
@@ -1551,6 +1855,7 @@ mod tests {
                 "sess-1",
                 "inspect this image",
                 "provider/model",
+                11,
                 "build",
                 "en",
                 "submit-1",
@@ -1588,6 +1893,118 @@ mod tests {
         .unwrap();
         assert_eq!(artifact.content, r#"{"ok":true}"#);
         assert!(artifact.truncated);
+    }
+
+    #[test]
+    fn complete_text_artifact_pages_to_eof_before_utf8_decode() {
+        let nonce = NEXT_MEDIA_UPLOAD_ID.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "carina-tui-complete-artifact-rpc-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let socket = root.join("daemon.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            for (index, (offset, page, eof)) in [
+                (0usize, vec![0xe4, 0xb8], false),
+                (2usize, vec![0x96, b'!'], true),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let request: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["method"], "artifact.read");
+                assert_eq!(request["params"]["offset"], offset);
+                assert_eq!(request["params"]["limit"], ARTIFACT_TEXT_PAGE_BYTES);
+                assert_eq!(request["params"]["artifact_id"], "artifact-1");
+                writeln!(
+                    stream,
+                    "{}",
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "result": {
+                            "metadata": {"media_type": "text/plain; charset=utf-8"},
+                            "offset": offset,
+                            "next_offset": offset + page.len(),
+                            "eof": eof,
+                            "content_base64": base64::engine::general_purpose::STANDARD.encode(page)
+                        }
+                    })
+                )
+                .unwrap();
+                assert_eq!(index == 1, eof);
+            }
+        });
+        let reference = ToolArtifactRef {
+            session_id: "sess-1".into(),
+            run_id: "run-1".into(),
+            call_id: "call-1".into(),
+            artifact_id: "artifact-1".into(),
+        };
+        let artifact = Client::connect(&socket)
+            .unwrap()
+            .complete_artifact_text(&reference)
+            .unwrap();
+        assert_eq!(artifact.content, "世!");
+        assert!(!artifact.truncated);
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn complete_text_artifact_rejects_non_advancing_page() {
+        let nonce = NEXT_MEDIA_UPLOAD_ID.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "carina-tui-stalled-artifact-rpc-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let socket = root.join("daemon.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let request: Value = serde_json::from_str(&line).unwrap();
+            writeln!(
+                stream,
+                "{}",
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": request["id"],
+                    "result": {
+                        "metadata": {"media_type": "text/plain"},
+                        "offset": 0,
+                        "next_offset": 0,
+                        "eof": false,
+                        "content_base64": ""
+                    }
+                })
+            )
+            .unwrap();
+        });
+        let reference = ToolArtifactRef {
+            session_id: "sess-1".into(),
+            run_id: "run-1".into(),
+            call_id: "call-1".into(),
+            artifact_id: "artifact-1".into(),
+        };
+        let error = Client::connect(&socket)
+            .unwrap()
+            .complete_artifact_text(&reference)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("did not advance"));
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1704,13 +2121,33 @@ mod tests {
             "status": "active",
             "next_model": "openai/gpt-5",
             "next_reasoning_effort": "high",
+            "model_preference_revision": 3,
             "permission_profile": "safe-edit",
             "approval_mode": "on_request"
         }))
         .unwrap();
         assert_eq!(session.next_reasoning_effort, "high");
+        assert_eq!(session.model_preference_revision, 3);
         assert_eq!(session.permission_profile, "safe-edit");
         assert_eq!(session.approval_mode, "on_request");
+
+        let legacy_session: Session = serde_json::from_value(json!({
+            "session_id": "sess_legacy",
+            "workspace_root": "/tmp/carina",
+            "status": "active",
+            "next_model": "openai/gpt-5",
+            "next_reasoning_effort": "medium"
+        }))
+        .unwrap();
+        assert_eq!(legacy_session.model_preference_revision, 0);
+
+        let legacy: SessionModelSelection = serde_json::from_value(json!({
+            "session_id": "sess_legacy",
+            "next_model": "openai/gpt-5",
+            "next_reasoning_effort": "medium"
+        }))
+        .unwrap();
+        assert_eq!(legacy.model_preference_revision, 0);
 
         let config: ConfigInventory = serde_json::from_value(json!({
             "effective": {
@@ -1739,6 +2176,7 @@ mod tests {
                 "source_app": "codex",
                 "source_route": "managed_proxy",
                 "source_auth_mode": "bearer_token",
+                "source_credential_owner": "cc-switch",
                 "source_action": "use_active_route",
                 "source_current": true,
                 "source_importable": true,
@@ -1752,6 +2190,7 @@ mod tests {
         assert_eq!(provider.source_app, "codex");
         assert_eq!(provider.source_route, "managed_proxy");
         assert_eq!(provider.source_auth_mode, "bearer_token");
+        assert_eq!(provider.source_credential_owner, "cc-switch");
         assert_eq!(provider.source_action, "use_active_route");
         assert!(provider.source_current);
         assert!(provider.source_importable);

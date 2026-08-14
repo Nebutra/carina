@@ -102,6 +102,19 @@ func TestCanonicalLiveAndReplayRetainDurableIdentity(t *testing.T) {
 	}
 }
 
+func TestEventProjectionRejectsUnencodablePrivateCursorEvent(t *testing.T) {
+	event := map[string]any{
+		"type":                 "ToolCallStarted",
+		internalRawAuditCursor: 9,
+		"invalid":              func() {},
+	}
+	for _, mode := range []eventMode{eventModeCompat, eventModeCanonical} {
+		if projected, ok := projectEvent(mode, event); ok || projected != nil {
+			t.Fatalf("%s projected unencodable private event: %#v", mode, projected)
+		}
+	}
+}
+
 func TestSessionAttachCanonicalAdvancesRawCursor(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()

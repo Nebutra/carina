@@ -252,6 +252,7 @@ mod tests {
             source_app: String::new(),
             source_route: String::new(),
             source_auth_mode: String::new(),
+            source_credential_owner: String::new(),
             source_action: String::new(),
             source_current: false,
             source_importable: false,
@@ -376,6 +377,29 @@ mod tests {
             direct.push(character);
         }
         assert_eq!(direct.visible_indices(&providers), vec![0]);
+    }
+
+    #[test]
+    fn grok_search_keeps_subscription_and_api_billing_routes_distinct() {
+        let mut providers = vec![
+            provider("xai", "xAI"),
+            provider("grok-build", "Grok Build"),
+            provider("openrouter", "OpenRouter"),
+        ];
+        providers[0].models = vec![model("xai/grok-4.6", "grok-4.6", "Grok 4.6")];
+        providers[1].registered = true;
+        providers[1].available = true;
+        providers[1].source_kind = "grok-build".into();
+        providers[1].source_label = "Grok Build".into();
+        providers[1].models = vec![model("grok-build/grok-4.6", "grok-4.6", "grok-4.6")];
+
+        let mut search = ProviderPickerState::default();
+        search.begin_search();
+        for character in "grok".chars() {
+            search.push(character);
+        }
+
+        assert_eq!(search.visible_indices(&providers), vec![1, 0]);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-13T05:30:55.143Z",
+  "generated_at": "2026-08-13T03:03:50.597Z",
   "protocol_version": "1.7.0",
   "source": "protocol/jsonrpc/methods.json",
   "method_count": 169,
@@ -414,9 +414,10 @@
           "params": {
             "session_id": "string",
             "cursor": "signed opaque exclusive cursor?",
-            "limit": "integer 1..200?"
+            "limit": "integer 1..200?",
+            "watermark_version": "1? (complete snapshot only; mutually exclusive with cursor/limit)"
           },
-          "result": "SessionItemEvent[] when pagination omitted; otherwise { data: SessionItemEvent[], next_cursor: string?, projection_version: string }"
+          "result": "SessionItemEvent[] when legacy pagination is omitted; paginated { data, next_cursor?, projection_version }; or v1 { session_id, runtime_id, runtime_epoch, runtime_process_epoch, durable_cursor, items } from one audit read"
         },
         {
           "method": "conversation.import.discover",
@@ -496,7 +497,7 @@
           "params": {
             "session_id": "string"
           },
-          "result": "{ session_id: string, next_model: string, next_reasoning_effort: string }"
+          "result": "{ session_id: string, next_model: string, next_reasoning_effort: string, model_preference_revision: integer >= 0 }"
         },
         {
           "method": "session.model.set",
@@ -506,9 +507,10 @@
           "params": {
             "session_id": "string",
             "model": "string",
-            "reasoning_effort": "string?"
+            "reasoning_effort": "string?",
+            "expected_model_preference_revision": "integer >= 0?"
           },
-          "result": "{ session_id: string, next_model: string, next_reasoning_effort: string }"
+          "result": "{ session_id: string, next_model: string, next_reasoning_effort: string, model_preference_revision: integer >= 0 }"
         },
         {
           "method": "session.approve_plan",
@@ -633,6 +635,7 @@
             "agent": "string?",
             "model": "string?",
             "reasoning_effort": "string?",
+            "model_preference_revision": "integer >= 0? (expected session preference snapshot; omitted by legacy clients)",
             "locale": "en|zh|zh-Hant|ja|ko|es|fr?",
             "token_budget": "integer >= 0?",
             "mode": "background?",
@@ -651,8 +654,9 @@
             "run_id": "string",
             "client_submission_id": "ASCII token 1-128",
             "routing": "original|current? (default original)",
-            "current_model": "string? (required from current-route clients)",
-            "current_reasoning_effort": "string?"
+            "current_model": "string? (legacy current-route snapshot)",
+            "current_reasoning_effort": "string? (legacy current-route snapshot)",
+            "model_preference_revision": "integer >= 0? (routing=current only; omitted by legacy clients)"
           },
           "result": "ExecutionRun with retry_of_run_id; original run remains terminal"
         },

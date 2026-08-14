@@ -1,12 +1,25 @@
 package daemon
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/Nebutra/carina/go/provider"
 	"github.com/Nebutra/carina/go/scheduler"
 )
+
+type routeGuardSpyReasoner struct {
+	name  string
+	calls int
+}
+
+func (r *routeGuardSpyReasoner) Name() string { return r.name }
+func (r *routeGuardSpyReasoner) Think(context.Context, string) (string, error) {
+	r.calls++
+	return `{"tool":"done","summary":"wrong backend"}`, nil
+}
 
 func TestTaskSubmitStoresModelOverride(t *testing.T) {
 	d, ws := newLoopDaemon(t)
@@ -79,6 +92,75 @@ func TestTaskSubmitRejectsDisabledProvider(t *testing.T) {
 		"model":      "openai/gpt-5",
 	})); err == nil || !strings.Contains(err.Error(), "disabled") {
 		t.Fatalf("disabled provider submission error = %v", err)
+	}
+}
+
+func TestSessionModelSetAllowsDynamicGrokBuildOnlyThroughDedicatedRouter(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	d.offline = false
+	delete(d.providerCatalog, provider.GrokBuildProviderID)
+	d.SetReasoner(newRouterReasonerWithCatalog(d.router, "default", d.providerCatalog, d.disabledProviders))
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+
+	if _, err := d.handleSessionModelSet(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID,
+		"model":      "grok-build/grok-4.6",
+	})); err != nil {
+		t.Fatalf("dynamic Grok Build preference was rejected by the startup catalog: %v", err)
+	}
+	d.disabledProviders = map[string]bool{provider.GrokBuildProviderID: true}
+	if err := d.validateTaskModel("xai/grok-4"); err != nil {
+		t.Fatalf("disabling Grok Build affected the separate xAI route: %v", err)
+	}
+	_, err := d.handleSessionModelSet(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID,
+		"model":      "grok-build/grok-4.5",
+	}))
+	if err == nil || !strings.Contains(err.Error(), `model provider "grok-build" is disabled`) {
+		t.Fatalf("disabled dynamic Grok Build route error = %v", err)
+	}
+
+	d.disabledProviders = map[string]bool{}
+	d.offline = true
+	if err := d.validateTaskModel("grok-build/grok-4.6"); err == nil || !strings.Contains(err.Error(), reasonerBackendRouter) {
+		t.Fatalf("offline Grok Build route error = %v", err)
+	}
+}
+
+func TestTaskSubmitRejectsGrokBuildForExplicitCLIBackendsBeforeInvocation(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	d.offline = false
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+
+	for _, backend := range []string{reasonerBackendClaudeCLI, reasonerBackendCodexCLI} {
+		t.Run(backend, func(t *testing.T) {
+			spy := &routeGuardSpyReasoner{name: backend}
+			d.SetReasoner(spy)
+			before := len(d.sched.List())
+			_, err := d.handleTaskSubmit(mustJSON(t, map[string]any{
+				"session_id": sess.SessionID,
+				"prompt":     "must not invoke the selected compatibility CLI",
+				"model":      "grok-build/grok-4.6",
+			}))
+			if err == nil || !strings.Contains(err.Error(), reasonerBackendRouter) {
+				t.Fatalf("Grok Build submission under %s error = %v", backend, err)
+			}
+			if spy.calls != 0 {
+				t.Fatalf("%s was invoked %d times for a Grok Build task", backend, spy.calls)
+			}
+			if after := len(d.sched.List()); after != before {
+				t.Fatalf("rejected Grok Build route created a task: before=%d after=%d", before, after)
+			}
+		})
+	}
+
+	d.SetReasoner(newRouterReasonerWithCatalog(d.router, "default", d.providerCatalog, d.disabledProviders))
+	if err := d.validateTaskModel("GROK-BUILD/grok-4.6"); err == nil || !strings.Contains(err.Error(), "not canonical") {
+		t.Fatalf("non-canonical Grok Build provider error = %v", err)
 	}
 }
 

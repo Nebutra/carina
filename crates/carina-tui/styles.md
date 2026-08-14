@@ -112,10 +112,13 @@ the only sharp-junction exception in graphical modes.
 ## Composer chrome
 
 The conversation shell is intentionally quieter than setup. Its header owns one
-content row and one bottom hairline: `Carina ▾ · conversation` on the left, with
-the current mode as the highest-priority routine action on the right. The
-width-locked product trigger opens an anchored menu for New conversation,
-Conversations, Status, Settings, and Help. A paused run's Review/Resume action
+content row and one bottom hairline: a two-cell canonical mini mark followed by
+`Carina ▾ · conversation` on the left, with the current mode as the
+highest-priority routine action on the right. The mark, product name, and
+disclosure form one width-locked product trigger that opens an anchored menu for
+New conversation, Conversations, Status, Settings, and Help. Below 24 cells the
+mark yields its three cells while the textual product trigger remains available.
+A paused run's Review/Resume action
 outranks the mode, followed by the model picker. Provider, reasoning, source,
 workspace, navigation, and shortcut tutorials remain available in their
 dedicated surfaces instead of being repeated above every turn. Hover/open state

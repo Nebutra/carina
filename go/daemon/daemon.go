@@ -161,6 +161,7 @@ type Daemon struct {
 	policyDir        string            // opts.PolicyDir, kept for doctor's policyBundleStale freshness probe
 	stateDir         string
 	socketPath       string
+	offline          bool
 	cloudEndpoint    string
 	syncMode         string
 	reasoner         Reasoner     // agent "thinking" engine (nil => mock loop)
@@ -193,8 +194,9 @@ type Daemon struct {
 	// checkpointMu serializes restore/resume commit boundaries. Both operations
 	// update the kernel patch lineage, latest checkpoint pointer, and durable
 	// task row, so they must never interleave for the same daemon.
-	checkpointMu  sync.Mutex
-	sessionFences sync.Map // session_id -> *sync.RWMutex; restore is writer, execution/mutations are readers
+	checkpointMu     sync.Mutex
+	sessionFences    sync.Map // session_id -> *sync.RWMutex; restore is writer, execution/mutations are readers
+	preferenceFences sync.Map // session_id -> *sync.RWMutex; model preference CAS and execution snapshot only
 
 	readProv   map[string]map[string]string // session -> relpath -> sha256 of last read (dirty-write guard)
 	readProvMu sync.Mutex
@@ -432,6 +434,7 @@ func New(opts Options) (*Daemon, error) {
 		org:                   loadOrgPolicy(opts.PolicyDir),
 		policyDir:             opts.PolicyDir,
 		stateDir:              opts.StateDir,
+		offline:               opts.Offline,
 		cloudEndpoint:         cloudEndpoint,
 		syncMode:              syncMode,
 		started:               time.Now().UTC(),
@@ -593,10 +596,10 @@ func New(opts Options) (*Daemon, error) {
 		authStore,
 		func() (string, error) { return os.Getenv("CARINA_NEBUTRA_TOKEN"), nil },
 	)
-	providerCatalog := loadRuntimeProviderCatalog(opts.Offline)
+	d.disabledProviders = disabledProviderSet(opts.DisabledProviders)
+	providerCatalog := loadRuntimeProviderCatalog(opts.Offline, d.disabledProviders)
 	d.authStore = authStore
 	d.providerCatalog = providerCatalog
-	d.disabledProviders = disabledProviderSet(opts.DisabledProviders)
 	d.usage = newUsageStore(opts.StateDir)
 	d.goals = newGoalStore(opts.StateDir)
 	registerProviders(d.router, opts.Offline, opts.DisabledProviders, authStore, providerCatalog)
@@ -742,7 +745,7 @@ func New(opts Options) (*Daemon, error) {
 		d.reasonerBackend = selectedBackend
 		d.reasonerModel = model
 		d.reasonerExplicit = configuredReasonerBackend != reasonerBackendAuto && selectedBackend != reasonerBackendNone
-		d.reasoner, err = newConfiguredReasonerWithCatalog(selectedBackend, d.router, model, d.providerCatalog)
+		d.reasoner, err = newConfiguredReasonerWithCatalog(selectedBackend, d.router, model, d.providerCatalog, d.disabledProviders)
 		if err != nil {
 			closeReasoners(d.reasoner, d.summarizer, d.verifier, d.riskReviewer)
 			_ = kern.Close()
@@ -750,7 +753,7 @@ func New(opts Options) (*Daemon, error) {
 		}
 		// Model tiering: an optional cheaper model for compaction/summarization.
 		if m := os.Getenv("CARINA_SUMMARIZER_MODEL"); m != "" && selectedBackend != reasonerBackendNone {
-			d.summarizer, err = newConfiguredReasonerWithCatalog(selectedBackend, d.router, m, d.providerCatalog)
+			d.summarizer, err = newConfiguredReasonerWithCatalog(selectedBackend, d.router, m, d.providerCatalog, d.disabledProviders)
 			if err != nil {
 				closeReasoners(d.reasoner, d.summarizer, d.verifier, d.riskReviewer)
 				_ = kern.Close()
@@ -763,7 +766,7 @@ func New(opts Options) (*Daemon, error) {
 			vm = os.Getenv("CARINA_VERIFIER_MODEL")
 		}
 		if vm != "" && selectedBackend != reasonerBackendNone {
-			d.verifier, err = newConfiguredReasonerWithCatalog(selectedBackend, d.router, vm, d.providerCatalog)
+			d.verifier, err = newConfiguredReasonerWithCatalog(selectedBackend, d.router, vm, d.providerCatalog, d.disabledProviders)
 			if err != nil {
 				closeReasoners(d.reasoner, d.summarizer, d.verifier, d.riskReviewer)
 				_ = kern.Close()
@@ -778,7 +781,7 @@ func New(opts Options) (*Daemon, error) {
 			rm = os.Getenv("CARINA_RISK_REVIEW_MODEL")
 		}
 		if rm != "" && selectedBackend != reasonerBackendNone {
-			d.riskReviewer, err = newConfiguredReasonerWithCatalog(selectedBackend, d.router, rm, d.providerCatalog)
+			d.riskReviewer, err = newConfiguredReasonerWithCatalog(selectedBackend, d.router, rm, d.providerCatalog, d.disabledProviders)
 			if err != nil {
 				closeReasoners(d.reasoner, d.summarizer, d.verifier, d.riskReviewer)
 				_ = kern.Close()
@@ -2127,14 +2130,15 @@ func (d *Daemon) handleSessionModelGet(params json.RawMessage) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown session %s", p.SessionID)
 	}
-	return map[string]any{"session_id": sess.SessionID, "next_model": sess.NextModel, "next_reasoning_effort": sess.NextReasoningEffort}, nil
+	return sessionModelPreference(sess), nil
 }
 
 func (d *Daemon) handleSessionModelSet(params json.RawMessage) (any, error) {
 	var p struct {
-		SessionID       string `json:"session_id"`
-		Model           string `json:"model"`
-		ReasoningEffort string `json:"reasoning_effort"`
+		SessionID                       string  `json:"session_id"`
+		Model                           string  `json:"model"`
+		ReasoningEffort                 string  `json:"reasoning_effort"`
+		ExpectedModelPreferenceRevision *uint64 `json:"expected_model_preference_revision,omitempty"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -2147,11 +2151,55 @@ func (d *Daemon) handleSessionModelSet(params json.RawMessage) (any, error) {
 	// Stale session effort (e.g. low after switching onto a no-effort route)
 	// must not hard-fail the preference write.
 	p.ReasoningEffort = resolveEffortForModel(d.reasoningEffortSpec(p.Model), p.ReasoningEffort)
-	sess, err := d.store.SetNextModelPreference(p.SessionID, p.Model, p.ReasoningEffort)
+	fence := d.sessionPreferenceFence(p.SessionID)
+	fence.Lock()
+	sess, changed, err := d.store.SetNextModelPreferenceIfRevision(
+		p.SessionID,
+		p.Model,
+		p.ReasoningEffort,
+		p.ExpectedModelPreferenceRevision,
+	)
 	if err != nil {
+		fence.Unlock()
+		if conflict, ok := err.(*sessionstore.ModelPreferenceRevisionConflict); ok && sess != nil {
+			return nil, modelPreferenceConflict(conflict.Expected, sess)
+		}
 		return nil, err
 	}
-	return map[string]any{"session_id": sess.SessionID, "next_model": sess.NextModel, "next_reasoning_effort": sess.NextReasoningEffort}, nil
+	preference := sessionModelPreference(sess)
+	if changed {
+		d.events.Publish(sess.SessionID, map[string]any{
+			"session_id": sess.SessionID,
+			"type":       "session.model.preference.changed",
+			"actor":      "operator",
+			"timestamp":  time.Now().UTC().Format(time.RFC3339),
+			"payload":    preference,
+		})
+	}
+	fence.Unlock()
+	return preference, nil
+}
+
+func sessionModelPreference(sess *sessionstore.Session) map[string]any {
+	return map[string]any{
+		"session_id":                sess.SessionID,
+		"next_model":                sess.NextModel,
+		"next_reasoning_effort":     sess.NextReasoningEffort,
+		"model_preference_revision": sess.ModelPreferenceRevision,
+	}
+}
+
+func modelPreferenceConflict(expected uint64, sess *sessionstore.Session) *rpc.Error {
+	return &rpc.Error{
+		Code:    -32011,
+		Message: "model_preference_conflict",
+		Data: map[string]any{
+			"expected_model_preference_revision": expected,
+			"actual_model_preference_revision":   sess.ModelPreferenceRevision,
+			"current":                            sessionModelPreference(sess),
+			"recovery":                           "refresh_session_model_preference_and_retry",
+		},
+	}
 }
 
 // handleAddDir grants a session an additional allowed root (the /add-dir scoped
@@ -2684,18 +2732,19 @@ func (d *Daemon) noticePlanModeSwitch(sessionID string, on bool) error {
 // ---- tasks ----------------------------------------------------------------
 
 type taskSubmitParams struct {
-	SessionID          string                   `json:"session_id"`
-	ClientSubmissionID *string                  `json:"client_submission_id"`
-	Prompt             string                   `json:"prompt"`
-	Model              string                   `json:"model"`
-	Agent              string                   `json:"agent"`
-	Mode               string                   `json:"mode"`
-	ReasoningEffort    string                   `json:"reasoning_effort"`
-	Locale             string                   `json:"locale"`
-	TokenBudget        int                      `json:"token_budget"`
-	SuccessCriteria    []scheduler.SuccessCheck `json:"success_criteria"`
-	OutputSchema       json.RawMessage          `json:"output_schema"`
-	InputMediaRefs     []MediaRef               `json:"input_media_refs"`
+	SessionID               string                   `json:"session_id"`
+	ClientSubmissionID      *string                  `json:"client_submission_id"`
+	ModelPreferenceRevision *uint64                  `json:"model_preference_revision,omitempty"`
+	Prompt                  string                   `json:"prompt"`
+	Model                   string                   `json:"model"`
+	Agent                   string                   `json:"agent"`
+	Mode                    string                   `json:"mode"`
+	ReasoningEffort         string                   `json:"reasoning_effort"`
+	Locale                  string                   `json:"locale"`
+	TokenBudget             int                      `json:"token_budget"`
+	SuccessCriteria         []scheduler.SuccessCheck `json:"success_criteria"`
+	OutputSchema            json.RawMessage          `json:"output_schema"`
+	InputMediaRefs          []MediaRef               `json:"input_media_refs"`
 }
 
 func (d *Daemon) handleTaskSubmit(params json.RawMessage) (any, error) {
@@ -2723,13 +2772,6 @@ func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, provenance tas
 	if provenance.Retry != nil && strings.TrimSpace(provenance.Retry.OriginalRunID) == "" {
 		return nil, fmt.Errorf("internal retry provenance requires original run id")
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
-	}
-	if sess.Status != "active" {
-		return nil, fmt.Errorf("session %s is %s, not active", p.SessionID, sess.Status)
-	}
 	if strings.TrimSpace(p.Prompt) == "" {
 		return nil, fmt.Errorf("prompt is required")
 	}
@@ -2743,14 +2785,7 @@ func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, provenance tas
 	if p.TokenBudget < 0 {
 		return nil, fmt.Errorf("token_budget must be >= 0")
 	}
-	inputMediaRefs, err := d.validateTaskInputMedia(p.SessionID, p.InputMediaRefs)
-	if err != nil {
-		return nil, err
-	}
 	p.Model = strings.TrimSpace(p.Model)
-	if err := d.validateTaskModel(p.Model); err != nil {
-		return nil, err
-	}
 	p.Agent = strings.TrimSpace(p.Agent)
 	p.Mode = strings.ToLower(strings.TrimSpace(p.Mode))
 	if p.Mode == "" {
@@ -2759,9 +2794,6 @@ func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, provenance tas
 	if p.Mode != "background" {
 		return nil, fmt.Errorf("task submit mode must be background")
 	}
-	fence := d.sessionExecutionFence(sess.SessionID)
-	fence.RLock()
-	defer fence.RUnlock()
 	submissionFingerprint := ""
 	clientSubmissionID := ""
 	if p.ClientSubmissionID != nil {
@@ -2770,6 +2802,39 @@ func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, provenance tas
 			return nil, fmt.Errorf("client_submission_id must be a 1-128 byte ASCII token using letters, digits, '.', '_', ':', or '-'")
 		}
 		submissionFingerprint = taskSubmissionFingerprintForProvenance(p, provenance)
+		key := taskSubmissionKey(p.SessionID, clientSubmissionID)
+		d.submissionMu.Lock()
+		if taskID := d.taskSubmissions[key]; taskID != "" {
+			if task, exists := d.sched.Get(taskID); exists {
+				if task.ClientSubmissionFingerprint != submissionFingerprint {
+					d.submissionMu.Unlock()
+					return nil, fmt.Errorf("client_submission_id %q was already used for a different request", clientSubmissionID)
+				}
+				d.submissionMu.Unlock()
+				return task, nil
+			}
+			delete(d.taskSubmissions, key)
+		}
+		d.submissionMu.Unlock()
+	}
+	sess, ok := d.store.Get(p.SessionID)
+	if !ok {
+		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	}
+	if sess.Status != "active" {
+		return nil, fmt.Errorf("session %s is %s, not active", p.SessionID, sess.Status)
+	}
+	inputMediaRefs, err := d.validateTaskInputMedia(p.SessionID, p.InputMediaRefs)
+	if err != nil {
+		return nil, err
+	}
+	if err := d.validateTaskModel(p.Model); err != nil {
+		return nil, err
+	}
+	fence := d.sessionExecutionFence(sess.SessionID)
+	fence.RLock()
+	defer fence.RUnlock()
+	if clientSubmissionID != "" {
 		key := taskSubmissionKey(p.SessionID, clientSubmissionID)
 		d.submissionMu.Lock()
 		defer d.submissionMu.Unlock()
@@ -2783,6 +2848,37 @@ func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, provenance tas
 			delete(d.taskSubmissions, key)
 		}
 	}
+	// The pre-fence read is only useful for cheap validation. Re-read under the
+	// session fence so a versioned submission freezes one authoritative model +
+	// effort tuple, never a mixture from two preference revisions.
+	preferenceFence := d.sessionPreferenceFence(p.SessionID)
+	preferenceFence.RLock()
+	sess, ok = d.store.Get(p.SessionID)
+	if !ok {
+		preferenceFence.RUnlock()
+		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	}
+	if sess.Status != "active" {
+		preferenceFence.RUnlock()
+		return nil, fmt.Errorf("session %s is %s, not active", p.SessionID, sess.Status)
+	}
+	if p.ModelPreferenceRevision != nil {
+		if *p.ModelPreferenceRevision != sess.ModelPreferenceRevision {
+			preferenceFence.RUnlock()
+			return nil, modelPreferenceConflict(*p.ModelPreferenceRevision, sess)
+		}
+		if p.Model != "" && p.Model != strings.TrimSpace(sess.NextModel) {
+			preferenceFence.RUnlock()
+			return nil, modelPreferenceConflict(*p.ModelPreferenceRevision, sess)
+		}
+		if effort := normalizeReasoningEffort(p.ReasoningEffort); effort != "" && effort != normalizeReasoningEffort(sess.NextReasoningEffort) {
+			preferenceFence.RUnlock()
+			return nil, modelPreferenceConflict(*p.ModelPreferenceRevision, sess)
+		}
+		p.Model = strings.TrimSpace(sess.NextModel)
+		p.ReasoningEffort = strings.TrimSpace(sess.NextReasoningEffort)
+	}
+	preferenceFence.RUnlock()
 	prompt := p.Prompt
 	model := p.Model
 	agent := p.Agent
@@ -2815,6 +2911,15 @@ func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, provenance tas
 	}
 	if model == "" {
 		model = spec.Model
+	}
+	// Model sources resolved after the initial request validation (session
+	// preference, slash command, or agent default) must pass the same routing
+	// guard before the execution is frozen.
+	if err := d.validateTaskModel(model); err != nil {
+		return nil, err
+	}
+	if err := validateTaskModelInputMedia(model, inputMediaRefs); err != nil {
+		return nil, err
 	}
 	requestedModel := model
 	requestedEffort := normalizeReasoningEffort(p.ReasoningEffort)
@@ -2920,11 +3025,12 @@ func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, provenance tas
 }
 
 type taskRetryParams struct {
-	RunID                  string           `json:"run_id"`
-	ClientSubmissionID     string           `json:"client_submission_id"`
-	Routing                taskRetryRouting `json:"routing,omitempty"`
-	CurrentModel           *string          `json:"current_model,omitempty"`
-	CurrentReasoningEffort *string          `json:"current_reasoning_effort,omitempty"`
+	RunID                   string           `json:"run_id"`
+	ClientSubmissionID      string           `json:"client_submission_id"`
+	Routing                 taskRetryRouting `json:"routing,omitempty"`
+	ModelPreferenceRevision *uint64          `json:"model_preference_revision,omitempty"`
+	CurrentModel            *string          `json:"current_model,omitempty"`
+	CurrentReasoningEffort  *string          `json:"current_reasoning_effort,omitempty"`
 }
 
 type taskRetryRouting string
@@ -2966,6 +3072,9 @@ func (d *Daemon) handleTaskRetry(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if routing == taskRetryRoutingOriginal && p.ModelPreferenceRevision != nil {
+		return nil, fmt.Errorf("model_preference_revision is only valid with routing=current")
+	}
 	if !validClientSubmissionID(p.ClientSubmissionID) {
 		return nil, fmt.Errorf("client_submission_id must be a 1-128 byte ASCII token using letters, digits, '.', '_', ':', or '-'")
 	}
@@ -2986,32 +3095,42 @@ func (d *Daemon) handleTaskRetry(params json.RawMessage) (any, error) {
 	modelSource := taskRetryRouteOriginal
 	effortSource := taskRetryRouteOriginal
 	if routing == taskRetryRoutingCurrent {
-		sess, exists := d.store.Get(original.SessionID)
-		if !exists {
-			return nil, fmt.Errorf("unknown session %s", original.SessionID)
-		}
-		if p.CurrentModel != nil {
-			current := strings.TrimSpace(*p.CurrentModel)
-			if current == "" {
-				return nil, fmt.Errorf("current model is empty; select a model or replay the original route")
-			}
-			if err := d.validateTaskModel(current); err != nil {
-				return nil, fmt.Errorf("current model: %w", err)
-			}
-			model = current
-			modelSource = taskRetryRouteRequestCurrent
-		} else if current := strings.TrimSpace(sess.NextModel); current != "" {
-			model = current
+		if p.ModelPreferenceRevision != nil {
+			// Resolve the versioned tuple only inside submit's session fence. This
+			// also lets an ambiguous-delivery retry find an existing run before a
+			// later preference revision is considered.
+			model = ""
+			effort = ""
 			modelSource = taskRetryRouteSessionCurrent
-		} else {
-			return nil, fmt.Errorf("current model is unavailable; select a model or replay the original route")
-		}
-		if p.CurrentReasoningEffort != nil {
-			effort = strings.TrimSpace(*p.CurrentReasoningEffort)
-			effortSource = taskRetryRouteRequestCurrent
-		} else {
-			effort = strings.TrimSpace(sess.NextReasoningEffort)
 			effortSource = taskRetryRouteSessionCurrent
+		} else {
+			sess, exists := d.store.Get(original.SessionID)
+			if !exists {
+				return nil, fmt.Errorf("unknown session %s", original.SessionID)
+			}
+			if p.CurrentModel != nil {
+				current := strings.TrimSpace(*p.CurrentModel)
+				if current == "" {
+					return nil, fmt.Errorf("current model is empty; select a model or replay the original route")
+				}
+				// Unified submit validates a new route after its early idempotency
+				// lookup, so an ambiguous-delivery retry can still recover the
+				// original run after provider availability changes.
+				model = current
+				modelSource = taskRetryRouteRequestCurrent
+			} else if current := strings.TrimSpace(sess.NextModel); current != "" {
+				model = current
+				modelSource = taskRetryRouteSessionCurrent
+			} else {
+				return nil, fmt.Errorf("current model is unavailable; select a model or replay the original route")
+			}
+			if p.CurrentReasoningEffort != nil {
+				effort = strings.TrimSpace(*p.CurrentReasoningEffort)
+				effortSource = taskRetryRouteRequestCurrent
+			} else {
+				effort = strings.TrimSpace(sess.NextReasoningEffort)
+				effortSource = taskRetryRouteSessionCurrent
+			}
 		}
 	}
 	media := make([]MediaRef, 0, len(original.InputMediaRefs))
@@ -3028,18 +3147,19 @@ func (d *Daemon) handleTaskRetry(params json.RawMessage) (any, error) {
 		mode = "background"
 	}
 	retryParams, err := json.Marshal(taskSubmitParams{
-		SessionID:          original.SessionID,
-		ClientSubmissionID: &p.ClientSubmissionID,
-		Prompt:             original.UserPrompt,
-		Model:              model,
-		Agent:              original.Agent,
-		Mode:               mode,
-		ReasoningEffort:    effort,
-		Locale:             original.Locale,
-		TokenBudget:        original.TokenBudget,
-		SuccessCriteria:    append([]scheduler.SuccessCheck(nil), original.SuccessCriteria...),
-		OutputSchema:       append(json.RawMessage(nil), original.OutputSchema...),
-		InputMediaRefs:     media,
+		SessionID:               original.SessionID,
+		ClientSubmissionID:      &p.ClientSubmissionID,
+		ModelPreferenceRevision: p.ModelPreferenceRevision,
+		Prompt:                  original.UserPrompt,
+		Model:                   model,
+		Agent:                   original.Agent,
+		Mode:                    mode,
+		ReasoningEffort:         effort,
+		Locale:                  original.Locale,
+		TokenBudget:             original.TokenBudget,
+		SuccessCriteria:         append([]scheduler.SuccessCheck(nil), original.SuccessCriteria...),
+		OutputSchema:            append(json.RawMessage(nil), original.OutputSchema...),
+		InputMediaRefs:          media,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encode retry submission: %w", err)
@@ -3072,13 +3192,40 @@ func (d *Daemon) validateTaskModel(model string) error {
 	}
 	providerID, _, hasProvider := strings.Cut(model, "/")
 	if hasProvider {
-		providerID = normalizeProviderID(providerID)
+		canonicalProviderID := normalizeProviderID(providerID)
+		if providerID != canonicalProviderID {
+			return fmt.Errorf("model provider %q is not canonical; use %q", providerID, canonicalProviderID)
+		}
+		providerID = canonicalProviderID
+		// Grok Build is discovered dynamically. It may be absent from the
+		// startup catalog and become ready after a provider refresh; its
+		// dedicated reasoner route owns the live session and model checks.
+		if providerID == provider.GrokBuildProviderID {
+			if d.disabledProviders[providerID] {
+				return fmt.Errorf("model provider %q is disabled", providerID)
+			}
+			if !d.canExecuteDedicatedProviderRoute(providerID) {
+				return fmt.Errorf("model provider %q requires the %s reasoner backend", providerID, reasonerBackendRouter)
+			}
+			return nil
+		}
 		if providerID == "" || d.providerCatalog[providerID].ID == "" {
 			return fmt.Errorf("unknown model provider %q", providerID)
 		}
 		if d.disabledProviders[providerID] {
 			return fmt.Errorf("model provider %q is disabled", providerID)
 		}
+	}
+	return nil
+}
+
+func validateTaskModelInputMedia(model string, refs []scheduler.InputMediaRef) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	providerID, _, targeted := strings.Cut(strings.TrimSpace(model), "/")
+	if targeted && normalizeProviderID(providerID) == provider.GrokBuildProviderID {
+		return fmt.Errorf("Grok Build accepts text input only; remove input_media_refs and retry")
 	}
 	return nil
 }
@@ -4641,23 +4788,15 @@ func (d *Daemon) handleEventStream(params json.RawMessage, sub *rpc.Subscription
 	if p.Since < 0 {
 		p.Since = 0
 	}
-	baselineRaw, err := d.kern.ReadEvents(p.SessionID)
-	if err != nil {
-		return err
-	}
-	var baseline []json.RawMessage
-	if err := json.Unmarshal(baselineRaw, &baseline); err != nil {
-		return fmt.Errorf("event stream baseline: %w", err)
-	}
 	projectedSub := projectingSubscriber{eventSubscriber: sub, mode: mode}
-	id, cursor, replayed, err := d.events.SubscribeCatchUp(p.SessionID, projectedSub, func() ([]any, int, map[string]int, error) {
+	_, _, _, err = d.events.SubscribeCatchUp(p.SessionID, projectedSub, func() ([]any, int, error) {
 		raw, readErr := d.kern.ReadEvents(p.SessionID)
 		if readErr != nil {
-			return nil, 0, nil, readErr
+			return nil, 0, readErr
 		}
 		var all []json.RawMessage
 		if decodeErr := json.Unmarshal(raw, &all); decodeErr != nil {
-			return nil, 0, nil, decodeErr
+			return nil, 0, decodeErr
 		}
 		since := p.Since
 		if since > len(all) {
@@ -4669,20 +4808,18 @@ func (d *Daemon) handleEventStream(params json.RawMessage, sub *rpc.Subscription
 				deliver = append(deliver, projected)
 			}
 		}
-		overlap := make(map[string]int)
-		start := len(baseline)
-		if start > len(all) {
-			start = len(all)
-		}
-		for _, event := range all[start:] {
-			overlap[eventKey(event)]++
-		}
-		return deliver, len(all), overlap, nil
+		return deliver, len(all), nil
+	}, func(subscriptionID string, cursor, replayed int) error {
+		return sub.CommitResult(map[string]any{
+			"subscription_id": subscriptionID,
+			"cursor":          cursor,
+			"replayed":        replayed,
+			"event_mode":      mode,
+		})
 	})
 	if err != nil {
 		return err
 	}
-	sub.SetResult(map[string]any{"subscription_id": id, "cursor": cursor, "replayed": replayed, "event_mode": mode})
 	return nil
 }
 

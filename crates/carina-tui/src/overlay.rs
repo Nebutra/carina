@@ -23,6 +23,7 @@ pub enum Overlay {
     Agents(Box<AgentDashboardOverlay>),
     Changes(Box<ChangesOverlay>),
     FileViewer(FileViewer),
+    ToolOutput(ToolOutputOverlay),
     Queue(QueueOverlay),
 }
 
@@ -132,6 +133,7 @@ impl Overlay {
             | Self::Agents(_)
             | Self::Changes(_)
             | Self::FileViewer(_)
+            | Self::ToolOutput(_)
             | Self::Queue(_) => None,
         }
     }
@@ -566,6 +568,12 @@ pub struct QueueOverlay {
     pub soft_interrupt_pending: bool,
     pub load: RetainedLoad,
     pub error: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolOutputOverlay {
+    pub block_id: String,
+    pub scroll: usize,
 }
 
 #[derive(Debug, Clone, Default)]

@@ -25,6 +25,7 @@ pub struct KeyBindings {
     pub interrupt: KeyBinding,
     pub hard_cancel: KeyBinding,
     pub expand_tools: KeyBinding,
+    pub inspect_tool_output: KeyBinding,
     pub steer: KeyBinding,
     pub send_now: KeyBinding,
 }
@@ -90,6 +91,10 @@ impl KeyBindings {
                 KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
                 "Ctrl-O",
             ),
+            inspect_tool_output: KeyBinding::new(
+                KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
+                "Ctrl-T",
+            ),
             steer: KeyBinding::new(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), "Enter"),
             send_now,
         }
@@ -133,6 +138,22 @@ mod tests {
         let binding = KeyBindings::default().expand_tools;
         assert_eq!(binding.label(), "Ctrl-O");
         assert!(binding.matches(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL)));
+    }
+
+    #[test]
+    fn tool_output_inspection_is_distinct_from_disclosure() {
+        let bindings = KeyBindings::default();
+        assert_eq!(bindings.inspect_tool_output.label(), "Ctrl-T");
+        assert!(
+            bindings
+                .inspect_tool_output
+                .matches(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL))
+        );
+        assert!(
+            !bindings
+                .expand_tools
+                .matches(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL))
+        );
     }
 
     #[test]

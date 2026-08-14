@@ -3,8 +3,10 @@ package daemon
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
+	modelrouter "github.com/Nebutra/carina/go/model-router"
 	"github.com/Nebutra/carina/go/provider"
 )
 
@@ -90,5 +92,39 @@ func TestRouterReasonerNeverFallsBackToDirectAPIForClaudeCodeOwnedRoute(t *testi
 	_, err := reasoner.ThinkModelResult(context.Background(), providerID+"/claude-opus-5", "prompt")
 	if err == nil || err.Error() != "claude reasoner: claude CLI unavailable" {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestDedicatedGrokBuildRouteNeverInvokesExplicitCLIReasoners(t *testing.T) {
+	for _, backend := range []string{reasonerBackendClaudeCLI, reasonerBackendCodexCLI} {
+		t.Run(backend, func(t *testing.T) {
+			spy := &routeGuardSpyReasoner{name: backend}
+			_, err := thinkOnceResult(context.Background(), spy, "grok-build/grok-4.6", "prompt", "", "")
+			if err == nil || !strings.Contains(err.Error(), reasonerBackendRouter) {
+				t.Fatalf("route guard error = %v", err)
+			}
+			if spy.calls != 0 {
+				t.Fatalf("%s fallback invoked %d times", backend, spy.calls)
+			}
+		})
+	}
+}
+
+func TestRouterReasonerRejectsCaseVariantGrokBuildWithoutGenericFallback(t *testing.T) {
+	router := modelrouter.New()
+	fallback := &reasonerProvider{name: "openai"}
+	router.RegisterProvider(fallback)
+	reasoner := newRouterReasoner(router, "default")
+	reasoner.grokBuildDiscovery = func(context.Context) provider.GrokBuildDiscovery {
+		t.Fatal("non-canonical Grok Build route must fail before discovery")
+		return provider.GrokBuildDiscovery{}
+	}
+
+	_, err := reasoner.ThinkModelResult(context.Background(), "GROK-BUILD/grok-4.6", "prompt")
+	if err == nil || !strings.Contains(err.Error(), "not canonical") {
+		t.Fatalf("case-variant Grok Build route error = %v", err)
+	}
+	if fallback.seenModel != "" {
+		t.Fatalf("case-variant Grok Build route fell through to generic provider with model %q", fallback.seenModel)
 	}
 }

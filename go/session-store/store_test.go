@@ -2,6 +2,7 @@ package sessionstore
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -289,6 +290,80 @@ func TestSessionUpdatesPublishOnlyAfterPersistence(t *testing.T) {
 				t.Fatalf("failed update leaked into memory: %+v", got)
 			}
 		})
+	}
+}
+
+func TestNextModelPreferenceRevisionChangesOnlyWithPreference(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := store.CreateSession("/repo", "safe-edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.ModelPreferenceRevision != 0 {
+		t.Fatalf("new session preference revision = %d, want 0", sess.ModelPreferenceRevision)
+	}
+
+	first, err := store.SetNextModelPreference(sess.SessionID, "openai/gpt-5", "high")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ModelPreferenceRevision != 1 {
+		t.Fatalf("first preference revision = %d, want 1", first.ModelPreferenceRevision)
+	}
+	same, err := store.SetNextModelPreference(sess.SessionID, "openai/gpt-5", "high")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if same.ModelPreferenceRevision != first.ModelPreferenceRevision {
+		t.Fatalf("idempotent preference revision = %d, want %d", same.ModelPreferenceRevision, first.ModelPreferenceRevision)
+	}
+	changed, err := store.SetNextModelPreference(sess.SessionID, "openai/gpt-5", "low")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.ModelPreferenceRevision != 2 || changed.NextReasoningEffort != "low" {
+		t.Fatalf("changed preference = %+v, want revision 2 with low effort", changed)
+	}
+
+	reloaded, err := Open(store.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := reloaded.Get(sess.SessionID)
+	if !ok || got.ModelPreferenceRevision != changed.ModelPreferenceRevision {
+		t.Fatalf("reloaded preference = %+v ok=%v", got, ok)
+	}
+}
+
+func TestNextModelPreferenceCompareAndSet(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := store.CreateSession("/repo", "safe-edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := uint64(0)
+	updated, changed, err := store.SetNextModelPreferenceIfRevision(sess.SessionID, "openai/gpt-5", "high", &expected)
+	if err != nil || !changed || updated.ModelPreferenceRevision != 1 {
+		t.Fatalf("compare-and-set = %+v changed=%v err=%v", updated, changed, err)
+	}
+	repeated, changed, err := store.SetNextModelPreferenceIfRevision(sess.SessionID, "openai/gpt-5", "high", &expected)
+	if err != nil || changed || repeated.ModelPreferenceRevision != 1 {
+		t.Fatalf("repeated compare-and-set = %+v changed=%v err=%v", repeated, changed, err)
+	}
+	stale, changed, err := store.SetNextModelPreferenceIfRevision(sess.SessionID, "openai/gpt-5.1", "medium", &expected)
+	var conflict *ModelPreferenceRevisionConflict
+	if !errors.As(err, &conflict) || changed || stale.ModelPreferenceRevision != 1 {
+		t.Fatalf("stale compare-and-set = %+v changed=%v err=%v", stale, changed, err)
+	}
+	current, _ := store.Get(sess.SessionID)
+	if current.NextModel != "openai/gpt-5" || current.NextReasoningEffort != "high" {
+		t.Fatalf("conflict mutated preference: %+v", current)
 	}
 }
 

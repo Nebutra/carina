@@ -11,6 +11,15 @@ func (d *Daemon) sessionExecutionFence(sessionID string) *sync.RWMutex {
 	return actual.(*sync.RWMutex)
 }
 
+func (d *Daemon) sessionPreferenceFence(sessionID string) *sync.RWMutex {
+	if fence, ok := d.preferenceFences.Load(sessionID); ok {
+		return fence.(*sync.RWMutex)
+	}
+	fence := &sync.RWMutex{}
+	actual, _ := d.preferenceFences.LoadOrStore(sessionID, fence)
+	return actual.(*sync.RWMutex)
+}
+
 func (d *Daemon) activeSessionTask(sessionID string) *schedulerTaskSnapshot {
 	for _, task := range d.sched.List() {
 		if task.SessionID != sessionID {

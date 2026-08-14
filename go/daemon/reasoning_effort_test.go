@@ -15,6 +15,13 @@ import (
 	"github.com/Nebutra/carina/go/scheduler"
 )
 
+func TestGrokBuildUsesXAIReasoningEffortLadder(t *testing.T) {
+	spec := nativeReasoningEffortSpec(provider.GrokBuildProviderID, "grok-4.6")
+	if got, want := strings.Join(spec.Options, ","), "low,medium,high"; got != want || spec.Default != "high" {
+		t.Fatalf("Grok Build reasoning effort = %+v, want options %q default high", spec, want)
+	}
+}
+
 func TestOpenAIResponsesSendsNativeReasoningEffort(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any

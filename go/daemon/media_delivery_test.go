@@ -67,6 +67,87 @@ func TestTaskInputMediaIsDurableAndPartOfSubmissionIdentity(t *testing.T) {
 	}
 }
 
+func TestTaskSubmitRejectsGrokBuildInputMediaAcrossModelSources(t *testing.T) {
+	d, workspace := newLoopDaemon(t)
+	defer d.Close()
+	delete(d.providerCatalog, provider.GrokBuildProviderID)
+	d.offline = false
+	d.SetReasoner(newRouterReasonerWithCatalog(d.router, "default", d.providerCatalog, d.disabledProviders))
+	session, _ := d.store.CreateSession(workspace, "safe-edit")
+	d.kern.InitSessionWithPolicy(session.SessionID, workspace, "safe-edit", nil)
+	ref, err := ingestImageMedia(d.artifacts, artifact.Scope{SessionID: session.SessionID}, "grok input", tinyPNG())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := len(d.sched.List())
+	_, err = d.handleTaskSubmit(mustJSON(t, map[string]any{
+		"session_id":       session.SessionID,
+		"prompt":           "inspect this image",
+		"model":            "grok-build/grok-4.6",
+		"input_media_refs": []MediaRef{ref},
+	}))
+	if err == nil || !strings.Contains(err.Error(), "Grok Build accepts text input only") {
+		t.Fatalf("explicit Grok Build media error = %v", err)
+	}
+	if after := len(d.sched.List()); after != before {
+		t.Fatalf("explicit Grok Build media created a task: before=%d after=%d", before, after)
+	}
+
+	if _, err := d.store.SetNextModelPreference(session.SessionID, "grok-build/grok-4.6", ""); err != nil {
+		t.Fatal(err)
+	}
+	_, err = d.handleTaskSubmit(mustJSON(t, map[string]any{
+		"session_id":       session.SessionID,
+		"prompt":           "use the selected model",
+		"input_media_refs": []MediaRef{ref},
+	}))
+	if err == nil || !strings.Contains(err.Error(), "Grok Build accepts text input only") {
+		t.Fatalf("session-preference Grok Build media error = %v", err)
+	}
+	if after := len(d.sched.List()); after != before {
+		t.Fatalf("session-preference Grok Build media created a task: before=%d after=%d", before, after)
+	}
+}
+
+func TestTaskRetryRejectsGrokBuildInputMedia(t *testing.T) {
+	d, workspace := newLoopDaemon(t)
+	defer d.Close()
+	delete(d.providerCatalog, provider.GrokBuildProviderID)
+	d.offline = false
+	d.SetReasoner(newRouterReasonerWithCatalog(d.router, "default", d.providerCatalog, d.disabledProviders))
+	session, _ := d.store.CreateSession(workspace, "safe-edit")
+	d.kern.InitSessionWithPolicy(session.SessionID, workspace, "safe-edit", nil)
+	ref, err := ingestImageMedia(d.artifacts, artifact.Scope{SessionID: session.SessionID}, "retry input", tinyPNG())
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := d.sched.SubmitWithGoalModelAgent(
+		session.SessionID, session.WorkspaceID, "retry this image", "openai/gpt-5", "build", nil,
+	)
+	d.sched.SetInputMediaRefs(original.RunID, []scheduler.InputMediaRef{{
+		ArtifactID: ref.ArtifactID, MediaType: ref.MediaType, Bytes: ref.Bytes, Origin: ref.Origin,
+	}})
+	original, err = d.sched.Cancel(original.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.store.SetNextModelPreference(session.SessionID, "grok-build/grok-4.6", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	before := len(d.sched.List())
+	_, err = d.handleTaskRetry(mustJSON(t, map[string]any{
+		"run_id": original.RunID, "client_submission_id": "retry_grok_text_only", "routing": "current",
+	}))
+	if err == nil || !strings.Contains(err.Error(), "Grok Build accepts text input only") {
+		t.Fatalf("Grok Build media retry error = %v", err)
+	}
+	if after := len(d.sched.List()); after != before {
+		t.Fatalf("Grok Build media retry created a task: before=%d after=%d", before, after)
+	}
+}
+
 // TestReadImageFileProducesMediaRefNotBinary: the producer half. Reading an
 // image through the outcome dispatch must put bytes in the artifact store and
 // return a placeholder + MediaRef — never raw binary in the display string.

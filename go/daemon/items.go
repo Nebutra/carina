@@ -49,6 +49,15 @@ type SessionItem struct {
 	Details     map[string]any `json:"details,omitempty"`
 }
 
+type SessionItemsSnapshot struct {
+	SessionID           string             `json:"session_id"`
+	RuntimeID           string             `json:"runtime_id"`
+	RuntimeEpoch        string             `json:"runtime_epoch"`
+	RuntimeProcessEpoch int64              `json:"runtime_process_epoch"`
+	DurableCursor       int                `json:"durable_cursor"`
+	Items               []SessionItemEvent `json:"items"`
+}
+
 type commandProjection struct {
 	item   *SessionItem
 	stdout []string
@@ -180,17 +189,46 @@ func persistProjectionCursorKey(stateDir, path string, key []byte) error {
 
 func (d *Daemon) handleSessionItems(params json.RawMessage) (any, error) {
 	var p struct {
-		SessionID string          `json:"session_id"`
-		Cursor    json.RawMessage `json:"cursor"`
-		Limit     *int            `json:"limit"`
+		SessionID        string          `json:"session_id"`
+		Cursor           json.RawMessage `json:"cursor"`
+		Limit            *int            `json:"limit"`
+		WatermarkVersion *int            `json:"watermark_version"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(params, &fields); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
 	if p.SessionID == "" {
 		return nil, fmt.Errorf("session_id required")
 	}
-	items, err := d.loadSessionItems(p.SessionID)
+	if _, requested := fields["watermark_version"]; requested {
+		if p.WatermarkVersion == nil || *p.WatermarkVersion != 1 {
+			return nil, fmt.Errorf("watermark_version must be 1")
+		}
+		if _, present := fields["cursor"]; present {
+			return nil, fmt.Errorf("watermark_version cannot be combined with cursor or limit")
+		}
+		if _, present := fields["limit"]; present {
+			return nil, fmt.Errorf("watermark_version cannot be combined with cursor or limit")
+		}
+		items, durableCursor, err := d.loadSessionItemsSnapshot(p.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		runtime := d.runtimeDescription()
+		return SessionItemsSnapshot{
+			SessionID:           p.SessionID,
+			RuntimeID:           stringField(runtime, "runtime_id"),
+			RuntimeEpoch:        stringField(runtime, "epoch"),
+			RuntimeProcessEpoch: int64Field(runtime, "process_epoch"),
+			DurableCursor:       durableCursor,
+			Items:               items,
+		}, nil
+	}
+	items, _, err := d.loadSessionItemsSnapshot(p.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -214,14 +252,20 @@ func (d *Daemon) handleSessionItems(params json.RawMessage) (any, error) {
 }
 
 func (d *Daemon) loadSessionItems(id string) ([]SessionItemEvent, error) {
+	items, _, err := d.loadSessionItemsSnapshot(id)
+	return items, err
+}
+
+func (d *Daemon) loadSessionItemsSnapshot(id string) ([]SessionItemEvent, int, error) {
 	raw, err := d.kern.ReadEvents(id)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var events []itemAuditEvent
 	if err := json.Unmarshal(raw, &events); err != nil {
-		return nil, fmt.Errorf("session.items: decode audit events: %w", err)
+		return nil, 0, fmt.Errorf("session.items: decode audit events: %w", err)
 	}
+	durableCursor := len(events)
 	cacheKey := fmt.Sprintf("%p:%s", d, id)
 	now := time.Now()
 	sessionItemsCache.Lock()
@@ -245,7 +289,7 @@ func (d *Daemon) loadSessionItems(id string) ([]SessionItemEvent, error) {
 	}
 	items := append([]SessionItemEvent(nil), cached.items...)
 	sessionItemsCache.Unlock()
-	return items, nil
+	return items, durableCursor, nil
 }
 
 func paginateSessionItems(authority *projectionCursorAuthority, sessionID, epoch string, items []SessionItemEvent, cursor, limit int) (map[string]any, error) {
@@ -1241,6 +1285,22 @@ func stringField(m map[string]any, key string) string {
 		}
 	}
 	return ""
+}
+
+func int64Field(m map[string]any, key string) int64 {
+	if m == nil {
+		return 0
+	}
+	switch value := m[key].(type) {
+	case int64:
+		return value
+	case int:
+		return int64(value)
+	case float64:
+		return int64(value)
+	default:
+		return 0
+	}
 }
 
 func interactionToolPayload(payload map[string]any) bool {

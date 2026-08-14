@@ -506,6 +506,14 @@ impl RuntimeExpectation {
 pub struct RuntimeCapabilities {
     #[serde(default)]
     pub rpc_methods: Vec<String>,
+    #[serde(default)]
+    pub session_items_watermark: VersionedCapability,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct VersionedCapability {
+    #[serde(default)]
+    pub version: u64,
 }
 
 impl RuntimeInitialize {
@@ -620,6 +628,8 @@ pub struct ModelProvider {
     #[serde(default)]
     pub source_auth_mode: String,
     #[serde(default)]
+    pub source_credential_owner: String,
+    #[serde(default)]
     pub source_action: String,
     #[serde(default)]
     pub source_current: bool,
@@ -694,6 +704,8 @@ pub struct Session {
     pub next_model: String,
     #[serde(default)]
     pub next_reasoning_effort: String,
+    #[serde(default)]
+    pub model_preference_revision: u64,
     #[serde(default)]
     pub plan_mode: bool,
     #[serde(default)]
@@ -882,6 +894,8 @@ pub struct SessionModelSelection {
     pub next_model: String,
     #[serde(default)]
     pub next_reasoning_effort: String,
+    #[serde(default)]
+    pub model_preference_revision: u64,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -922,6 +936,39 @@ pub struct SessionItemEvent {
     #[serde(default)]
     pub details: BTreeMap<String, Value>,
     pub item: Option<SessionItem>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionItemsSnapshot {
+    pub session_id: String,
+    #[serde(default)]
+    pub runtime_id: String,
+    #[serde(default)]
+    pub runtime_epoch: String,
+    #[serde(default)]
+    pub runtime_process_epoch: i64,
+    pub durable_cursor: usize,
+    #[serde(default)]
+    pub items: Vec<SessionItemEvent>,
+}
+
+impl SessionItemsSnapshot {
+    pub fn validate_identity(
+        &self,
+        session_id: &str,
+        runtime: &RuntimeIdentity,
+    ) -> Result<(), super::RpcError> {
+        let matches = self.session_id == session_id
+            && self.runtime_id == runtime.runtime_id
+            && self.runtime_epoch == runtime.epoch
+            && self.runtime_process_epoch == runtime.process_epoch;
+        if matches {
+            return Ok(());
+        }
+        Err(super::RpcError::Protocol(
+            "session.items watermark returned mismatched session/runtime identity".into(),
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1966,6 +2013,7 @@ mod tests {
                 source_app: String::new(),
                 source_route: String::new(),
                 source_auth_mode: String::new(),
+                source_credential_owner: String::new(),
                 source_action: String::new(),
                 source_current: false,
                 source_importable: false,

@@ -1,9 +1,11 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Nebutra/carina/go/microcopy"
 	"github.com/Nebutra/carina/go/provider"
@@ -13,6 +15,7 @@ type modelInventoryParams struct {
 	SessionID string `json:"session_id"`
 	ModelID   string `json:"model_id"`
 	Locale    string `json:"locale"`
+	Refresh   bool   `json:"refresh,omitempty"`
 }
 
 type modelInventoryModel struct {
@@ -83,10 +86,24 @@ func (d *Daemon) handleModelList(params json.RawMessage) (any, error) {
 	for _, name := range d.router.ProviderNames() {
 		registered[normalizeProviderID(name)] = true
 	}
-	providers := make([]modelInventoryProvider, 0, len(d.providerCatalog))
-	for _, info := range orderedRuntimeProviders(d.providerCatalog) {
+	catalog := d.providerCatalog
+	grokBuildDisabled := d.disabledProviders[provider.GrokBuildProviderID]
+	if grokBuildDisabled {
+		catalog = mergeDisabledGrokBuildProvider(catalog)
+	} else if !d.offline {
+		if request.Refresh {
+			provider.InvalidateGrokBuildDiscovery()
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		discovery := provider.DetectGrokBuild(ctx)
+		cancel()
+		catalog = provider.MergeGrokBuildProvider(catalog, discovery)
+	}
+	providers := make([]modelInventoryProvider, 0, len(catalog))
+	for _, info := range orderedRuntimeProviders(catalog) {
 		id := normalizeProviderID(info.ID)
-		if id == "" || detectRuntimeProtocol(info) == protocolUnsupported {
+		grokBuild := runtimeProviderUsesGrokBuild(info)
+		if id == "" || (!grokBuild && detectRuntimeProtocol(info) == protocolUnsupported) {
 			continue
 		}
 		chain := runtimeProviderAuthChain(info, d.authStore)
@@ -99,12 +116,20 @@ func (d *Daemon) handleModelList(params json.RawMessage) (any, error) {
 		_, explicitEndpoint := runtimeBaseURLOverride(info)
 		// Stale BYOK must not make explain_unavailable / non-importable CC Switch
 		// routes look runnable (that stranded TUI in Diagnostic with zero models).
-		available := registered[id] &&
+		providerRegistered := registered[id]
+		available := providerRegistered &&
 			runtimeSourceAllowsExecution(info) &&
 			(cliDelegated || authSource != "" || (hasEndpoint && explicitEndpoint && runtimeProviderAllowsNoAuth(info, endpoint)))
+		if grokBuild {
+			providerRegistered = !d.disabledProviders[id] && d.canExecuteDedicatedProviderRoute(id)
+			available = providerRegistered && info.Source.Current && info.Source.Action == provider.GrokBuildActionUseSession
+			if available {
+				authSource = reasonerBackendGrokCLI
+			}
+		}
 		row := modelInventoryProvider{
-			ID: id, Name: info.Name, Registered: registered[id], Available: available,
-			AuthSource: authSource, DynamicModels: len(info.Models) == 0,
+			ID: id, Name: info.Name, Registered: providerRegistered, Available: available,
+			AuthSource: authSource, DynamicModels: grokBuild || len(info.Models) == 0,
 			DefaultModel: inventoryProviderDefaultModel(info), Models: []modelInventoryModel{},
 		}
 		if info.Source != nil {
@@ -123,13 +148,15 @@ func (d *Daemon) handleModelList(params json.RawMessage) (any, error) {
 		// Prefer a live GET /models whenever a credential is resolvable (auth
 		// store or live CC Switch DB). Catalog stays the fallback when the
 		// endpoint is offline or returns nothing useful.
-		if liveIDs, source := d.liveModelIDs(info, chain); len(liveIDs) > 0 && source != "" {
-			row.Models = projectInventoryModels(id, info, available, liveIDs, info.Models)
-			row.Models = ensureDefaultModelPresent(row.Models, id, info, available, row.DefaultModel)
-			row.DynamicModels = true
-			sortInventoryModels(row.Models, id, row.DefaultModel)
-			providers = append(providers, row)
-			continue
+		if !grokBuild {
+			if liveIDs, source := d.liveModelIDs(info, chain); len(liveIDs) > 0 && source != "" {
+				row.Models = projectInventoryModels(id, info, available, liveIDs, info.Models)
+				row.Models = ensureDefaultModelPresent(row.Models, id, info, available, row.DefaultModel)
+				row.DynamicModels = true
+				sortInventoryModels(row.Models, id, row.DefaultModel)
+				providers = append(providers, row)
+				continue
+			}
 		}
 		for key, model := range info.Models {
 			modelID := strings.TrimSpace(model.ID)
@@ -292,6 +319,9 @@ func inventoryRouteKind(row modelInventoryProvider, reasoner modelInventoryReaso
 	if row.SourceCredentialOwner == provider.CCSwitchCredentialOwnerClaudeCode {
 		return "cli_oauth"
 	}
+	if row.SourceKind == provider.GrokBuildSourceKind {
+		return "cli_oauth"
+	}
 	if row.SourceRoute == providerRouteManagedProxy {
 		return "live_proxy"
 	}
@@ -306,6 +336,9 @@ const providerRouteManagedProxy = "managed_proxy"
 func providerInventoryRank(row modelInventoryProvider) int {
 	if row.Registered && row.Available {
 		return 0
+	}
+	if row.SourceKind == provider.GrokBuildSourceKind {
+		return 5
 	}
 	if row.SourceKind == provider.CCSwitchSourceKind {
 		switch row.SourceRoute {
@@ -364,6 +397,11 @@ func runtimeSourceAllowsExecution(info provider.Info) bool {
 }
 
 func inventoryProviderDefaultModel(info provider.Info) string {
+	if info.Source != nil {
+		if model := strings.TrimSpace(info.Source.DefaultModel); model != "" && !isPlaceholderModelID(model) {
+			return model
+		}
+	}
 	model := strings.TrimSpace(runtimeDefaultModel(info))
 	if isPlaceholderModelID(model) {
 		return ""

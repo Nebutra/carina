@@ -95,6 +95,10 @@ pub const SETTINGS_POPUP: (u16, u16) = (62, 20);
 pub const CHECKPOINT_POPUP: (u16, u16) = (76, 24);
 pub const AGENTS_POPUP: (u16, u16) = (104, 32);
 pub const FILE_VIEWER_POPUP: (u16, u16) = (110, 36);
+pub const TOOL_OUTPUT_CONTEXT_HEIGHT: u16 = 4;
+pub const TOOL_OUTPUT_FOOTER_HEIGHT: u16 = 1;
+pub const TOOL_OUTPUT_MAX_BUDGET: usize = 24;
+pub const TOOL_OUTPUT_MIN_BUDGET: usize = 3;
 pub const CHANGES_POPUP: (u16, u16) = (104, 32);
 pub const SPLIT_PANE_MIN_WIDTH: u16 = 72;
 // A 120-column terminal leaves 110 review cells after product margins/chrome.
