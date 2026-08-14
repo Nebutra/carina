@@ -47,6 +47,7 @@ States:
 | Semantic lifecycle + live/replay parity | **wired** | canonical protocol catalog; durable daemon event identity; `ExecutionLifecycleReducer`; transcript component-tree parity | ISSUE-002 |
 | Model-aware failure recovery cells | **wired** | current/original `execution.retry` routing; immutable linked audit evidence; stable retry-chain projection; visible pointer/Tab actions | ISSUE-014 / 08-11 failure recovery UX |
 | Installed skill slash discovery | **wired** | daemon skill prompt registry; trusted-root marketplace policy; slash command tests | ISSUE-016 |
+| Operator `/new` `/fork` `/compact` `/goal` | **wired** | typed `CommandId` verbs over `session.create` / `session.fork` / `session.checkpoint.compact` / `goal.*`; `/help` lists the registry | operator command truth |
 | Subagent observation surface | **wired** | `agent.view` / `agent.recap`; retained Agents overlay; permission attenuation tests | ISSUE-012 |
 | Governed plan-mode exit | **wired** | daemon plan tool mask; `session.approve_plan`; child plan inheritance and tool-matrix tests | ISSUE-009 |
 | Dense Plan Review | **wired** | retained numbered line/range comments; expected-run approval fence; `/view-plan`; shared footer/`/keymap` A/S/C/M/Q matrix; seven-locale outcomes and revision seed | V006 visual density |
@@ -57,6 +58,7 @@ States:
 | Fullscreen patch review workbench | **wired** | typed background `PatchReview` projection; transaction/file/hunk regions at 120/160; bounded numbered diff; exact preview identity; EN/zh-Hans goldens plus ASCII/no-color/resize geometry contracts | V005 visual density |
 | Large diff progressive highlight + cap | **wired** | 2MiB/50k review cap; 500-row/32KiB transcript window; 4KiB line + bounded LCS; `/changes` paging | ISSUE-015 |
 | ScreenMode + native scrollback | **wired** | Fullscreen default (alt-screen); Minimal opt-in native scrollback; Inline capability fallback; fenced re-exec handoff + exact commit watermark; Settings/Status shows mode; forced Inline explains reason | ISSUE-005 / residual R5 |
+| Reconnect replay-tail + reading envelope | **wired** | Local TUI only: `event_replay_tail` v1 + watermarked `session.items`; atomic catch-up then live; `ReadingStateEnvelopeV1` restores block-ID selection, disclosure, follow-bottom, and logical line/sub-row across reconnect and ScreenMode. Local installed-prefix journey (`scripts/test-rust-tui-installed-reconnect.sh`) recorded 2026-08-14 via public `carina` + sibling `carina-ui`. Rollback remains `replayTailV1=false` if a future install regresses. | 08-12 reconnect replay |
 | Follow-up queue inspect | **wired** | `/queue` overlay; `execution.queue.list` truncated preview; `execution.queue.drop`; durable depth footer | ISSUE-007 residual R7 |
 | Tool row intent-first grammar | **wired** | Fixed 6-cell kind label; intent primary; dim technical target on single-tool rows; `format_tool_title` | V001 visual density |
 | Success-read collapse language | **wired** | Title-only `Read ×N · path…`; expand restores members; fail/cancel never join success groups | V002 visual density |

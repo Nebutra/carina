@@ -24,6 +24,9 @@ type Request struct {
 	// support simply ignore the field, so a text-only path degrades to
 	// whatever textual placeholder the caller already put in the prompt.
 	Media []MediaPart `json:"media,omitempty"`
+	// Tools is the optional native function catalog. Adapters that predate
+	// tool calling ignore it; the agent loop then stays on JSON ReAct.
+	Tools []ToolSpec `json:"tools,omitempty"`
 }
 
 // MediaPart is one image attached to a request. MediaType is a sniffed,
@@ -35,14 +38,15 @@ type MediaPart struct {
 }
 
 type Response struct {
-	Provider                 string `json:"provider"`
-	Model                    string `json:"model"`
-	Text                     string `json:"text"`
-	InputTokens              int    `json:"input_tokens"`
-	OutputTokens             int    `json:"output_tokens"`
-	CacheReadTokens          int    `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens         int    `json:"cache_write_tokens,omitempty"`
-	EffectiveReasoningEffort string `json:"effective_reasoning_effort,omitempty"`
+	Provider                 string     `json:"provider"`
+	Model                    string     `json:"model"`
+	Text                     string     `json:"text"`
+	InputTokens              int        `json:"input_tokens"`
+	OutputTokens             int        `json:"output_tokens"`
+	CacheReadTokens          int        `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens         int        `json:"cache_write_tokens,omitempty"`
+	EffectiveReasoningEffort string     `json:"effective_reasoning_effort,omitempty"`
+	ToolCalls                []ToolCall `json:"tool_calls,omitempty"`
 }
 
 // Provider is implemented by model backends (Anthropic, OpenAI, local, plugin).

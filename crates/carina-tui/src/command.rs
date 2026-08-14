@@ -17,6 +17,10 @@ pub enum CommandId {
     Sessions,
     Import,
     Resume,
+    New,
+    Fork,
+    Compact,
+    Goal,
     Cancel,
     Minimal,
     Fullscreen,
@@ -128,6 +132,30 @@ pub const COMMANDS: &[CommandSpec] = &[
         AvailabilityRule::Always,
     ),
     command(
+        CommandId::New,
+        "/new",
+        MessageId::CommandNew,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::Fork,
+        "/fork",
+        MessageId::CommandFork,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::Compact,
+        "/compact",
+        MessageId::CommandCompact,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::Goal,
+        "/goal",
+        MessageId::CommandGoal,
+        AvailabilityRule::Always,
+    ),
+    command(
         CommandId::Cancel,
         "/cancel",
         MessageId::CommandCancel,
@@ -224,6 +252,16 @@ pub fn lookup(input: &str) -> Option<&'static CommandSpec> {
         other => other,
     };
     COMMANDS.iter().find(|command| command.name == input)
+}
+
+pub fn resolve_operator_input(input: &str) -> Option<(&'static CommandSpec, Option<&str>)> {
+    let (head, tail) = split_prompt_command(input);
+    let command = lookup(head)?;
+    Some((command, tail.filter(|value| !value.is_empty())))
+}
+
+pub fn accepts_arguments(id: CommandId) -> bool {
+    matches!(id, CommandId::Goal)
 }
 
 pub fn command_unavailable_reason(
@@ -788,5 +826,37 @@ mod tests {
             &["prompt:project:zeta".into()],
         );
         assert_eq!(matches[0].id, "prompt:project:zeta");
+    }
+
+    #[test]
+    fn operator_conversation_verbs_are_discoverable_and_resolve() {
+        for name in ["/new", "/fork", "/compact", "/goal"] {
+            assert!(
+                COMMANDS.iter().any(|command| command.name == name),
+                "{name} must be a typed operator"
+            );
+            assert_eq!(resolve(name, false).map(|command| command.name), Some(name));
+        }
+        let discovered = palette_matching("/", false, &[], "", &[]);
+        for name in ["/new", "/fork", "/compact", "/goal"] {
+            assert!(
+                discovered.iter().any(|command| command.name == name),
+                "{name} must appear in /help discovery"
+            );
+        }
+    }
+
+    #[test]
+    fn goal_accepts_a_tail_and_other_new_verbs_do_not() {
+        let (command, tail) = resolve_operator_input("/goal ship the review").unwrap();
+        assert_eq!(command.id, CommandId::Goal);
+        assert_eq!(tail, Some("ship the review"));
+        assert!(accepts_arguments(CommandId::Goal));
+        let (command, tail) = resolve_operator_input("/compact now").unwrap();
+        assert_eq!(command.id, CommandId::Compact);
+        assert_eq!(tail, Some("now"));
+        assert!(!accepts_arguments(CommandId::Compact));
+        assert!(!accepts_arguments(CommandId::New));
+        assert!(!accepts_arguments(CommandId::Fork));
     }
 }

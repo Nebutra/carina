@@ -73,6 +73,12 @@ func (s *gatedEventSub) TryNotify(method string, value any) error {
 	return s.fakeEventSub.TryNotify(method, value)
 }
 
+func replayOnly(events []any, cursor int, sealed ...sealedRunPhase) func() (catchUpReplay, error) {
+	return func() (catchUpReplay, error) {
+		return catchUpReplay{events: events, durableCursor: cursor, sealed: sealed}, nil
+	}
+}
+
 func newFakeEventSub(id string) *fakeEventSub {
 	return &fakeEventSub{id: id, done: make(chan struct{}), failAfter: -1}
 }
@@ -146,11 +152,11 @@ func TestBusCatchUpUsesRawCursorForOverlap(t *testing.T) {
 	resume := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		_, _, _, err := b.SubscribeCatchUp("s", sub, func() ([]any, int, error) {
+		_, err := b.SubscribeCatchUp("s", sub, func() (catchUpReplay, error) {
 			close(ready)
 			<-resume
 			replayed := map[string]any{"type": "TaskCreated", "task_id": "t", "payload": map[string]any{"status": "running"}}
-			return []any{replayed}, 1, nil
+			return catchUpReplay{events: []any{replayed}, durableCursor: 1}, nil
 		})
 		done <- err
 	}()
@@ -194,9 +200,7 @@ func TestRawAuditCursorRejectsInvalidNumericRepresentations(t *testing.T) {
 func TestBusCatchUpKeepsCursorlessTransientAfterReplay(t *testing.T) {
 	b := NewBus()
 	sub := newFakeEventSub("cursorless-tail")
-	if _, _, _, err := b.SubscribeCatchUp("s", sub, func() ([]any, int, error) {
-		return nil, 8, nil
-	}); err != nil {
+	if _, err := b.SubscribeCatchUp("s", sub, replayOnly(nil, 8)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -243,9 +247,7 @@ func TestBusCatchUpDropsDelayedPublishAlreadyOwnedByReplay(t *testing.T) {
 	b := NewBus()
 	sub := newFakeEventSub("delayed-publish")
 	replayed := map[string]any{"type": "TaskCreated", "payload": map[string]any{"status": "running"}}
-	if _, _, _, err := b.SubscribeCatchUp("s", sub, func() ([]any, int, error) {
-		return []any{replayed}, 4, nil
-	}); err != nil {
+	if _, err := b.SubscribeCatchUp("s", sub, replayOnly([]any{replayed}, 4)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -272,9 +274,7 @@ func TestBusCatchUpDrainsPublishesDuringReplayAndPendingDeliveryInOrder(t *testi
 	sub := newGatedEventSub("ordered-catchup", 1, 2)
 	done := make(chan error, 1)
 	go func() {
-		_, _, _, err := b.SubscribeCatchUp("s", sub, func() ([]any, int, error) {
-			return []any{map[string]any{"n": 1}}, 1, nil
-		})
+		_, err := b.SubscribeCatchUp("s", sub, replayOnly([]any{map[string]any{"n": 1}}, 1))
 		done <- err
 	}()
 
@@ -317,9 +317,7 @@ func TestBusCatchUpCommitsAckBeforeConcurrentLiveDelivery(t *testing.T) {
 		close(publishDone)
 	}()
 
-	_, _, _, err := b.SubscribeCatchUp("s", sub, func() ([]any, int, error) {
-		return []any{map[string]any{"n": "replay"}}, 1, nil
-	}, func(_ string, _, _ int) error {
+	_, err := b.SubscribeCatchUp("s", sub, replayOnly([]any{map[string]any{"n": "replay"}}, 1), func(_ catchUpCommit) error {
 		sub.record("ack")
 		close(commitEntered)
 		<-publishStarted
@@ -345,9 +343,7 @@ func TestBusCatchUpCommitsAckBeforeConcurrentLiveDelivery(t *testing.T) {
 func TestBusCatchUpCommitFailureNeverActivatesSubscriber(t *testing.T) {
 	b := NewBus()
 	sub := newFakeEventSub("commit-failure")
-	_, _, _, err := b.SubscribeCatchUp("s", sub, func() ([]any, int, error) {
-		return nil, 1, nil
-	}, func(_ string, _, _ int) error {
+	_, err := b.SubscribeCatchUp("s", sub, replayOnly(nil, 1), func(_ catchUpCommit) error {
 		return rpc.ErrSlowConsumer
 	})
 	if !errors.Is(err, rpc.ErrSlowConsumer) {
@@ -371,10 +367,10 @@ func TestBusCatchUpPendingOverflowDisconnectsWithoutPartialReplay(t *testing.T) 
 	releaseReplay := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		_, _, _, err := b.SubscribeCatchUp("s", sub, func() ([]any, int, error) {
+		_, err := b.SubscribeCatchUp("s", sub, func() (catchUpReplay, error) {
 			close(replayStarted)
 			<-releaseReplay
-			return []any{map[string]any{"n": "replayed"}}, 1, nil
+			return catchUpReplay{events: []any{map[string]any{"n": "replayed"}}, durableCursor: 1}, nil
 		})
 		done <- err
 	}()
@@ -455,5 +451,241 @@ func TestBusUnsubscribeAckWaitsForInFlightDelivery(t *testing.T) {
 	b.Publish("s", map[string]any{"n": 2})
 	if len(sub.events) != 1 {
 		t.Fatalf("callback after unsubscribe ACK: %+v", sub.events)
+	}
+}
+
+func TestBusCatchUpSuppressedProjectionCountsZeroBufferedLive(t *testing.T) {
+	b := NewBus()
+	inner := newFakeEventSub("projected")
+	sub := projectingSubscriber{eventSubscriber: inner, mode: eventModeCanonical}
+	ready := make(chan struct{})
+	resume := make(chan struct{})
+	done := make(chan catchUpResult, 1)
+	go func() {
+		result, err := b.SubscribeCatchUp("s", sub, func() (catchUpReplay, error) {
+			close(ready)
+			<-resume
+			return catchUpReplay{
+				events: []any{
+					map[string]any{"type": "ToolApproved", internalRawAuditCursor: 1},
+					map[string]any{"type": "ToolCallStarted", "task_id": "run_1", internalRawAuditCursor: 2},
+				},
+				durableCursor: 2,
+			}, nil
+		})
+		if err != nil {
+			t.Errorf("catch-up: %v", err)
+		}
+		done <- result
+	}()
+	<-ready
+	b.Publish("s", map[string]any{"type": "ToolDenied", internalRawAuditCursor: 3})
+	b.Publish("s", map[string]any{"type": "execution.completed", internalRawAuditCursor: 4})
+	b.Publish("s", map[string]any{"type": "ToolCallCompleted", "task_id": "run_1", internalRawAuditCursor: 5})
+	close(resume)
+	result := <-done
+	if result.durableReplayed != 1 || result.bufferedLive != 1 {
+		t.Fatalf("counts = replayed:%d live:%d, want 1/1", result.durableReplayed, result.bufferedLive)
+	}
+	inner.mu.Lock()
+	defer inner.mu.Unlock()
+	if len(inner.events) != 2 {
+		t.Fatalf("frames = %+v", inner.events)
+	}
+	if inner.events[0]["type"] != "ToolCallStarted" || inner.events[1]["type"] != "ToolCallCompleted" {
+		t.Fatalf("projected frames = %+v", inner.events)
+	}
+}
+
+func TestBusCatchUpFiltersSealedPendingTransients(t *testing.T) {
+	b := NewBus()
+	sub := newFakeEventSub("sealed-pending")
+	ready := make(chan struct{})
+	resume := make(chan struct{})
+	done := make(chan catchUpResult, 1)
+	go func() {
+		result, err := b.SubscribeCatchUp("s", sub, func() (catchUpReplay, error) {
+			close(ready)
+			<-resume
+			return catchUpReplay{
+				events:        []any{map[string]any{"type": "ModelResponded", "task_id": "run_1", "payload": map[string]any{"text": "done"}}},
+				durableCursor: 4,
+				sealed:        []sealedRunPhase{{RunID: "run_1", Phase: assistantPhaseFinalAnswer}},
+			}, nil
+		})
+		if err != nil {
+			t.Errorf("catch-up: %v", err)
+		}
+		done <- result
+	}()
+	<-ready
+	b.Publish("s", map[string]any{
+		"type": "assistant.message.delta", "task_id": "run_1",
+		"payload": map[string]any{"delta": "stale", "phase": assistantPhaseFinalAnswer},
+	})
+	b.Publish("s", map[string]any{
+		"type": "assistant.message.delta", "task_id": "run_2",
+		"payload": map[string]any{"delta": "open", "phase": assistantPhaseFinalAnswer},
+	})
+	b.Publish("s", map[string]any{
+		"type": "ModelResponded", "task_id": "run_2",
+		"payload":              map[string]any{"text": "later"},
+		internalRawAuditCursor: 5,
+	})
+	close(resume)
+	result := <-done
+	if result.bufferedLive != 2 {
+		t.Fatalf("buffered_live = %d, want 2 (open tail + later final)", result.bufferedLive)
+	}
+	if len(sub.events) != 3 {
+		t.Fatalf("frames = %+v", sub.events)
+	}
+	if sub.events[1]["task_id"] != "run_2" || rawAuditCursor(sub.events[2]) != 5 {
+		t.Fatalf("sealed tail leaked or later final lost: %+v", sub.events)
+	}
+
+	b.Publish("s", map[string]any{
+		"type": "assistant.message.reset", "task_id": "run_1",
+		"payload": map[string]any{"phase": assistantPhaseFinalAnswer, "generation": 2, "sequence": 1},
+	})
+	if len(sub.events) != 3 {
+		t.Fatalf("post-activation sealed transient escaped: %+v", sub.events)
+	}
+}
+
+func TestBusCatchUpFilledQueueAtCommitNeverActivates(t *testing.T) {
+	b := NewBus()
+	inner := newFakeEventSub("queue-full-commit")
+	sub := &boundedQueueSub{fakeEventSub: inner, slots: 2}
+	ready := make(chan struct{})
+	resume := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := b.SubscribeCatchUp("s", sub, func() (catchUpReplay, error) {
+			close(ready)
+			<-resume
+			return catchUpReplay{events: []any{map[string]any{"n": "replay"}}, durableCursor: 1}, nil
+		}, sub.commit)
+		done <- err
+	}()
+	<-ready
+	b.Publish("s", map[string]any{"n": "pending", internalRawAuditCursor: 2})
+	close(resume)
+	err := <-done
+	if !errors.Is(err, rpc.ErrSlowConsumer) {
+		t.Fatalf("full-queue commit = %v, want ErrSlowConsumer", err)
+	}
+	if b.SubscriberCount() != 0 {
+		t.Fatalf("failed commit activated subscriber: %d", b.SubscriberCount())
+	}
+	b.Publish("s", map[string]any{"n": "after"})
+	inner.mu.Lock()
+	defer inner.mu.Unlock()
+	if !inner.disconnected {
+		t.Fatal("failed commit did not disconnect")
+	}
+	if len(inner.events) != 2 {
+		t.Fatalf("pre-ACK frames = %+v", inner.events)
+	}
+}
+
+type boundedQueueSub struct {
+	*fakeEventSub
+	mu    sync.Mutex
+	slots int
+}
+
+func (s *boundedQueueSub) TryNotify(method string, value any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.slots <= 0 {
+		return rpc.ErrSlowConsumer
+	}
+	s.slots--
+	return s.fakeEventSub.TryNotify(method, value)
+}
+
+func (s *boundedQueueSub) commit(_ catchUpCommit) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.slots <= 0 {
+		return rpc.ErrSlowConsumer
+	}
+	s.slots--
+	return nil
+}
+
+func TestEventStreamCatchUpBarriersPreserveOrderAndBufferedLive(t *testing.T) {
+	b := NewBus()
+	inner := newFakeEventSub("barriers")
+	sub := projectingSubscriber{eventSubscriber: inner, mode: eventModeCanonical}
+	var (
+		mu     sync.Mutex
+		stages []catchUpStage
+	)
+	b.probe = func(stage catchUpStage) {
+		mu.Lock()
+		stages = append(stages, stage)
+		mu.Unlock()
+		switch stage {
+		case catchUpRegistered:
+			b.Publish("s", map[string]any{"type": "ToolCallStarted", "task_id": "run_live", internalRawAuditCursor: 3})
+			b.Publish("s", map[string]any{"type": "ToolApproved", internalRawAuditCursor: 4})
+			b.Publish("s", map[string]any{
+				"type": "assistant.message.delta", "task_id": "run_sealed",
+				"payload": map[string]any{"delta": "stale", "phase": assistantPhaseFinalAnswer},
+			})
+		case catchUpReplayed:
+			b.Publish("s", map[string]any{"type": "ToolCallCompleted", "task_id": "run_live", internalRawAuditCursor: 5})
+		case catchUpSnapshots:
+			b.Publish("s", map[string]any{"type": "CommandStarted", "task_id": "run_live", internalRawAuditCursor: 6})
+		case catchUpPending:
+			b.Publish("s", map[string]any{"type": "CommandFinished", "task_id": "run_live", internalRawAuditCursor: 7})
+		}
+	}
+
+	result, err := b.SubscribeCatchUp("s", sub, replayOnly([]any{
+		map[string]any{"type": "ToolCallRequested", "task_id": "run_sealed", internalRawAuditCursor: 1},
+		map[string]any{"type": "ModelResponded", "task_id": "run_sealed", "payload": map[string]any{"text": "final"}, internalRawAuditCursor: 2},
+	}, 2, sealedRunPhase{RunID: "run_sealed", Phase: assistantPhaseFinalAnswer}), func(commit catchUpCommit) error {
+		if commit.bufferedLive != 4 || commit.durableReplayed != 2 {
+			t.Errorf("commit counts = replayed:%d live:%d", commit.durableReplayed, commit.bufferedLive)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Publish("s", map[string]any{"type": "PatchApplied", "task_id": "run_live", internalRawAuditCursor: 8})
+
+	if result.durableReplayed != 2 || result.bufferedLive != 4 {
+		t.Fatalf("result counts = replayed:%d live:%d, want 2/4", result.durableReplayed, result.bufferedLive)
+	}
+	wantStages := []catchUpStage{catchUpRegistered, catchUpReplayed, catchUpSnapshots, catchUpPending, catchUpAck, catchUpActivated}
+	mu.Lock()
+	if len(stages) < len(wantStages) {
+		t.Fatalf("stages = %v, want prefix %v", stages, wantStages)
+	}
+	for i, stage := range wantStages {
+		if stages[i] != stage {
+			t.Fatalf("stages = %v, want %v first", stages, wantStages)
+		}
+	}
+	mu.Unlock()
+
+	inner.mu.Lock()
+	defer inner.mu.Unlock()
+	got := make([]string, 0, len(inner.events))
+	for _, event := range inner.events {
+		got = append(got, event["type"].(string))
+	}
+	want := []string{"ToolCallRequested", "ModelResponded", "ToolCallStarted", "ToolCallCompleted", "CommandStarted", "CommandFinished", "PatchApplied"}
+	if len(got) != len(want) {
+		t.Fatalf("frames = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("frames = %v, want %v", got, want)
+		}
 	}
 }

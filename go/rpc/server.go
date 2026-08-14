@@ -82,6 +82,7 @@ type Subscription struct {
 	done              chan struct{}
 	close             func() error
 	requestID         json.RawMessage
+	requestSeq        int
 	responseMu        sync.Mutex
 	responseAttempted bool
 	responseCommitted bool
@@ -93,6 +94,15 @@ var subscriptionSequence atomic.Uint64
 func nextSubscriptionID() string { return fmt.Sprintf("sub_%d", subscriptionSequence.Add(1)) }
 
 func (s *Subscription) ID() string { return s.id }
+
+func (s *Subscription) RequestSeq() int { return s.requestSeq }
+
+func (s *Subscription) MarkExclusiveReplayTail() {
+	if s == nil || s.w == nil {
+		return
+	}
+	s.w.markExclusive()
+}
 
 // SetResult lets a stream handler return catch-up metadata in the subscribe
 // response without changing the handler signature.
@@ -176,10 +186,29 @@ func (s *Subscription) Done() <-chan struct{} { return s.done }
 // ordering to a watching client (approval events overtaking the tool call
 // they govern).
 type connWriter struct {
-	enc     *json.Encoder
-	queue   chan any
-	done    chan struct{}
-	stopped chan struct{}
+	enc       *json.Encoder
+	queue     chan any
+	done      chan struct{}
+	stopped   chan struct{}
+	stateMu   sync.Mutex
+	requests  int
+	exclusive bool
+}
+
+func (w *connWriter) beginRequest() (seq int, exclusive bool) {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	if w.exclusive {
+		return w.requests + 1, true
+	}
+	w.requests++
+	return w.requests, false
+}
+
+func (w *connWriter) markExclusive() {
+	w.stateMu.Lock()
+	w.exclusive = true
+	w.stateMu.Unlock()
 }
 
 func newConnWriter(enc *json.Encoder, done chan struct{}) *connWriter {
@@ -197,7 +226,14 @@ func (w *connWriter) drain() {
 		case frame := <-w.queue:
 			_ = w.enc.Encode(frame)
 		case <-w.done:
-			return
+			for {
+				select {
+				case frame := <-w.queue:
+					_ = w.enc.Encode(frame)
+				default:
+					return
+				}
+			}
 		}
 	}
 }
@@ -567,6 +603,11 @@ func (s *Server) serveWithScopes(conn net.Conn, origin Origin, scopes []Scope) {
 			_ = w.enqueue(Response{JSONRPC: "2.0", Error: &Error{Code: CodeParseError, Message: err.Error()}})
 			continue
 		}
+		seq, exclusive := w.beginRequest()
+		if exclusive {
+			_ = w.enqueue(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: "connection is owned by an exclusive replay-tail subscription"}})
+			return
+		}
 
 		// Enforce transport-origin restriction before doing any work.
 		if ok, reason := s.remoteAuthorized(req.Method, origin); !ok {
@@ -598,7 +639,7 @@ func (s *Server) serveWithScopes(conn net.Conn, origin Origin, scopes []Scope) {
 			}
 			sub := &Subscription{
 				id: nextSubscriptionID(), w: w, done: done, close: conn.Close,
-				requestID: append(json.RawMessage(nil), req.ID...),
+				requestID: append(json.RawMessage(nil), req.ID...), requestSeq: seq,
 			}
 			err := streamHandler(req.Params, sub)
 			// A handler that attempted an atomic response commit owns the entire

@@ -424,10 +424,16 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		if receipt := tr.compact(summarize); receipt != nil {
 			d.record(sess.SessionID, "ContextCompacted", task.RunID, "go", map[string]any{"receipt": receipt}, "")
 		}
-		seg := buildPromptSegments(sysPrompt, task.UserPrompt, tr.render(),
-			"Respond with the next action as a single JSON object.")
+		nativeEligible := d.nativeToolsEligible(d.reasoner, task.Model)
+		turnSys := sysPrompt
+		instruction := "Respond with the next action as a single JSON object."
+		if nativeEligible {
+			turnSys = strings.Replace(sysPrompt, toolsHelp, nativeToolsContract, 1)
+			instruction = "Call the next tool. Use done when the task is finished."
+		}
+		seg := buildPromptSegments(turnSys, task.UserPrompt, tr.render(), instruction)
 		// Vision delivery: if the task's model affirmatively declares image
-		// input in the provider catalog, resolve the transcript's live
+		// input in the provider catalog, restore the transcript's live
 		// MediaRefs from the artifact store and attach them to this call.
 		// Text-only models (and requery fallbacks below) get placeholders
 		// only — collectRequestMedia is fail-closed on every lookup.
@@ -438,11 +444,22 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		// consuming a real turn (up to maxRequeries).
 		var act action
 		var raw string
+		var lastNativeFallback string
 		turnTokens := 0
 		ok := false
 		for requery := 0; requery <= maxRequeries; requery++ {
 			var err error
 			var result ReasonerResult
+			useNative := nativeEligible && requery == 0
+			if nativeEligible && requery > 0 {
+				seg = buildPromptSegments(sysPrompt, task.UserPrompt, tr.render(),
+					"Respond with the next action as a single JSON object.")
+				seg.Media = d.collectRequestMedia(sess.SessionID, task.Model, tr)
+				prompt = seg.full()
+				if lastNativeFallback != "" {
+					prompt += "\n\n" + lastNativeFallback
+				}
+			}
 			requestedModel := taskModel(task)
 			governanceProvider := retryGovernanceProvider(d.reasoner, requestedModel)
 			promptHash := sha256Hex(prompt)
@@ -478,20 +495,55 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			}
 			reasonerCtx = withReasoningEffort(reasonerCtx, task.EffectiveReasoningEffort)
 			reasonerCtx = withReasonerStream(reasonerCtx, assistantStream)
+			if useNative {
+				reasonerCtx = withNativeTools(reasonerCtx, carinaToolSpecs())
+			}
 			if requery == 0 {
 				result, err = thinkWithRetryModelSegments(reasonerCtx, d.reasoner, task.Model, seg)
 			} else {
 				result, err = thinkWithRetryModelResult(reasonerCtx, d.reasoner, task.Model, prompt)
 			}
 			raw = result.Text
+			toolProtocol := "json"
+			if useNative {
+				toolProtocol = "native"
+			}
+			var a action
+			var perr error
+			if err == nil {
+				if len(result.ToolCalls) > 0 {
+					a, perr = decodeNativeToolCalls(result.ToolCalls)
+					if perr == nil {
+						raw = nativeToolCallsAuditText(result.ToolCalls)
+					} else if useNative {
+						toolProtocol = "json_fallback"
+					}
+				} else {
+					a, perr = parseAction(raw)
+					if perr != nil && useNative {
+						toolProtocol = "json_fallback"
+					}
+				}
+			}
 			outcome := map[string]any{
 				"turn": turn, "requery": requery, "requested_model": requestedModel,
 				"reasoner": d.reasoner.Name(), "latency_ms": time.Since(started).Milliseconds(),
 				"input_tokens_estimated": estimateTokens(prompt),
 				"evidence_id":            evidenceID,
 				"prompt_sha256":          promptHash,
+				"tool_protocol":          toolProtocol,
 			}
 			if err != nil {
+				if toolsUnsupported(err) && requery < maxRequeries {
+					outcome["status"] = "tools_unsupported"
+					outcome["tool_protocol"] = "json_fallback"
+					info := classifyProviderError(err)
+					outcome["error"] = runtimecontract.ErrorEnvelope{Code: info.Code, Category: runtimecontract.ErrorCategory(info.Category), Message: "provider rejected native tools", UserAction: info.UserAction, CorrelationID: info.CorrelationID, Retry: runtimecontract.NoRetry(), Metadata: map[string]any{"provider": info.Provider, "http_status": info.HTTPStatus}}
+					d.record(sess.SessionID, "RoutingOutcome", task.RunID, "go", outcome, "")
+					lastNativeFallback = "Native tool calling was rejected. " +
+						"Reply with ONE JSON object like {\"tool\":\"read\",\"path\":\"...\"}."
+					continue
+				}
 				outcome["status"] = "failed"
 				info := classifyProviderError(err)
 				outcome["error"] = runtimecontract.ErrorEnvelope{Code: info.Code, Category: runtimecontract.ErrorCategory(info.Category), Message: "provider request failed", UserAction: info.UserAction, CorrelationID: info.CorrelationID, Retry: runtimecontract.NoRetry(), Metadata: map[string]any{"provider": info.Provider, "http_status": info.HTTPStatus}}
@@ -526,7 +578,6 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			}
 			_ = d.usage.record(sess.SessionID, task.RunID, result.Usage)
 			turnTokens += result.Usage.totalTokens()
-			a, perr := parseAction(raw)
 			responsePayload := map[string]any{
 				"turn": turn, "text": sanitizeModelResponseForAudit(raw), "usage": result.Usage,
 				"structured_output": len(task.OutputSchema) > 0,
@@ -539,8 +590,9 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 				act, ok = a, true
 				break
 			}
-			prompt = fmt.Sprintf("%s\n\nYour last reply was not a valid action JSON (%s). "+
-				"Reply with ONE JSON object like {\"tool\":\"read\",\"path\":\"...\"}.", prompt, perr.Error())
+			lastNativeFallback = fmt.Sprintf("Your last reply was not a valid action JSON (%s). "+
+				"Reply with ONE JSON object like {\"tool\":\"read\",\"path\":\"...\"}.", perr.Error())
+			prompt = fmt.Sprintf("%s\n\n%s", prompt, lastNativeFallback)
 		}
 		if !ok {
 			d.degrade(sess, task, tr, "model kept emitting invalid actions")

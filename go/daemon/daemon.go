@@ -261,13 +261,15 @@ type Daemon struct {
 	planMode map[string]bool // session -> plan mode (read-only until approved)
 	planMu   sync.Mutex
 
-	mcp          *mcp.Manager // external MCP servers (proxied tools, kernel-gated)
-	contextEng   contextengine.Engine
-	egress       *egress.Proxy // deny-by-default network egress proxy (optional)
-	egressURL    string
-	egressCAPath string      // process-local CA bundle for MITM-enabled children
-	sandbox      atomic.Bool // run commands under an OS syscall sandbox (hot-reloadable)
-	safeMode     bool
+	mcp             *mcp.Manager // external MCP servers (proxied tools, kernel-gated)
+	contextEng      contextengine.Engine
+	egress          *egress.Proxy // deny-by-default network egress proxy (optional)
+	egressURL       string
+	egressCAPath    string      // process-local CA bundle for MITM-enabled children
+	sandbox         atomic.Bool // run commands under an OS syscall sandbox (hot-reloadable)
+	safeMode        bool
+	replayTailV1    bool // advertise/accept event_replay_tail v1 for the local TUI
+	nativeToolsHTTP bool // send native tools on eligible HTTP model-router routes
 
 	stopCh    chan struct{} // closed on Close; stops background loops (lease reaper)
 	stopOnce  sync.Once
@@ -457,6 +459,8 @@ func New(opts Options) (*Daemon, error) {
 		runtimeSpec:           runtimeSpec,
 		indexSyncFileLimit:    synchronousRepoMapFileLimit,
 		indexBuildBatchSize:   backgroundIndexBatchSize,
+		replayTailV1:          true,
+		nativeToolsHTTP:       true,
 	}
 	d.journey = newJourneyMetrics(time.Now)
 	d.server.SetConnectionObserver(d)
@@ -4770,57 +4774,80 @@ func (d *Daemon) handlePluginRun(params json.RawMessage) (any, error) {
 }
 
 func (d *Daemon) handleEventStream(params json.RawMessage, sub *rpc.Subscription) error {
-	var p struct {
-		SessionID string `json:"session_id"`
-		Since     int    `json:"since"`
-		EventMode string `json:"event_mode"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return fmt.Errorf("invalid params: %w", err)
-	}
-	if p.SessionID == "" {
-		return fmt.Errorf("session_id required")
-	}
-	mode, err := parseEventMode(p.EventMode)
+	sessionID, since, mode, tailVersion, err := parseEventStreamRequest(params)
 	if err != nil {
 		return err
 	}
-	if p.Since < 0 {
-		p.Since = 0
+	if err := d.authorizeReplayTail(tailVersion, sub.RequestSeq()); err != nil {
+		return err
 	}
 	projectedSub := projectingSubscriber{eventSubscriber: sub, mode: mode}
-	_, _, _, err = d.events.SubscribeCatchUp(p.SessionID, projectedSub, func() ([]any, int, error) {
-		raw, readErr := d.kern.ReadEvents(p.SessionID)
-		if readErr != nil {
-			return nil, 0, readErr
-		}
-		var all []json.RawMessage
-		if decodeErr := json.Unmarshal(raw, &all); decodeErr != nil {
-			return nil, 0, decodeErr
-		}
-		since := p.Since
-		if since > len(all) {
-			since = len(all)
-		}
-		deliver := make([]any, 0, len(all)-since)
-		for index, event := range all[since:] {
-			if projected, ok := projectEvent(mode, event, since+index+1); ok {
-				deliver = append(deliver, projected)
-			}
-		}
-		return deliver, len(all), nil
-	}, func(subscriptionID string, cursor, replayed int) error {
-		return sub.CommitResult(map[string]any{
-			"subscription_id": subscriptionID,
-			"cursor":          cursor,
-			"replayed":        replayed,
+	opts := catchUpOptions{emitSnapshots: tailVersion == replayTailVersionV1}
+	_, err = d.events.subscribeCatchUp(sessionID, projectedSub, func() (catchUpReplay, error) {
+		return d.loadCatchUpReplay(sessionID, since)
+	}, opts, func(commit catchUpCommit) error {
+		result := map[string]any{
+			"subscription_id": commit.subscriptionID,
+			"cursor":          commit.durableCursor,
+			"replayed":        commit.durableReplayed,
 			"event_mode":      mode,
-		})
+		}
+		if tailVersion == replayTailVersionV1 {
+			runtimeID, runtimeEpoch, processEpoch, _ := d.replayRuntimeIdentity()
+			boundary := ReplayBoundaryV1{
+				Version:               replayTailVersionV1,
+				SessionID:             sessionID,
+				RuntimeID:             runtimeID,
+				RuntimeEpoch:          runtimeEpoch,
+				RuntimeProcessEpoch:   processEpoch,
+				RequestedSince:        since,
+				DurableCursor:         commit.durableCursor,
+				DurableReplayed:       commit.durableReplayed,
+				TransientTailRevision: commit.transientTailRevision,
+				TransientSnapshots:    commit.transientSnapshots,
+				BufferedLive:          commit.bufferedLive,
+			}
+			if err := validateReplayAttachment(boundary, commit.transientSnapshots, commit.durableReplayed, commit.bufferedLive); err != nil {
+				return err
+			}
+			result["replay_boundary"] = boundary
+			sub.MarkExclusiveReplayTail()
+		}
+		return sub.CommitResult(result)
 	})
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+func (d *Daemon) loadCatchUpReplay(sessionID string, since int) (catchUpReplay, error) {
+	raw, err := d.kern.ReadEvents(sessionID)
+	if err != nil {
+		return catchUpReplay{}, err
+	}
+	var all []json.RawMessage
+	if err := json.Unmarshal(raw, &all); err != nil {
+		return catchUpReplay{}, err
+	}
+	sealed, err := sealedRunPhasesFromPrefix(all)
+	if err != nil {
+		return catchUpReplay{}, err
+	}
+	cut := since
+	if cut > len(all) {
+		cut = len(all)
+	}
+	events := make([]any, 0, len(all)-cut)
+	for index, event := range all[cut:] {
+		decoded := map[string]any{}
+		if err := json.Unmarshal(event, &decoded); err != nil {
+			return catchUpReplay{}, err
+		}
+		decoded[internalRawAuditCursor] = cut + index + 1
+		events = append(events, decoded)
+	}
+	return catchUpReplay{events: events, durableCursor: len(all), sealed: sealed}, nil
 }
 
 func (d *Daemon) handleEventUnsubscribe(params json.RawMessage) (any, error) {

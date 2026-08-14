@@ -276,6 +276,7 @@ type providerStatusError struct {
 	requestID           string
 	endpointUnsupported bool
 	clientRestricted    bool
+	toolsUnsupported    bool
 }
 
 func (e providerStatusError) Error() string {
@@ -336,6 +337,7 @@ func statusError(provider string, resp *http.Response) error {
 		provider: provider, status: resp.StatusCode, retry: retryAfter(resp.Header, time.Now()),
 		requestID: requestID, endpointUnsupported: responseEndpointUnsupported(resp.StatusCode, raw),
 		clientRestricted: responseClientRestricted(raw),
+		toolsUnsupported: responseToolsUnsupported(resp.StatusCode, raw),
 	}
 }
 
@@ -478,6 +480,7 @@ func (o *openAIProvider) completeChat(ctx context.Context, req modelrouter.Reque
 	}
 	mergeRawBody(bodyMap, o.body)
 	mergeRawBody(bodyMap, override.Body)
+	attachOpenAITools(bodyMap, req.Tools)
 	effectiveEffort, err := applyNativeReasoningEffort(o.id, model, req.ReasoningEffort, bodyMap)
 	if err != nil {
 		return nil, err
@@ -504,7 +507,14 @@ func (o *openAIProvider) completeChat(ctx context.Context, req modelrouter.Reque
 	var out struct {
 		Choices []struct {
 			Message struct {
-				Content json.RawMessage `json:"content"`
+				Content   json.RawMessage `json:"content"`
+				ToolCalls []struct {
+					ID       string `json:"id"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
 			} `json:"message"`
 		} `json:"choices"`
 		Usage struct {
@@ -519,10 +529,17 @@ func (o *openAIProvider) completeChat(ctx context.Context, req modelrouter.Reque
 		return nil, err
 	}
 	text := ""
+	var calls []modelrouter.ToolCall
 	for _, c := range out.Choices {
 		text += textFromRaw(c.Message.Content)
+		for _, call := range c.Message.ToolCalls {
+			calls = append(calls, modelrouter.ToolCall{
+				ID: call.ID, Name: call.Function.Name,
+				Arguments: encodeJSONArguments(call.Function.Arguments),
+			})
+		}
 	}
-	if text == "" {
+	if text == "" && len(calls) == 0 {
 		return nil, fmt.Errorf("%s: empty response", o.id)
 	}
 	cached := clampCachedTokens(out.Usage.PromptDetails.CachedTokens, out.Usage.PromptTokens)
@@ -534,6 +551,7 @@ func (o *openAIProvider) completeChat(ctx context.Context, req modelrouter.Reque
 		OutputTokens:             out.Usage.CompletionTokens,
 		CacheReadTokens:          cached,
 		EffectiveReasoningEffort: effectiveEffort,
+		ToolCalls:                calls,
 	}, nil
 }
 
@@ -561,6 +579,7 @@ func (o *openAIProvider) completeResponses(ctx context.Context, req modelrouter.
 	}
 	mergeRawBody(bodyMap, o.body)
 	mergeRawBody(bodyMap, override.Body)
+	attachResponsesTools(bodyMap, req.Tools)
 	effectiveEffort, err := applyNativeReasoningEffort(o.id, model, req.ReasoningEffort, bodyMap)
 	if err != nil {
 		return nil, err
@@ -587,7 +606,11 @@ func (o *openAIProvider) completeResponses(ctx context.Context, req modelrouter.
 	var out struct {
 		OutputText string `json:"output_text"`
 		Output     []struct {
-			Content []struct {
+			Type      string `json:"type"`
+			Name      string `json:"name"`
+			CallID    string `json:"call_id"`
+			Arguments any    `json:"arguments"`
+			Content   []struct {
 				Text string `json:"text"`
 			} `json:"content"`
 		} `json:"output"`
@@ -603,14 +626,28 @@ func (o *openAIProvider) completeResponses(ctx context.Context, req modelrouter.
 		return nil, err
 	}
 	text := out.OutputText
+	var calls []modelrouter.ToolCall
 	if text == "" {
 		for _, item := range out.Output {
 			for _, part := range item.Content {
 				text += part.Text
 			}
+			if item.Type == "function_call" && item.Name != "" {
+				calls = append(calls, modelrouter.ToolCall{
+					ID: item.CallID, Name: item.Name, Arguments: encodeJSONArguments(item.Arguments),
+				})
+			}
+		}
+	} else {
+		for _, item := range out.Output {
+			if item.Type == "function_call" && item.Name != "" {
+				calls = append(calls, modelrouter.ToolCall{
+					ID: item.CallID, Name: item.Name, Arguments: encodeJSONArguments(item.Arguments),
+				})
+			}
 		}
 	}
-	if text == "" {
+	if text == "" && len(calls) == 0 {
 		return nil, fmt.Errorf("%s: empty response", o.id)
 	}
 	cached := clampCachedTokens(out.Usage.InputDetails.CachedTokens, out.Usage.InputTokens)
@@ -622,6 +659,7 @@ func (o *openAIProvider) completeResponses(ctx context.Context, req modelrouter.
 		OutputTokens:             out.Usage.OutputTokens,
 		CacheReadTokens:          cached,
 		EffectiveReasoningEffort: effectiveEffort,
+		ToolCalls:                calls,
 	}, nil
 }
 
@@ -667,6 +705,7 @@ func (g *geminiProvider) Complete(ctx context.Context, req modelrouter.Request) 
 	}
 	mergeRawBody(bodyMap, g.body)
 	mergeRawBody(bodyMap, override.Body)
+	attachGeminiTools(bodyMap, req.Tools)
 	effectiveEffort, err := applyNativeReasoningEffort(g.id, model, req.ReasoningEffort, bodyMap)
 	if err != nil {
 		return nil, err
@@ -700,7 +739,11 @@ func (g *geminiProvider) Complete(ctx context.Context, req modelrouter.Request) 
 		Candidates []struct {
 			Content struct {
 				Parts []struct {
-					Text string `json:"text"`
+					Text         string `json:"text"`
+					FunctionCall struct {
+						Name string         `json:"name"`
+						Args map[string]any `json:"args"`
+					} `json:"functionCall"`
 				} `json:"parts"`
 			} `json:"content"`
 		} `json:"candidates"`
@@ -713,12 +756,19 @@ func (g *geminiProvider) Complete(ctx context.Context, req modelrouter.Request) 
 		return nil, err
 	}
 	text := ""
+	var calls []modelrouter.ToolCall
 	for _, c := range out.Candidates {
 		for _, part := range c.Content.Parts {
 			text += part.Text
+			if part.FunctionCall.Name != "" {
+				calls = append(calls, modelrouter.ToolCall{
+					Name:      part.FunctionCall.Name,
+					Arguments: encodeJSONArguments(part.FunctionCall.Args),
+				})
+			}
 		}
 	}
-	if text == "" {
+	if text == "" && len(calls) == 0 {
 		return nil, fmt.Errorf("%s: empty response", g.id)
 	}
 	return &modelrouter.Response{
@@ -728,6 +778,7 @@ func (g *geminiProvider) Complete(ctx context.Context, req modelrouter.Request) 
 		InputTokens:              out.UsageMetadata.PromptTokenCount,
 		OutputTokens:             out.UsageMetadata.CandidatesTokenCount,
 		EffectiveReasoningEffort: effectiveEffort,
+		ToolCalls:                calls,
 	}, nil
 }
 

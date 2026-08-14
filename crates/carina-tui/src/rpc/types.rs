@@ -130,6 +130,207 @@ pub struct ContextCheckpointSummary {
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct ReplayBoundaryV1 {
+    #[serde(default)]
+    pub version: i64,
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default)]
+    pub runtime_id: String,
+    #[serde(default)]
+    pub runtime_epoch: String,
+    #[serde(default)]
+    pub runtime_process_epoch: i64,
+    #[serde(default)]
+    pub requested_since: i64,
+    #[serde(default)]
+    pub durable_cursor: i64,
+    #[serde(default)]
+    pub durable_replayed: i64,
+    #[serde(default)]
+    pub transient_tail_revision: i64,
+    #[serde(default)]
+    pub transient_snapshots: i64,
+    #[serde(default)]
+    pub buffered_live: i64,
+}
+
+impl ReplayBoundaryV1 {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.version != 1 {
+            return Err("replay_boundary.version must be 1".into());
+        }
+        if self.session_id.trim().is_empty()
+            || self.runtime_id.trim().is_empty()
+            || self.runtime_epoch.trim().is_empty()
+        {
+            return Err("replay_boundary identity is incomplete".into());
+        }
+        if self.runtime_process_epoch < 0
+            || self.requested_since < 0
+            || self.durable_cursor < 0
+            || self.durable_replayed < 0
+            || self.transient_tail_revision < 0
+            || self.transient_snapshots < 0
+            || self.buffered_live < 0
+        {
+            return Err("replay_boundary counts must be >= 0".into());
+        }
+        if self.durable_cursor < self.requested_since {
+            return Err("replay_boundary.durable_cursor is below requested_since".into());
+        }
+        Ok(())
+    }
+
+    pub fn validate_attachment(
+        &self,
+        snapshots: usize,
+        durable: usize,
+        live: usize,
+    ) -> Result<(), String> {
+        self.validate()?;
+        if durable != self.as_usize(self.durable_replayed)
+            || snapshots != self.as_usize(self.transient_snapshots)
+            || live != self.as_usize(self.buffered_live)
+        {
+            return Err("replay attachment counts do not match replay_boundary".into());
+        }
+        if snapshots > 0 && self.transient_tail_revision <= 0 {
+            return Err("transient snapshots require a positive transient_tail_revision".into());
+        }
+        Ok(())
+    }
+
+    pub fn catch_up_len(&self) -> Option<usize> {
+        self.durable_replayed
+            .checked_add(self.transient_snapshots)?
+            .checked_add(self.buffered_live)
+            .and_then(|total| usize::try_from(total).ok())
+    }
+
+    pub fn classify(&self, index: usize) -> Option<CatchUpDelivery> {
+        let durable = self.as_usize(self.durable_replayed);
+        let snapshots = self.as_usize(self.transient_snapshots);
+        let live = self.as_usize(self.buffered_live);
+        if index < durable {
+            Some(CatchUpDelivery::DurableReplay)
+        } else if index < durable.saturating_add(snapshots) {
+            Some(CatchUpDelivery::TransientSnapshot)
+        } else if index < durable.saturating_add(snapshots).saturating_add(live) {
+            Some(CatchUpDelivery::BufferedLive)
+        } else {
+            None
+        }
+    }
+
+    fn as_usize(&self, value: i64) -> usize {
+        usize::try_from(value).unwrap_or(0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CatchUpDelivery {
+    DurableReplay,
+    TransientSnapshot,
+    BufferedLive,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct AssistantMessageSnapshot {
+    #[serde(default)]
+    pub r#type: String,
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default)]
+    pub run_id: String,
+    #[serde(default)]
+    pub actor: String,
+    #[serde(default)]
+    pub payload: AssistantMessageSnapshotPayload,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct AssistantMessageSnapshotPayload {
+    #[serde(default)]
+    pub generation: i64,
+    #[serde(default)]
+    pub sequence: i64,
+    #[serde(default)]
+    pub phase: String,
+    #[serde(default)]
+    pub content: String,
+    #[serde(default)]
+    pub structured_output: bool,
+    #[serde(default)]
+    pub tail_revision: i64,
+    #[serde(default)]
+    pub state: String,
+}
+
+impl AssistantMessageSnapshot {
+    pub fn validate(&self, boundary: &ReplayBoundaryV1) -> Result<(), String> {
+        if self.r#type != "assistant.message.snapshot" {
+            return Err("snapshot type must be assistant.message.snapshot".into());
+        }
+        if self.session_id != boundary.session_id {
+            return Err("snapshot session_id does not match replay_boundary".into());
+        }
+        if self.run_id.trim().is_empty() || self.payload.phase.trim().is_empty() {
+            return Err("snapshot run_id and phase are required".into());
+        }
+        if self.payload.generation <= 0
+            || self.payload.sequence <= 0
+            || self.payload.tail_revision <= 0
+        {
+            return Err("snapshot generation, sequence, and tail_revision must be positive".into());
+        }
+        if self.payload.state != "open" && self.payload.state != "awaiting_canonical" {
+            return Err("snapshot state must be open or awaiting_canonical".into());
+        }
+        if self.payload.tail_revision > boundary.transient_tail_revision {
+            return Err("snapshot tail_revision is newer than the advertised cut".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct SessionGoal {
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default)]
+    pub objective: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub token_budget: u64,
+    #[serde(default)]
+    pub tokens_used: u64,
+    #[serde(default)]
+    pub continuations_used: u64,
+    #[serde(default)]
+    pub max_continuations: u64,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct GoalGetResult {
+    #[serde(default)]
+    pub goal: Option<SessionGoal>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct CheckpointCompactResult {
+    #[serde(default)]
+    pub compacted: bool,
+    #[serde(default)]
+    pub task_id: String,
+    #[serde(default)]
+    pub checkpoint_id: String,
+    #[serde(default)]
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 pub struct ContextCompactAvailability {
     #[serde(default)]
     pub available: bool,
@@ -508,6 +709,26 @@ pub struct RuntimeCapabilities {
     pub rpc_methods: Vec<String>,
     #[serde(default)]
     pub session_items_watermark: VersionedCapability,
+    #[serde(default)]
+    pub event_replay_tail: Option<EventReplayTailCapability>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct EventReplayTailCapability {
+    #[serde(default)]
+    pub version: u64,
+    #[serde(default)]
+    pub snapshot_event: String,
+    #[serde(default)]
+    pub durable_cursor: String,
+}
+
+impl RuntimeCapabilities {
+    pub fn event_replay_tail_v1(&self) -> bool {
+        self.event_replay_tail
+            .as_ref()
+            .is_some_and(|capability| capability.version == 1)
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
@@ -1239,6 +1460,31 @@ pub enum AssistantMessageUpdate {
         phase: AssistantMessagePhase,
         content: String,
     },
+    Snapshot {
+        generation: u64,
+        sequence: u64,
+        phase: AssistantMessagePhase,
+        content: String,
+        structured_output: bool,
+        tail_revision: u64,
+        state: AssistantTailState,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssistantTailState {
+    Open,
+    AwaitingCanonical,
+}
+
+impl AssistantTailState {
+    fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "open" => Some(Self::Open),
+            "awaiting_canonical" => Some(Self::AwaitingCanonical),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1434,6 +1680,23 @@ impl WireEvent {
                 sequence,
                 phase,
                 content: self.payload.get("content")?.as_str()?.to_owned(),
+            }),
+            "assistant.message.snapshot" => Some(AssistantMessageUpdate::Snapshot {
+                generation,
+                sequence,
+                phase,
+                content: self.payload.get("content")?.as_str()?.to_owned(),
+                structured_output: self
+                    .payload
+                    .get("structured_output")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                tail_revision: self
+                    .payload
+                    .get("tail_revision")?
+                    .as_u64()
+                    .filter(|value| *value > 0)?,
+                state: AssistantTailState::from_wire(self.payload.get("state")?.as_str()?)?,
             }),
             _ => None,
         }
@@ -1868,6 +2131,33 @@ mod tests {
                 sequence: 4,
                 phase: AssistantMessagePhase::FinalAnswer,
                 content: "hello world".into(),
+            })
+        );
+
+        let snapshot: WireEvent = serde_json::from_value(json!({
+            "type": "assistant.message.snapshot",
+            "session_id": "sess",
+            "run_id": "run_1",
+            "payload": {
+                "generation": 2,
+                "sequence": 19,
+                "phase": "final_answer",
+                "content": "hello",
+                "tail_revision": 31,
+                "state": "awaiting_canonical"
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            snapshot.assistant_message_update(),
+            Some(AssistantMessageUpdate::Snapshot {
+                generation: 2,
+                sequence: 19,
+                phase: AssistantMessagePhase::FinalAnswer,
+                content: "hello".into(),
+                structured_output: false,
+                tail_revision: 31,
+                state: AssistantTailState::AwaitingCanonical,
             })
         );
     }

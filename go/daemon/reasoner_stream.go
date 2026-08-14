@@ -245,10 +245,11 @@ type assistantStreamPublisher struct {
 	mu               sync.Mutex
 	generation       uint64
 	sequence         uint64
+	owner            assistantTailOwner
 }
 
 func (p *assistantStreamPublisher) publish(update ReasonerStreamUpdate) {
-	if p == nil || p.d == nil || update.Generation == 0 {
+	if p == nil || p.d == nil || p.d.events == nil || update.Generation == 0 {
 		return
 	}
 	p.mu.Lock()
@@ -260,30 +261,30 @@ func (p *assistantStreamPublisher) publish(update ReasonerStreamUpdate) {
 		p.generation = update.Generation
 		p.sequence = 0
 	}
+	kind := "delta"
+	text := update.Text
 	if update.Reset {
+		kind = "reset"
+		text = ""
 		p.sequence++
-		sequence := p.sequence
-		p.mu.Unlock()
-		p.d.publishAssistantStreamEvent(p.sessionID, p.taskID, "assistant.message.reset", map[string]any{
-			"generation": update.Generation, "sequence": sequence, "phase": assistantPhaseFinalAnswer,
-		})
-		return
-	}
-	if update.Text == "" {
+	} else if update.Text == "" {
 		p.mu.Unlock()
 		return
+	} else {
+		p.sequence++
+		if update.Completed {
+			kind = "completed"
+		}
 	}
-	p.sequence++
 	sequence := p.sequence
+	generation := p.generation
 	p.mu.Unlock()
-	kind, key := "assistant.message.delta", "delta"
-	if update.Completed {
-		kind, key = "assistant.message.completed", "content"
+	if err := p.d.events.PublishAssistantTail(&p.owner, p.sessionID, p.taskID, kind, generation, sequence, text, p.structuredOutput); err != nil {
+		return
 	}
-	p.d.publishAssistantStreamEvent(p.sessionID, p.taskID, kind, map[string]any{
-		"generation": update.Generation, "sequence": sequence, "phase": assistantPhaseFinalAnswer,
-		"structured_output": p.structuredOutput, key: update.Text,
-	})
+	if p.d.journey != nil {
+		p.d.journey.observeEvent("assistant.message."+kind, p.taskID)
+	}
 }
 
 // Assistant stream events are transient product projections. They bypass the

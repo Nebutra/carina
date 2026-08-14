@@ -121,9 +121,29 @@ type projectingSubscriber struct {
 }
 
 func (s projectingSubscriber) TryNotify(method string, value any) error {
+	_, err := s.tryNotifyProjected(method, value)
+	return err
+}
+
+func (s projectingSubscriber) tryNotifyProjected(method string, value any) (bool, error) {
 	projected, ok := projectEvent(s.mode, value)
 	if !ok {
-		return nil
+		return false, nil
 	}
-	return s.eventSubscriber.TryNotify(method, projected)
+	if err := s.eventSubscriber.TryNotify(method, projected); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func tryNotifyEvent(sub eventSubscriber, method string, event any) (bool, error) {
+	if projector, ok := sub.(interface {
+		tryNotifyProjected(string, any) (bool, error)
+	}); ok {
+		return projector.tryNotifyProjected(method, event)
+	}
+	if err := sub.TryNotify(method, event); err != nil {
+		return false, err
+	}
+	return true, nil
 }

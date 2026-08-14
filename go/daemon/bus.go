@@ -18,9 +18,51 @@ type busSubscriber struct {
 	active     bool
 	pending    []map[string]any
 	replayCut  int
+	sealed     map[sealedRunPhase]struct{}
 	delivering bool
 	deliverMu  sync.Mutex
 	closed     bool
+}
+
+type catchUpStage string
+
+const (
+	catchUpRegistered catchUpStage = "registered"
+	catchUpReplayed   catchUpStage = "replayed"
+	catchUpSnapshots  catchUpStage = "snapshots"
+	catchUpPending    catchUpStage = "pending"
+	catchUpAck        catchUpStage = "ack"
+	catchUpActivated  catchUpStage = "activated"
+)
+
+type catchUpReplay struct {
+	events        []any
+	durableCursor int
+	sealed        []sealedRunPhase
+}
+
+type catchUpCommit struct {
+	subscriptionID        string
+	durableCursor         int
+	durableReplayed       int
+	bufferedLive          int
+	transientSnapshots    int
+	transientTailRevision int
+	sealed                []sealedRunPhase
+}
+
+type catchUpResult struct {
+	subscriptionID        string
+	durableCursor         int
+	durableReplayed       int
+	bufferedLive          int
+	transientSnapshots    int
+	transientTailRevision int
+	sealed                []sealedRunPhase
+}
+
+type catchUpOptions struct {
+	emitSnapshots bool
 }
 
 type eventSubscriber interface {
@@ -34,6 +76,7 @@ type BusStats struct {
 	Published       uint64 `json:"published"`
 	SlowDrops       uint64 `json:"slow_consumer_drops"`
 	SlowDisconnects uint64 `json:"slow_consumer_disconnects"`
+	TailOverflows   uint64 `json:"tail_overflows"`
 }
 
 // Bus fans events out without ever waiting on network consumers. A consumer
@@ -43,67 +86,136 @@ type Bus struct {
 	mu              sync.RWMutex
 	subs            map[string]map[string]*busSubscriber
 	taps            []func(sessionID string, event map[string]any)
+	tails           assistantTailRegistry
 	published       atomic.Uint64
 	slowDrops       atomic.Uint64
 	slowDisconnects atomic.Uint64
+	tailOverflows   atomic.Uint64
+	probe           func(catchUpStage)
 }
 
 func NewBus() *Bus { return &Bus{subs: make(map[string]map[string]*busSubscriber)} }
 
 func (b *Bus) Subscribe(sessionID string, sub eventSubscriber) string {
-	id, _ := b.add(sessionID, sub, true)
+	id, _, _, _ := b.add(sessionID, sub, true)
 	return id
 }
 
 // SubscribeCatchUp registers inactive before replay starts. Events published
 // during replay or pending delivery remain buffered. The subscriber becomes
-// active only after the pending queue is empty under the bus lock, while its
-// delivery lock still prevents a newly active publisher from overtaking.
+// active only after the pending queue is empty and the subscribe ACK has been
+// enqueued under the bus lock, while its delivery lock still prevents a newly
+// active publisher from overtaking the ACK.
 func (b *Bus) SubscribeCatchUp(
 	sessionID string,
 	sub eventSubscriber,
-	replay func() ([]any, int, error),
-	commit ...func(subscriptionID string, cursor, replayed int) error,
-) (string, int, int, error) {
-	id, entry := b.add(sessionID, sub, false)
+	replay func() (catchUpReplay, error),
+	commit ...func(catchUpCommit) error,
+) (catchUpResult, error) {
+	return b.subscribeCatchUp(sessionID, sub, replay, catchUpOptions{}, commit...)
+}
+
+func (b *Bus) subscribeCatchUp(
+	sessionID string,
+	sub eventSubscriber,
+	replay func() (catchUpReplay, error),
+	opts catchUpOptions,
+	commit ...func(catchUpCommit) error,
+) (catchUpResult, error) {
+	id, entry, snapshots, tailRevision := b.add(sessionID, sub, false)
+	b.catchUpProbe(catchUpRegistered)
 	entry.deliverMu.Lock()
-	if entry.closed {
+	fail := func(err error) (catchUpResult, error) {
 		entry.deliverMu.Unlock()
-		return "", 0, 0, errors.New("subscription closed before catch-up")
+		return catchUpResult{}, err
 	}
-	events, cursor, err := replay()
+	if entry.closed {
+		return fail(errors.New("subscription closed before catch-up"))
+	}
+	replayed, err := replay()
 	if err != nil {
 		entry.deliverMu.Unlock()
 		b.Unsubscribe(id)
-		return "", 0, 0, err
+		return catchUpResult{}, err
 	}
+	revision, ok := uint64ToInt(tailRevision)
+	if !ok {
+		entry.deliverMu.Unlock()
+		b.Unsubscribe(id)
+		return catchUpResult{}, errors.New("transient tail revision exceeds transport bound")
+	}
+	filtered := filterSealedSnapshots(snapshots, replayed.sealed)
 	b.mu.Lock()
 	if b.lookupLocked(id) != entry {
 		b.mu.Unlock()
-		entry.deliverMu.Unlock()
-		return "", 0, 0, errors.New("subscription closed during replay")
+		return fail(errors.New("subscription closed during replay"))
 	}
-	entry.replayCut = cursor
+	entry.replayCut = replayed.durableCursor
+	entry.sealed = sealedSet(replayed.sealed)
+	for _, pair := range replayed.sealed {
+		b.tails.seal(assistantTailKey{sessionID: sessionID, runID: pair.RunID, phase: pair.Phase})
+	}
 	b.mu.Unlock()
-	for _, event := range events {
-		if err := sub.TryNotify("event", event); err != nil {
+
+	durableReplayed := 0
+	for _, event := range replayed.events {
+		enqueued, notifyErr := tryNotifyEvent(sub, "event", event)
+		if notifyErr != nil {
 			entry.deliverMu.Unlock()
-			b.dropSlow(id, sub, err)
-			return "", 0, 0, err
+			b.dropSlow(id, sub, notifyErr)
+			return catchUpResult{}, notifyErr
+		}
+		if enqueued {
+			durableReplayed++
 		}
 	}
+	b.catchUpProbe(catchUpReplayed)
+
+	transientSnapshots := 0
+	if opts.emitSnapshots {
+		for _, snapshot := range filtered {
+			frame, frameErr := snapshotWireEvent(snapshot)
+			if frameErr != nil {
+				entry.deliverMu.Unlock()
+				b.Unsubscribe(id)
+				return catchUpResult{}, frameErr
+			}
+			enqueued, notifyErr := tryNotifyEvent(sub, "event", frame)
+			if notifyErr != nil {
+				entry.deliverMu.Unlock()
+				b.dropSlow(id, sub, notifyErr)
+				return catchUpResult{}, notifyErr
+			}
+			if enqueued {
+				transientSnapshots++
+			}
+		}
+	}
+	b.catchUpProbe(catchUpSnapshots)
+	b.catchUpProbe(catchUpPending)
+
+	bufferedLive := 0
 	for {
 		b.mu.Lock()
 		if b.lookupLocked(id) != entry {
 			b.mu.Unlock()
-			entry.deliverMu.Unlock()
-			return "", 0, 0, errors.New("subscription closed during catch-up")
+			return fail(errors.New("subscription closed during catch-up"))
 		}
 		pending := append([]map[string]any(nil), entry.pending...)
 		entry.pending = nil
 		if len(pending) == 0 {
+			commitInfo := catchUpCommit{
+				subscriptionID:        id,
+				durableCursor:         replayed.durableCursor,
+				durableReplayed:       durableReplayed,
+				bufferedLive:          bufferedLive,
+				transientSnapshots:    transientSnapshots,
+				transientTailRevision: revision,
+				sealed:                append([]sealedRunPhase(nil), replayed.sealed...),
+			}
+			b.catchUpProbe(catchUpAck)
 			if len(commit) > 0 && commit[0] != nil {
-				if err := commit[0](id, cursor, len(events)); err != nil {
+				if commitErr := commit[0](commitInfo); commitErr != nil {
 					delete(b.subs[sessionID], id)
 					if len(b.subs[sessionID]) == 0 {
 						delete(b.subs, sessionID)
@@ -111,31 +223,58 @@ func (b *Bus) SubscribeCatchUp(
 					entry.closed = true
 					b.mu.Unlock()
 					entry.deliverMu.Unlock()
-					if errors.Is(err, rpc.ErrSlowConsumer) {
+					if errors.Is(commitErr, rpc.ErrSlowConsumer) {
 						b.slowDrops.Add(1)
 						b.slowDisconnects.Add(1)
 					}
 					_ = sub.Disconnect()
-					return "", 0, 0, err
+					return catchUpResult{}, commitErr
 				}
 			}
 			entry.active = true
 			b.mu.Unlock()
 			entry.deliverMu.Unlock()
-			return id, cursor, len(events), nil
+			b.catchUpProbe(catchUpActivated)
+			return catchUpResult{
+				subscriptionID:        id,
+				durableCursor:         replayed.durableCursor,
+				durableReplayed:       durableReplayed,
+				bufferedLive:          bufferedLive,
+				transientSnapshots:    transientSnapshots,
+				transientTailRevision: revision,
+				sealed:                commitInfo.sealed,
+			}, nil
 		}
 		b.mu.Unlock()
 		for _, event := range pending {
-			if pendingCursor := rawAuditCursor(event); pendingCursor > 0 && pendingCursor <= cursor {
+			if skipCatchUpPending(event, replayed.durableCursor, entry.sealed) {
 				continue
 			}
-			if err := sub.TryNotify("event", event); err != nil {
+			enqueued, notifyErr := tryNotifyEvent(sub, "event", event)
+			if notifyErr != nil {
 				entry.deliverMu.Unlock()
-				b.dropSlow(id, sub, err)
-				return "", 0, 0, err
+				b.dropSlow(id, sub, notifyErr)
+				return catchUpResult{}, notifyErr
+			}
+			if enqueued {
+				bufferedLive++
 			}
 		}
 	}
+}
+
+func skipCatchUpPending(event map[string]any, durableCut int, sealed map[sealedRunPhase]struct{}) bool {
+	if cursor := rawAuditCursor(event); cursor > 0 && cursor <= durableCut {
+		return true
+	}
+	return sealedTransient(event, sealed)
+}
+
+func (b *Bus) catchUpProbe(stage catchUpStage) {
+	if b == nil || b.probe == nil {
+		return
+	}
+	b.probe(stage)
 }
 
 func rawAuditCursor(event map[string]any) int {
@@ -163,20 +302,21 @@ func rawAuditCursor(event map[string]any) int {
 	return 0
 }
 
-func (b *Bus) add(sessionID string, sub eventSubscriber, active bool) (string, *busSubscriber) {
+func (b *Bus) add(sessionID string, sub eventSubscriber, active bool) (string, *busSubscriber, []assistantTailSnapshot, uint64) {
 	id := sub.ID()
 	if id == "" {
 		id = sessionID + ":legacy"
 	}
-	entry := &busSubscriber{id: id, sub: sub, active: active}
+	entry := &busSubscriber{id: id, sub: sub, active: active, sealed: map[sealedRunPhase]struct{}{}}
 	b.mu.Lock()
 	if b.subs[sessionID] == nil {
 		b.subs[sessionID] = make(map[string]*busSubscriber)
 	}
 	b.subs[sessionID][id] = entry
+	snapshots, revision := b.tails.capture(sessionID)
 	b.mu.Unlock()
 	go func() { <-sub.Done(); b.Unsubscribe(id) }()
-	return id, entry
+	return id, entry, snapshots, revision
 }
 
 func (b *Bus) Unsubscribe(id string) bool {
@@ -222,10 +362,67 @@ func (b *Bus) Publish(sessionID string, event map[string]any) {
 		tap(sessionID, event)
 	}
 	b.mu.Lock()
+	if pair, ok := eventSealsAssistantTail(event); ok {
+		b.tails.seal(assistantTailKey{sessionID: sessionID, runID: pair.RunID, phase: pair.Phase})
+	}
+	drainers, overflow := b.enqueueLocked(sessionID, event)
+	b.mu.Unlock()
+	b.finishPublish(overflow, drainers)
+}
+
+func (b *Bus) PublishAssistantTail(
+	owner *assistantTailOwner,
+	sessionID, runID, kind string,
+	generation, sequence uint64,
+	text string,
+	structuredOutput bool,
+) error {
+	if owner == nil {
+		return errAssistantTailOwner
+	}
+	key := assistantTailKey{sessionID: sessionID, runID: runID, phase: assistantPhaseFinalAnswer}
+	b.mu.Lock()
+	if b.tails.isSealed(key) {
+		b.mu.Unlock()
+		return errAssistantTailSealed
+	}
+	if owner.token == 0 {
+		begun, err := b.tails.begin(key)
+		if err != nil {
+			dropped := b.failTailLocked(sessionID, err)
+			b.mu.Unlock()
+			b.disconnectTailOverflow(dropped)
+			return err
+		}
+		*owner = begun
+	}
+	snapshot, err := b.tails.publish(*owner, kind, generation, sequence, text, structuredOutput)
+	if err != nil {
+		dropped := b.failTailLocked(sessionID, err)
+		b.mu.Unlock()
+		b.disconnectTailOverflow(dropped)
+		return err
+	}
+	event := tailStreamEvent(sessionID, runID, kind, snapshot, text, structuredOutput)
+	b.published.Add(1)
+	taps := append([]func(string, map[string]any){}, b.taps...)
+	drainers, overflow := b.enqueueLocked(sessionID, event)
+	b.mu.Unlock()
+	for _, tap := range taps {
+		tap(sessionID, event)
+	}
+	b.finishPublish(overflow, drainers)
+	return nil
+}
+
+func (b *Bus) enqueueLocked(sessionID string, event map[string]any) (drainers, overflow []*busSubscriber) {
 	entries := b.subs[sessionID]
-	drainers := make([]*busSubscriber, 0, len(entries))
-	overflow := make([]*busSubscriber, 0)
+	drainers = make([]*busSubscriber, 0, len(entries))
+	overflow = make([]*busSubscriber, 0)
 	for _, entry := range entries {
+		if sealedTransient(event, entry.sealed) {
+			continue
+		}
 		if entry.active {
 			if cursor := rawAuditCursor(event); cursor > 0 && cursor <= entry.replayCut {
 				continue
@@ -245,7 +442,10 @@ func (b *Bus) Publish(sessionID string, event map[string]any) {
 	if len(entries) == 0 {
 		delete(b.subs, sessionID)
 	}
-	b.mu.Unlock()
+	return drainers, overflow
+}
+
+func (b *Bus) finishPublish(overflow, drainers []*busSubscriber) {
 	for _, entry := range overflow {
 		b.slowDrops.Add(1)
 		b.slowDisconnects.Add(1)
@@ -254,6 +454,35 @@ func (b *Bus) Publish(sessionID string, event map[string]any) {
 	for _, entry := range drainers {
 		b.drainActive(entry)
 	}
+}
+
+func (b *Bus) failTailLocked(sessionID string, err error) []*busSubscriber {
+	if !errors.Is(err, errAssistantTailOverflow) {
+		return nil
+	}
+	b.tailOverflows.Add(1)
+	entries := b.subs[sessionID]
+	delete(b.subs, sessionID)
+	dropped := make([]*busSubscriber, 0, len(entries))
+	for _, entry := range entries {
+		dropped = append(dropped, entry)
+	}
+	return dropped
+}
+
+func (b *Bus) disconnectTailOverflow(entries []*busSubscriber) {
+	for _, entry := range entries {
+		entry.deliverMu.Lock()
+		entry.closed = true
+		entry.deliverMu.Unlock()
+		_ = entry.sub.Disconnect()
+	}
+}
+
+func (b *Bus) captureTails(sessionID string) ([]assistantTailSnapshot, uint64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.tails.capture(sessionID)
 }
 
 // drainActive is the single delivery owner for an active subscriber. Publish
@@ -280,7 +509,10 @@ func (b *Bus) drainActive(entry *busSubscriber) {
 		b.mu.Unlock()
 
 		for _, event := range pending {
-			if err := entry.sub.TryNotify("event", event); err != nil {
+			if sealedTransient(event, entry.sealed) {
+				continue
+			}
+			if _, err := tryNotifyEvent(entry.sub, "event", event); err != nil {
 				entry.deliverMu.Unlock()
 				b.dropSlow(entry.id, entry.sub, err)
 				return
@@ -308,5 +540,91 @@ func (b *Bus) SubscriberCount() int {
 	return n
 }
 func (b *Bus) Stats() BusStats {
-	return BusStats{Published: b.published.Load(), SlowDrops: b.slowDrops.Load(), SlowDisconnects: b.slowDisconnects.Load()}
+	return BusStats{
+		Published:       b.published.Load(),
+		SlowDrops:       b.slowDrops.Load(),
+		SlowDisconnects: b.slowDisconnects.Load(),
+		TailOverflows:   b.tailOverflows.Load(),
+	}
+}
+
+func filterSealedSnapshots(snapshots []assistantTailSnapshot, sealed []sealedRunPhase) []assistantTailSnapshot {
+	if len(snapshots) == 0 || len(sealed) == 0 {
+		return snapshots
+	}
+	drop := sealedSet(sealed)
+	out := make([]assistantTailSnapshot, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		if _, sealed := drop[sealedRunPhase{RunID: snapshot.RunID, Phase: snapshot.Phase}]; sealed {
+			continue
+		}
+		out = append(out, snapshot)
+	}
+	return out
+}
+
+func snapshotWireEvent(snapshot assistantTailSnapshot) (map[string]any, error) {
+	generation, ok := uint64ToInt(snapshot.Generation)
+	if !ok {
+		return nil, errors.New("snapshot generation exceeds transport bound")
+	}
+	sequence, ok := uint64ToInt(snapshot.Sequence)
+	if !ok {
+		return nil, errors.New("snapshot sequence exceeds transport bound")
+	}
+	revision, ok := uint64ToInt(snapshot.Revision)
+	if !ok {
+		return nil, errors.New("snapshot tail_revision exceeds transport bound")
+	}
+	state := assistantTailStateOpen
+	if snapshot.State == assistantTailAwaitingCanonical {
+		state = assistantTailStateAwaitingFinal
+	}
+	return map[string]any{
+		"type":       assistantMessageSnapshotType,
+		"session_id": snapshot.SessionID,
+		"run_id":     snapshot.RunID,
+		"actor":      "model",
+		"payload": map[string]any{
+			"generation":        generation,
+			"sequence":          sequence,
+			"phase":             snapshot.Phase,
+			"content":           snapshot.Content,
+			"structured_output": snapshot.StructuredOutput,
+			"tail_revision":     revision,
+			"state":             state,
+		},
+	}, nil
+}
+
+func tailStreamEvent(sessionID, runID, kind string, snapshot assistantTailSnapshot, text string, structuredOutput bool) map[string]any {
+	payload := map[string]any{
+		"generation": snapshot.Generation,
+		"sequence":   snapshot.Sequence,
+		"phase":      snapshot.Phase,
+	}
+	switch kind {
+	case "delta":
+		payload["delta"] = text
+		payload["structured_output"] = structuredOutput
+	case "completed":
+		payload["content"] = text
+		payload["structured_output"] = structuredOutput
+	}
+	return map[string]any{
+		"session_id": sessionID,
+		"task_id":    runID,
+		"run_id":     runID,
+		"type":       "assistant.message." + kind,
+		"actor":      "model",
+		"payload":    payload,
+	}
+}
+
+func uint64ToInt(value uint64) (int, bool) {
+	maxInt := uint64(^uint(0) >> 1)
+	if value > maxInt {
+		return 0, false
+	}
+	return int(value), true
 }

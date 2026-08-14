@@ -34,8 +34,29 @@ type modelAwareReasoner interface {
 // test doubles continue to compile; callers fall back to explicit estimates
 // when a reasoner does not implement the richer interface.
 type ReasonerResult struct {
-	Text  string
-	Usage ModelUsage
+	Text      string
+	Usage     ModelUsage
+	ToolCalls []modelrouter.ToolCall
+}
+
+type nativeToolsContextKey struct{}
+
+func withNativeTools(ctx context.Context, tools []modelrouter.ToolSpec) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if len(tools) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, nativeToolsContextKey{}, tools)
+}
+
+func nativeToolsFrom(ctx context.Context) []modelrouter.ToolSpec {
+	if ctx == nil {
+		return nil
+	}
+	tools, _ := ctx.Value(nativeToolsContextKey{}).([]modelrouter.ToolSpec)
+	return tools
 }
 
 type resultReasoner interface {
@@ -648,6 +669,9 @@ func (r *routerReasoner) complete(ctx context.Context, model string, req modelro
 		model = "default"
 		req.Model = model
 	}
+	if tools := nativeToolsFrom(ctx); len(tools) > 0 {
+		req.Tools = tools
+	}
 	if cliModel, discovery, targeted, routeErr := r.grokBuildRoute(ctx, model); targeted {
 		if routeErr != nil {
 			return ReasonerResult{}, routeErr
@@ -708,7 +732,7 @@ func (r *routerReasoner) complete(ctx context.Context, model string, req modelro
 		OutputTokens: resp.OutputTokens, CacheReadTokens: resp.CacheReadTokens,
 		CacheWriteTokens:         resp.CacheWriteTokens,
 		EffectiveReasoningEffort: resp.EffectiveReasoningEffort,
-	}}, nil
+	}, ToolCalls: resp.ToolCalls}, nil
 }
 
 type grokBuildDiscoveryError struct {

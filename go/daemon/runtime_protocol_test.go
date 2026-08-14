@@ -38,6 +38,15 @@ func TestRuntimeInitializeNegotiatesMajorAndCapabilities(t *testing.T) {
 	if !ok || watermark["version"] != 1 {
 		t.Fatalf("session.items watermark capability = %#v", caps["session_items_watermark"])
 	}
+	if _, ok := caps["event_replay_tail"]; ok {
+		t.Fatal("zero-value daemon must not advertise event_replay_tail")
+	}
+	d.replayTailV1 = true
+	enabled := d.runtimeCapabilities()
+	tail, ok := enabled["event_replay_tail"].(map[string]any)
+	if !ok || tail["version"] != replayTailVersionV1 || tail["snapshot_event"] != assistantMessageSnapshotType {
+		t.Fatalf("enabled event_replay_tail = %#v", enabled["event_replay_tail"])
+	}
 	bad, _ := json.Marshal(map[string]any{"protocol_version": "2.0.0"})
 	if _, err = d.handleRuntimeInitialize(bad); err == nil {
 		t.Fatal("incompatible major accepted")

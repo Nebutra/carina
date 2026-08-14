@@ -4,7 +4,8 @@ use serde_json::Value;
 
 use crate::i18n::MessageId;
 use crate::rpc::{
-    AssistantMessagePhase, AssistantMessageUpdate, ExecutionLifecycle, SessionItemEvent, WireEvent,
+    AssistantMessagePhase, AssistantMessageUpdate, AssistantTailState, ExecutionLifecycle,
+    SessionItemEvent, WireEvent,
 };
 use crate::tool_projection::{TodoItem, ToolFacts, ToolKind, present as present_tool};
 use crate::{i18n, i18n::Locale};
@@ -267,6 +268,8 @@ struct AssistantStream {
     sequence: u64,
     phase: Option<AssistantMessagePhase>,
     body: String,
+    structured_output: bool,
+    awaiting_canonical: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -528,7 +531,8 @@ impl TranscriptReducer {
             }
             "assistant.message.reset"
             | "assistant.message.delta"
-            | "assistant.message.completed" => self.reduce_assistant_stream(blocks, event),
+            | "assistant.message.completed"
+            | "assistant.message.snapshot" => self.reduce_assistant_stream(blocks, event),
             "ModelResponded" => self.reduce_model_response(blocks, event),
             _ => simple_block_from_event(event)
                 .map(|block| upsert_block(blocks, block))
@@ -711,6 +715,9 @@ impl TranscriptReducer {
         if text.is_empty() {
             return false;
         }
+        if !event.run_id.is_empty() {
+            self.assistant_streams.remove(&event.run_id);
+        }
         let status = display_status(event.projected_status());
         let id = if event.run_id.is_empty() {
             event.stable_id()
@@ -740,6 +747,9 @@ impl TranscriptReducer {
         let Some(update) = event.assistant_message_update() else {
             return false;
         };
+        if let AssistantMessageUpdate::Snapshot { .. } = &update {
+            return self.reduce_assistant_snapshot(blocks, event.run_id, update);
+        }
         let (generation, sequence, phase) = match &update {
             AssistantMessageUpdate::Reset {
                 generation,
@@ -758,6 +768,7 @@ impl TranscriptReducer {
                 phase,
                 ..
             } => (*generation, *sequence, *phase),
+            AssistantMessageUpdate::Snapshot { .. } => unreachable!("snapshot handled above"),
         };
         let stream = self
             .assistant_streams
@@ -767,10 +778,23 @@ impl TranscriptReducer {
             return false;
         }
         if generation > stream.generation {
+            if stream.generation != 0
+                && !matches!(update, AssistantMessageUpdate::Reset { sequence: 1, .. })
+            {
+                return false;
+            }
+            if !matches!(update, AssistantMessageUpdate::Reset { sequence: 1, .. }) && sequence != 1
+            {
+                return false;
+            }
             stream.generation = generation;
             stream.sequence = 0;
             stream.phase = Some(phase);
             stream.body.clear();
+            stream.awaiting_canonical = false;
+        }
+        if stream.awaiting_canonical {
+            return false;
         }
         if stream.phase.is_some_and(|current| current != phase) {
             return false;
@@ -786,6 +810,7 @@ impl TranscriptReducer {
             AssistantMessageUpdate::Reset { .. } => {
                 stream.body.clear();
                 stream.sequence = sequence;
+                stream.awaiting_canonical = false;
                 let id = format!("assistant:{}", event.run_id);
                 blocks.retain(|block| block.id != id);
                 return true;
@@ -794,7 +819,9 @@ impl TranscriptReducer {
             AssistantMessageUpdate::Completed { content, .. } => {
                 stream.body.clear();
                 stream.body.push_str(&content);
+                stream.awaiting_canonical = true;
             }
+            AssistantMessageUpdate::Snapshot { .. } => unreachable!("snapshot handled above"),
         }
         stream.sequence = sequence;
         if stream.body.is_empty() {
@@ -820,6 +847,64 @@ impl TranscriptReducer {
         let mut block = message_block(
             format!("assistant:{}", event.run_id),
             event.run_id,
+            BlockKind::Assistant,
+            "Carina",
+            display,
+            String::new(),
+        );
+        block.assistant_phase = Some(phase);
+        block.layout_revision = generation;
+        upsert_block(blocks, block)
+    }
+
+    fn reduce_assistant_snapshot(
+        &mut self,
+        blocks: &mut Vec<TranscriptBlock>,
+        run_id: String,
+        update: AssistantMessageUpdate,
+    ) -> bool {
+        let AssistantMessageUpdate::Snapshot {
+            generation,
+            sequence,
+            phase,
+            content,
+            structured_output,
+            state,
+            ..
+        } = update
+        else {
+            return false;
+        };
+        let stream = self.assistant_streams.entry(run_id.clone()).or_default();
+        let empty = stream.generation == 0 && stream.sequence == 0 && stream.body.is_empty();
+        if !empty {
+            // Seed only empty stream state. An identical snapshot is
+            // idempotent; a conflicting one is rejected without mutation.
+            return false;
+        }
+        stream.generation = generation;
+        stream.sequence = sequence;
+        stream.phase = Some(phase);
+        stream.body = content;
+        stream.structured_output = structured_output;
+        stream.awaiting_canonical = state == AssistantTailState::AwaitingCanonical;
+        if stream.body.is_empty() {
+            let id = format!("assistant:{run_id}");
+            let before = blocks.len();
+            blocks.retain(|block| block.id != id);
+            return before != blocks.len();
+        }
+        let display = visible_assistant_text_with_mode(&stream.body, !stream.structured_output)
+            .unwrap_or_default();
+        if display.is_empty() {
+            let id = format!("assistant:{run_id}");
+            let before = blocks.len();
+            blocks.retain(|block| block.id != id);
+            return before != blocks.len();
+        }
+        let mut block = message_block(
+            format!("assistant:{run_id}"),
+            run_id,
             BlockKind::Assistant,
             "Carina",
             display,
@@ -4692,6 +4777,163 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
             blocks[0].assistant_phase,
             Some(AssistantMessagePhase::Commentary)
         );
+    }
+
+    #[test]
+    fn assistant_snapshot_seeds_empty_state_and_rejects_conflicts() {
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        assert!(reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "assistant.message.snapshot",
+                json!({
+                    "generation":2,
+                    "sequence":19,
+                    "content":"hello",
+                    "tail_revision":31,
+                    "state":"open"
+                }),
+            ),
+        ));
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].body, "hello");
+        assert_eq!(blocks[0].layout_revision, 2);
+        assert!(!reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "assistant.message.snapshot",
+                json!({
+                    "generation":2,
+                    "sequence":19,
+                    "content":"hello",
+                    "tail_revision":31,
+                    "state":"open"
+                }),
+            ),
+        ));
+        assert!(!reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "assistant.message.snapshot",
+                json!({
+                    "generation":2,
+                    "sequence":19,
+                    "content":"other",
+                    "tail_revision":31,
+                    "state":"open"
+                }),
+            ),
+        ));
+        assert_eq!(blocks[0].body, "hello");
+        assert!(reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "assistant.message.delta",
+                json!({"generation":2,"sequence":20,"delta":" world"}),
+            ),
+        ));
+        assert_eq!(blocks[0].body, "hello world");
+    }
+
+    #[test]
+    fn assistant_snapshot_awaiting_canonical_yields_to_model_response() {
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        assert!(reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "assistant.message.snapshot",
+                json!({
+                    "generation":1,
+                    "sequence":4,
+                    "content":"draft",
+                    "tail_revision":8,
+                    "state":"awaiting_canonical"
+                }),
+            ),
+        ));
+        assert!(!reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "assistant.message.delta",
+                json!({"generation":1,"sequence":5,"delta":" late"}),
+            ),
+        ));
+        assert_eq!(blocks[0].body, "draft");
+        assert!(reducer.reduce_event(
+            &mut blocks,
+            wire("ModelResponded", json!({"text":"canonical final"})),
+        ));
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].body, "canonical final");
+        assert!(!reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "assistant.message.delta",
+                json!({"generation":1,"sequence":5,"delta":"resurrect"}),
+            ),
+        ));
+        assert_eq!(blocks[0].body, "canonical final");
+    }
+
+    #[test]
+    fn assistant_higher_generation_requires_reset_sequence_one() {
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        assert!(reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "assistant.message.delta",
+                json!({"generation":1,"sequence":1,"delta":"first"}),
+            ),
+        ));
+        assert!(!reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "assistant.message.delta",
+                json!({"generation":2,"sequence":1,"delta":"skip reset"}),
+            ),
+        ));
+        assert_eq!(blocks[0].body, "first");
+        assert!(reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "assistant.message.reset",
+                json!({"generation":2,"sequence":1}),
+            ),
+        ));
+        assert!(blocks.iter().all(|block| block.id != "assistant:run-1"));
+        assert!(reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "assistant.message.delta",
+                json!({"generation":2,"sequence":2,"delta":"second"}),
+            ),
+        ));
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].body, "second");
+    }
+
+    #[test]
+    fn assistant_snapshot_hides_structured_output() {
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        assert!(!reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "assistant.message.snapshot",
+                json!({
+                    "generation":1,
+                    "sequence":2,
+                    "content":"{\"tool\":\"read\",\"path\":\"x.rs\"}",
+                    "structured_output":false,
+                    "tail_revision":3,
+                    "state":"open"
+                }),
+            ),
+        ));
+        assert!(blocks.is_empty());
     }
 
     #[test]

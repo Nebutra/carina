@@ -41,6 +41,7 @@ rust-ui-e2e: go rust-ui
 	cargo build --release -p carina-kernel --bin carina-kernel-service
 	./scripts/build-zig-tools.sh
 	bash scripts/test-rust-tui-journey.sh
+	bash scripts/test-rust-tui-installed-reconnect.sh
 
 rust-ui-native-clipboard-e2e: rust-ui
 	bash scripts/test-rust-tui-native-clipboard.sh

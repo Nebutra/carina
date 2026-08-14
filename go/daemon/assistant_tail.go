@@ -11,12 +11,14 @@ const (
 	assistantTailMaxGlobalEntries  = 64
 	assistantTailMaxSessionBytes   = 128 << 20
 	assistantTailMaxGlobalBytes    = 256 << 20
+	assistantTailMaxSeals          = 1024
 )
 
 var (
 	errAssistantTailOwner      = errors.New("assistant tail owner is stale")
 	errAssistantTailTransition = errors.New("invalid assistant tail transition")
 	errAssistantTailOverflow   = errors.New("assistant tail registry overflow")
+	errAssistantTailSealed     = errors.New("assistant tail is sealed")
 )
 
 type assistantTailKey struct {
@@ -68,6 +70,8 @@ type assistantTailRegistry struct {
 	sessionBytes    map[string]int
 	totalBytes      int
 	nextOwnerToken  uint64
+	sealed          map[assistantTailKey]struct{}
+	sealedOrder     []assistantTailKey
 }
 
 func (r *assistantTailRegistry) begin(key assistantTailKey) (assistantTailOwner, error) {
@@ -75,6 +79,9 @@ func (r *assistantTailRegistry) begin(key assistantTailKey) (assistantTailOwner,
 		return assistantTailOwner{}, fmt.Errorf("%w: missing session, run, or phase", errAssistantTailTransition)
 	}
 	r.init()
+	if r.isSealed(key) {
+		return assistantTailOwner{}, errAssistantTailSealed
+	}
 	if _, exists := r.entries[key]; !exists {
 		if r.sessionEntryCount(key.sessionID) >= assistantTailMaxSessionEntries || len(r.entries) >= assistantTailMaxGlobalEntries {
 			return assistantTailOwner{}, errAssistantTailOverflow
@@ -98,29 +105,32 @@ func (r *assistantTailRegistry) publish(
 	sequence uint64,
 	text string,
 	structuredOutput bool,
-) error {
+) (assistantTailSnapshot, error) {
 	r.init()
+	if r.isSealed(owner.key) {
+		return assistantTailSnapshot{}, errAssistantTailSealed
+	}
 	entry := r.entries[owner.key]
 	if entry == nil || owner.token == 0 || entry.ownerToken != owner.token {
-		return errAssistantTailOwner
+		return assistantTailSnapshot{}, errAssistantTailOwner
 	}
 	if generation == 0 || sequence == 0 {
-		return fmt.Errorf("%w: generation and sequence must be positive", errAssistantTailTransition)
+		return assistantTailSnapshot{}, fmt.Errorf("%w: generation and sequence must be positive", errAssistantTailTransition)
 	}
 	if generation > ^uint64(0)-owner.generationBase {
 		r.removeEntry(owner.key)
-		return fmt.Errorf("%w: generation overflow", errAssistantTailOverflow)
+		return assistantTailSnapshot{}, fmt.Errorf("%w: generation overflow", errAssistantTailOverflow)
 	}
 	generation += owner.generationBase
 	if entry.state == assistantTailAwaitingCanonical {
-		return fmt.Errorf("%w: completed tail awaits canonical retirement", errAssistantTailTransition)
+		return assistantTailSnapshot{}, fmt.Errorf("%w: completed tail awaits canonical retirement", errAssistantTailTransition)
 	}
 	if entry.generation == 0 || generation > entry.generation {
 		if kind != "reset" || sequence != 1 {
-			return fmt.Errorf("%w: a generation must start with reset sequence 1", errAssistantTailTransition)
+			return assistantTailSnapshot{}, fmt.Errorf("%w: a generation must start with reset sequence 1", errAssistantTailTransition)
 		}
 	} else if generation < entry.generation || sequence != entry.sequence+1 {
-		return fmt.Errorf("%w: stale, duplicate, or gapped update", errAssistantTailTransition)
+		return assistantTailSnapshot{}, fmt.Errorf("%w: stale, duplicate, or gapped update", errAssistantTailTransition)
 	}
 
 	oldBytes := len(entry.body)
@@ -133,16 +143,16 @@ func (r *assistantTailRegistry) publish(
 	case "completed":
 		newBody = text
 	default:
-		return fmt.Errorf("%w: unknown update kind %q", errAssistantTailTransition, kind)
+		return assistantTailSnapshot{}, fmt.Errorf("%w: unknown update kind %q", errAssistantTailTransition, kind)
 	}
 	if len(newBody) > maxProviderResponseBytes {
 		r.removeEntry(owner.key)
-		return fmt.Errorf("%w: assistant body exceeds provider response bound", errAssistantTailOverflow)
+		return assistantTailSnapshot{}, fmt.Errorf("%w: assistant body exceeds provider response bound", errAssistantTailOverflow)
 	}
 	deltaBytes := len(newBody) - oldBytes
 	if r.sessionBytes[owner.key.sessionID]+deltaBytes > assistantTailMaxSessionBytes || r.totalBytes+deltaBytes > assistantTailMaxGlobalBytes {
 		r.removeEntry(owner.key)
-		return errAssistantTailOverflow
+		return assistantTailSnapshot{}, errAssistantTailOverflow
 	}
 
 	entry.generation = generation
@@ -156,7 +166,7 @@ func (r *assistantTailRegistry) publish(
 	entry.revision = r.nextRevision(owner.key.sessionID)
 	r.sessionBytes[owner.key.sessionID] += deltaBytes
 	r.totalBytes += deltaBytes
-	return nil
+	return snapshotFromEntry(entry), nil
 }
 
 func (r *assistantTailRegistry) revoke(owner assistantTailOwner) bool {
@@ -178,6 +188,43 @@ func (r *assistantTailRegistry) retire(key assistantTailKey) bool {
 	return true
 }
 
+func (r *assistantTailRegistry) seal(key assistantTailKey) {
+	r.init()
+	r.removeEntry(key)
+	if _, exists := r.sealed[key]; exists {
+		return
+	}
+	if len(r.sealedOrder) >= assistantTailMaxSeals {
+		oldest := r.sealedOrder[0]
+		r.sealedOrder = append([]assistantTailKey(nil), r.sealedOrder[1:]...)
+		delete(r.sealed, oldest)
+	}
+	r.sealed[key] = struct{}{}
+	r.sealedOrder = append(r.sealedOrder, key)
+}
+
+func (r *assistantTailRegistry) isSealed(key assistantTailKey) bool {
+	if r == nil || r.sealed == nil {
+		return false
+	}
+	_, ok := r.sealed[key]
+	return ok
+}
+
+func snapshotFromEntry(entry *assistantTailEntry) assistantTailSnapshot {
+	return assistantTailSnapshot{
+		SessionID:        entry.key.sessionID,
+		RunID:            entry.key.runID,
+		Phase:            entry.key.phase,
+		Generation:       entry.generation,
+		Sequence:         entry.sequence,
+		Content:          entry.body,
+		StructuredOutput: entry.structuredOutput,
+		State:            entry.state,
+		Revision:         entry.revision,
+	}
+}
+
 func (r *assistantTailRegistry) capture(sessionID string) ([]assistantTailSnapshot, uint64) {
 	r.init()
 	snapshots := make([]assistantTailSnapshot, 0, r.sessionEntryCount(sessionID))
@@ -185,11 +232,7 @@ func (r *assistantTailRegistry) capture(sessionID string) ([]assistantTailSnapsh
 		if key.sessionID != sessionID || entry.generation == 0 {
 			continue
 		}
-		snapshots = append(snapshots, assistantTailSnapshot{
-			SessionID: key.sessionID, RunID: key.runID, Phase: key.phase,
-			Generation: entry.generation, Sequence: entry.sequence, Content: entry.body,
-			StructuredOutput: entry.structuredOutput, State: entry.state, Revision: entry.revision,
-		})
+		snapshots = append(snapshots, snapshotFromEntry(entry))
 	}
 	sort.Slice(snapshots, func(i, j int) bool {
 		if snapshots[i].Revision != snapshots[j].Revision {
@@ -215,6 +258,9 @@ func (r *assistantTailRegistry) init() {
 	}
 	if r.sessionBytes == nil {
 		r.sessionBytes = make(map[string]int)
+	}
+	if r.sealed == nil {
+		r.sealed = make(map[assistantTailKey]struct{})
 	}
 }
 

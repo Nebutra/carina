@@ -3,12 +3,13 @@
 Carina's TUI keeps task recovery and session navigation as separate commands:
 
 - `/new` creates a session for the current workspace and switches to it.
-- `/resume` opens the historical session picker. `/resume <session_id>` resumes
-  and switches directly.
-- `/fork [task_id]` creates a child session from a completed task checkpoint,
-  persists the parent/task/turn lineage, and switches to the child.
-- `/task-resume [task_id]` resumes a task restored from a checkpoint. The older
-  `/resume task_*` form remains a compatibility alias and reports its new name.
+  It refuses while a retained run, governance overlay, or unsent draft is
+  present.
+- `/resume` opens the historical session picker. A paused current run resumes
+  in place. There is no `/task-resume` verb; paused recovery stays on `/resume`.
+- `/fork` creates a child session from the latest completed task checkpoint
+  (`session.fork`), persists the parent/task/turn lineage, and switches to the
+  child. It refuses extra arguments and refuses while a run is live or paused.
 
 Bare `carina` renders its connection state before it starts or attaches the
 current workspace runtime. Session selection stays inside that workspace's
@@ -41,6 +42,14 @@ Call and event-stream reconnects re-read the persisted runtime spec but accept
 it only when the stable workspace and runtime IDs are unchanged. Every new
 connection repeats the identity handshake. A process restart may change the
 epoch; a socket that proves a different workspace or runtime fails closed.
+
+When `event_replay_tail` v1 is advertised, reconnect reads a watermarked
+`session.items` snapshot at durable cursor `H`, then attaches a dedicated
+event stream with `since=H`. Catch-up frames are classified as durable
+replay, a transient assistant snapshot, or buffered live. The TUI hydrates
+items plus catch-up off-side and swaps the projection once, then restores
+`ReadingStateEnvelopeV1`. A legacy daemon without the capability keeps the
+previously observed durable cursor instead of resetting it to zero.
 Closing the TUI detaches the client and does not cancel background work. The
 workspace runtime exits only after there are no connections or durable
 obligations for the configured idle grace period.

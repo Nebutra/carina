@@ -1,5 +1,7 @@
+mod event_stream;
 mod types;
 
+pub use event_stream::{EventStreamAttached, ReplayTailAttachRequest, attach_replay_tail_v1};
 pub use types::*;
 
 use std::collections::BTreeMap;
@@ -58,15 +60,23 @@ pub struct ReceivedEvent {
     pub event: WireEvent,
     pub received_at: Instant,
     pub replayed: bool,
+    pub delivery: Option<CatchUpDelivery>,
 }
 
 impl ReceivedEvent {
     pub fn feedback_milestone(&self) -> Option<FeedbackMilestone> {
-        if self.replayed {
+        if self.replayed || matches!(self.delivery, Some(CatchUpDelivery::TransientSnapshot)) {
             None
         } else {
             self.event.feedback_milestone()
         }
+    }
+
+    pub fn durable_raw_cursor(&self) -> Option<usize> {
+        if matches!(self.delivery, Some(CatchUpDelivery::TransientSnapshot)) {
+            return None;
+        }
+        (self.event.raw_cursor > 0).then_some(self.event.raw_cursor)
     }
 }
 
@@ -852,6 +862,61 @@ impl Client {
         )
     }
 
+    pub fn compact_checkpoint(
+        &mut self,
+        session_id: &str,
+    ) -> Result<CheckpointCompactResult, RpcError> {
+        self.call(
+            "session.checkpoint.compact",
+            &json!({"session_id": session_id}),
+        )
+    }
+
+    pub fn goal_get(&mut self, session_id: &str) -> Result<GoalGetResult, RpcError> {
+        self.call("goal.get", &json!({"session_id": session_id}))
+    }
+
+    pub fn goal_set(&mut self, session_id: &str, objective: &str) -> Result<SessionGoal, RpcError> {
+        self.call(
+            "goal.set",
+            &json!({"session_id": session_id, "objective": objective}),
+        )
+    }
+
+    pub fn goal_clear(&mut self, session_id: &str) -> Result<Value, RpcError> {
+        self.call("goal.clear", &json!({"session_id": session_id}))
+    }
+
+    pub fn goal_pause(&mut self, session_id: &str) -> Result<SessionGoal, RpcError> {
+        self.call("goal.pause", &json!({"session_id": session_id}))
+    }
+
+    pub fn goal_resume(&mut self, session_id: &str) -> Result<SessionGoal, RpcError> {
+        self.call("goal.resume", &json!({"session_id": session_id}))
+    }
+
+    pub fn goal_complete(&mut self, session_id: &str) -> Result<SessionGoal, RpcError> {
+        self.call("goal.complete", &json!({"session_id": session_id}))
+    }
+
+    pub fn goal_continue(&mut self, session_id: &str) -> Result<ExecutionRun, RpcError> {
+        self.call("goal.continue", &json!({"session_id": session_id}))
+    }
+
+    pub fn fork_session_latest(
+        &mut self,
+        session_id: &str,
+        client_fork_id: &str,
+    ) -> Result<Session, RpcError> {
+        self.call(
+            "session.fork",
+            &json!({
+                "session_id": session_id,
+                "client_fork_id": client_fork_id,
+            }),
+        )
+    }
+
     pub fn fork_session(
         &mut self,
         session_id: &str,
@@ -954,9 +1019,38 @@ pub fn spawn_event_stream(
     since: usize,
     sender: Sender<Result<ReceivedEvent, RpcError>>,
 ) {
+    spawn_event_stream_gated(socket, session_id, since, None, sender);
+}
+
+pub fn spawn_event_stream_gated(
+    socket: PathBuf,
+    session_id: String,
+    since: usize,
+    replay_tail: Option<ReplayTailAttachRequest>,
+    sender: Sender<Result<ReceivedEvent, RpcError>>,
+) {
     std::thread::spawn(move || {
-        let result = stream_events(&socket, &session_id, since, &sender);
-        if let Err(error) = result {
+        if let Some(request) = replay_tail {
+            match attach_replay_tail_v1(&socket, &request) {
+                Ok(attached) => {
+                    for received in attached.catch_up {
+                        if sender.send(Ok(received)).is_err() {
+                            return;
+                        }
+                    }
+                    for received in attached.live {
+                        if sender.send(received).is_err() {
+                            return;
+                        }
+                    }
+                }
+                Err(error) => {
+                    let _ = sender.send(Err(error));
+                }
+            }
+            return;
+        }
+        if let Err(error) = stream_events(&socket, &session_id, since, &sender) {
             let _ = sender.send(Err(error));
         }
     });
@@ -998,6 +1092,7 @@ fn stream_events(
                     event: *event,
                     received_at: Instant::now(),
                     replayed: false,
+                    delivery: None,
                 };
                 if subscribed {
                     if sender.send(Ok(received)).is_err() {
@@ -1007,7 +1102,7 @@ fn stream_events(
                     catch_up.push(received);
                 }
             }
-            EventStreamFrame::Subscribed { replayed } => {
+            EventStreamFrame::Subscribed { replayed, .. } => {
                 mark_replayed_prefix(&mut catch_up, replayed);
                 for received in catch_up.drain(..) {
                     if sender.send(Ok(received)).is_err() {
@@ -1023,13 +1118,16 @@ fn stream_events(
 }
 
 #[derive(Debug)]
-enum EventStreamFrame {
+pub(crate) enum EventStreamFrame {
     Event(Box<WireEvent>),
-    Subscribed { replayed: usize },
+    Subscribed {
+        replayed: usize,
+        boundary: Option<ReplayBoundaryV1>,
+    },
     Ignored,
 }
 
-fn decode_event_frame(line: &str) -> Result<EventStreamFrame, RpcError> {
+pub(crate) fn decode_event_frame(line: &str) -> Result<EventStreamFrame, RpcError> {
     let frame: Value =
         serde_json::from_str(line).map_err(|error| RpcError::EventFrame(error.to_string()))?;
     if frame.get("method").and_then(Value::as_str) == Some("event") {
@@ -1048,12 +1146,16 @@ fn decode_event_frame(line: &str) -> Result<EventStreamFrame, RpcError> {
                 .unwrap_or("event subscription rejected");
             return Err(RpcError::EventFrame(message.to_owned()));
         }
-        let replayed = frame
-            .get("result")
+        let result = frame.get("result");
+        let replayed = result
             .and_then(|result| result.get("replayed"))
             .and_then(Value::as_u64)
             .map_or(usize::MAX, |value| value.min(usize::MAX as u64) as usize);
-        return Ok(EventStreamFrame::Subscribed { replayed });
+        let boundary = result
+            .and_then(|result| result.get("replay_boundary"))
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok());
+        return Ok(EventStreamFrame::Subscribed { replayed, boundary });
     }
     Ok(EventStreamFrame::Ignored)
 }
@@ -2045,7 +2147,14 @@ mod tests {
         assert!(matches!(
             decode_event_frame(r#"{"jsonrpc":"2.0","id":1,"result":{"replayed":1,"cursor":2}}"#)
                 .unwrap(),
-            EventStreamFrame::Subscribed { replayed: 1 }
+            EventStreamFrame::Subscribed { replayed: 1, .. }
+        ));
+        assert!(matches!(
+            decode_event_frame(
+                r#"{"jsonrpc":"2.0","id":1,"result":{"replayed":0,"cursor":4,"replay_boundary":{"version":1}}}"#
+            )
+            .unwrap(),
+            EventStreamFrame::Subscribed { replayed: 0, .. }
         ));
 
         let received_at = Instant::now();
@@ -2057,6 +2166,7 @@ mod tests {
                 },
                 received_at,
                 replayed: false,
+                delivery: None,
             },
             ReceivedEvent {
                 event: WireEvent {
@@ -2069,6 +2179,7 @@ mod tests {
                 },
                 received_at,
                 replayed: false,
+                delivery: None,
             },
         ];
         mark_replayed_prefix(&mut events, 1);
@@ -2083,6 +2194,63 @@ mod tests {
                 key: "call_live".into(),
             })
         );
+    }
+
+    #[test]
+    fn event_replay_tail_capability_is_off_unless_version_one() {
+        let missing: RuntimeCapabilities = serde_json::from_value(json!({})).unwrap();
+        assert!(!missing.event_replay_tail_v1());
+        let enabled: RuntimeCapabilities = serde_json::from_value(json!({
+            "event_replay_tail": {
+                "version": 1,
+                "snapshot_event": "assistant.message.snapshot",
+                "durable_cursor": "raw_cursor"
+            }
+        }))
+        .unwrap();
+        assert!(enabled.event_replay_tail_v1());
+    }
+
+    #[test]
+    fn replay_boundary_and_snapshot_validation_reject_impossible_prefixes() {
+        let boundary = ReplayBoundaryV1 {
+            version: 1,
+            session_id: "sess".into(),
+            runtime_id: "rt".into(),
+            runtime_epoch: "ep".into(),
+            runtime_process_epoch: 3,
+            requested_since: 4,
+            durable_cursor: 7,
+            durable_replayed: 3,
+            transient_tail_revision: 8,
+            transient_snapshots: 1,
+            buffered_live: 2,
+        };
+        assert!(boundary.validate().is_ok());
+        let snapshot = AssistantMessageSnapshot {
+            r#type: "assistant.message.snapshot".into(),
+            session_id: "sess".into(),
+            run_id: "run".into(),
+            actor: "model".into(),
+            payload: AssistantMessageSnapshotPayload {
+                generation: 1,
+                sequence: 2,
+                phase: "final_answer".into(),
+                content: "hello".into(),
+                tail_revision: 8,
+                state: "open".into(),
+                ..AssistantMessageSnapshotPayload::default()
+            },
+        };
+        assert!(snapshot.validate(&boundary).is_ok());
+        let mut newer = snapshot.clone();
+        newer.payload.tail_revision = 9;
+        assert!(newer.validate(&boundary).is_err());
+        let mut stale = boundary.clone();
+        stale.durable_cursor = 3;
+        assert!(stale.validate().is_err());
+        assert!(boundary.validate_attachment(1, 3, 2).is_ok());
+        assert!(boundary.validate_attachment(0, 3, 2).is_err());
     }
 
     #[test]

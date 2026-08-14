@@ -6,7 +6,8 @@ use crate::glyphs::GlyphPreference;
 use crate::i18n::MessageId;
 use crate::product_projection::ProductProjection;
 use crate::rpc::{
-    AgentRecap, ContextSummary, GovernanceId, QuestionOption, SessionItemEvent, WireEvent,
+    AgentRecap, ContextSummary, GovernanceId, QuestionOption, SessionGoal, SessionItemEvent,
+    WireEvent,
 };
 
 #[derive(Debug, Clone)]
@@ -18,6 +19,7 @@ pub enum Overlay {
     Settings(SettingsOverlay),
     Status(StatusOverlay),
     Context(ContextSummary),
+    Goal(GoalOverlay),
     Help(HelpOverlay),
     Doctor(crate::doctor::DoctorScreen),
     Agents(Box<AgentDashboardOverlay>),
@@ -128,6 +130,7 @@ impl Overlay {
             | Self::Settings(_)
             | Self::Status(_)
             | Self::Context(_)
+            | Self::Goal(_)
             | Self::Help(_)
             | Self::Doctor(_)
             | Self::Agents(_)
@@ -219,6 +222,11 @@ pub struct ApprovalOverlay {
     pub resolving: bool,
     pub error: String,
     pub scroll: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GoalOverlay {
+    pub goal: Option<SessionGoal>,
 }
 
 #[derive(Debug, Clone)]

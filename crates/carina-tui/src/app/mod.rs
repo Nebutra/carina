@@ -1,3 +1,4 @@
+mod reading_state;
 mod render;
 
 use std::collections::{HashMap, VecDeque};
@@ -72,7 +73,8 @@ use crate::product_projection::ProductProjection;
 use crate::rpc::{
     Client, EffectiveConfig, ExecutionLifecycle, ExecutionLifecycleReducer,
     ExecutionLifecycleReduction, ExecutionRun, GovernanceId, Model, ModelInventory, ReceivedEvent,
-    RpcError, RuntimeInitialize, Session, SessionItemEvent, WireEvent, spawn_event_stream,
+    ReplayBoundaryV1, ReplayTailAttachRequest, RpcError, RuntimeInitialize, Session,
+    SessionItemEvent, WireEvent, attach_replay_tail_v1, spawn_event_stream,
 };
 use crate::session_browser::{ConversationImportStage, SessionBrowserState, SessionScope};
 use crate::sync_output::SyncOutputSupport;
@@ -184,6 +186,8 @@ pub struct ScreenModeHandoff {
     transcript_follow_bottom: bool,
     #[serde(default)]
     transcript_anchor: Option<TranscriptScrollAnchor>,
+    #[serde(default)]
+    reading_state: Option<reading_state::ReadingStateEnvelopeV1>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -192,6 +196,37 @@ struct TranscriptScrollAnchor {
     block_index: usize,
     logical_line: usize,
     sub_rows: usize,
+    #[serde(default)]
+    position_hint: usize,
+    #[serde(default)]
+    previous_block_id: Option<String>,
+    #[serde(default)]
+    next_block_id: Option<String>,
+}
+
+impl TranscriptScrollAnchor {
+    fn from_logical(anchor: reading_state::LogicalTranscriptAnchorV1, block_index: usize) -> Self {
+        Self {
+            block_id: anchor.block_id,
+            block_index,
+            logical_line: anchor.logical_line,
+            sub_rows: anchor.wrapped_sub_row,
+            position_hint: anchor.position_hint,
+            previous_block_id: anchor.previous_block_id,
+            next_block_id: anchor.next_block_id,
+        }
+    }
+
+    fn to_logical(&self) -> reading_state::LogicalTranscriptAnchorV1 {
+        reading_state::LogicalTranscriptAnchorV1 {
+            block_id: self.block_id.clone(),
+            logical_line: self.logical_line,
+            wrapped_sub_row: self.sub_rows,
+            position_hint: self.position_hint,
+            previous_block_id: self.previous_block_id.clone(),
+            next_block_id: self.next_block_id.clone(),
+        }
+    }
 }
 
 pub fn read_screen_handoff(path: &Path) -> Result<ScreenModeHandoff> {
@@ -505,6 +540,10 @@ struct RuntimeReconnectOutcome {
     prompt_history: Vec<String>,
     prompt_history_unavailable: bool,
     security_context: Option<EffectiveConfig>,
+    watermark: usize,
+    catch_up: Vec<ReceivedEvent>,
+    live: Option<std::sync::mpsc::Receiver<Result<ReceivedEvent, RpcError>>>,
+    boundary: Option<ReplayBoundaryV1>,
 }
 
 #[derive(Clone)]
@@ -1444,6 +1483,11 @@ impl App {
                 self.persisted_prompt_history = outcome.prompt_history;
                 self.persisted_prompt_history_unavailable = outcome.prompt_history_unavailable;
                 self.apply_open_session_state(outcome.session, outcome.items, outcome.active_run);
+                if target_id == "new" {
+                    self.notice = Notice::localized(MessageId::ConversationCreated);
+                } else if target_id == "fork" {
+                    self.notice = Notice::localized(MessageId::ConversationForked);
+                }
             }
             Err(error) => self.session_browser.fail_load(
                 generation,
@@ -1707,28 +1751,24 @@ impl App {
         self.reset_transcript_viewport();
         let handoff = self.screen_handoff.take();
         if let Some(handoff) = handoff {
-            let stamps_match = self
-                .scrollback
-                .restore_committed_prefix(&self.blocks, handoff.committed_scrollback)
-                .is_ok();
             let governance_matches =
                 hydrated_overlays.governance_ids() == handoff.pending_governance;
-            let selection = handoff
-                .selected_block_id
-                .as_deref()
-                .map(|id| self.blocks.iter().position(|block| block.id == id));
-            let selection_matches = selection.as_ref().is_none_or(Option::is_some);
-            self.screen_handoff_failed = handoff.session_id != session.session_id
-                || !stamps_match
-                || !governance_matches
-                || !selection_matches;
+            self.screen_handoff_failed =
+                handoff.session_id != session.session_id || !governance_matches;
             if !self.screen_handoff_failed {
-                self.history_selected = selection.flatten();
-                self.transcript_scroll = handoff.transcript_scroll;
-                self.transcript_follow_bottom = handoff.transcript_follow_bottom;
-                self.transcript_anchor = handoff.transcript_anchor;
-            } else {
-                self.scrollback.reset();
+                if let Some(envelope) = handoff.reading_state.as_ref() {
+                    if self
+                        .apply_reading_envelope(envelope, &session.session_id)
+                        .is_err()
+                    {
+                        self.screen_handoff_failed = true;
+                    }
+                } else {
+                    self.transcript_scroll = handoff.transcript_scroll;
+                    self.transcript_follow_bottom = handoff.transcript_follow_bottom;
+                }
+            }
+            if self.screen_handoff_failed {
                 self.outcome = Outcome::Degraded;
             }
         }
@@ -1986,15 +2026,22 @@ impl App {
         let outcome = match result {
             Ok(outcome) => outcome,
             Err(_) => {
-                self.notice = Notice::localized(MessageId::RuntimeUnavailable);
-                let tx = self.async_tx.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(Duration::from_millis(500));
-                    let _ = tx.send(AsyncMessage::Reconnect { generation });
-                });
+                self.retry_runtime_reconnect(generation);
                 return;
             }
         };
+        if let Some(boundary) = outcome.boundary.as_ref()
+            && validate_reconnect_boundary(
+                session_id,
+                &outcome.runtime.runtime,
+                outcome.watermark,
+                boundary,
+            )
+            .is_err()
+        {
+            self.retry_runtime_reconnect(generation);
+            return;
+        }
         let RuntimeReconnectOutcome {
             rpc,
             runtime,
@@ -2006,7 +2053,13 @@ impl App {
             prompt_history,
             prompt_history_unavailable,
             security_context,
+            watermark,
+            catch_up,
+            live,
+            boundary,
         } = *outcome;
+        let reading = self.capture_reading_envelope();
+        let (reducer, blocks, catch_up_cursor) = hydrate_reconnect_blocks(items.clone(), catch_up);
         sort_sessions_by_recency(&mut sessions);
         self.rpc = rpc;
         self.runtime = runtime;
@@ -2014,12 +2067,17 @@ impl App {
         self.sessions = sessions;
         self.models = self.inventory.available_models();
         self.sync_selection_from_session(&session);
-        self.tool_disclosure_overrides.clear();
         self.tool_artifact_refs = tool_artifact_refs_from_items(&items);
         self.tool_artifact_loads.clear();
-        self.blocks = self.transcript_reducer.hydrate(items);
-        self.scrollback.reset();
+        self.transcript_reducer = reducer;
+        self.blocks = blocks;
         self.transcript_stale = false;
+        self.event_cursor = reconnect_event_cursor(
+            self.event_cursor,
+            watermark,
+            catch_up_cursor,
+            boundary.is_some(),
+        );
         self.persisted_prompt_history = prompt_history;
         self.persisted_prompt_history_unavailable = prompt_history_unavailable;
         self.security_context = security_context;
@@ -2043,9 +2101,50 @@ impl App {
         };
         self.seed_execution_lifecycle(&session.latest_run_id, &session.execution_status);
         self.command_registry_session.clear();
+        let reading_failed = reading.as_ref().is_some_and(|envelope| {
+            self.apply_reading_envelope(envelope, &session.session_id)
+                .is_err()
+        });
         self.remember_session(session);
         self.notice.clear();
-        self.start_event_stream();
+        if reading_failed {
+            self.notice = Notice::localized(MessageId::ScreenModeHandoffRejected);
+        }
+        if let Some(live) = live {
+            self.adopt_event_stream(generation, live);
+        } else {
+            self.start_event_stream();
+        }
+    }
+
+    fn retry_runtime_reconnect(&mut self, generation: u64) {
+        self.notice = Notice::localized(MessageId::RuntimeUnavailable);
+        let tx = self.async_tx.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(500));
+            let _ = tx.send(AsyncMessage::Reconnect { generation });
+        });
+    }
+
+    fn adopt_event_stream(
+        &mut self,
+        generation: u64,
+        live: std::sync::mpsc::Receiver<Result<ReceivedEvent, RpcError>>,
+    ) {
+        let tx = self.async_tx.clone();
+        std::thread::spawn(move || {
+            for event in live {
+                if tx
+                    .send(AsyncMessage::Event {
+                        generation,
+                        value: Box::new(event),
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
     }
 
     fn select_locale(&mut self) {
@@ -2754,10 +2853,12 @@ impl App {
                     match *value {
                         Ok(received) => {
                             let feedback_milestone = received.feedback_milestone();
+                            if let Some(cursor) = received.durable_raw_cursor() {
+                                self.event_cursor = self.event_cursor.max(cursor);
+                            }
                             let ReceivedEvent {
                                 event, received_at, ..
                             } = received;
-                            self.event_cursor = self.event_cursor.max(event.raw_cursor);
                             if event.kind == "session.model.preference.changed" {
                                 if event.session_id
                                     == self
@@ -4965,11 +5066,14 @@ impl App {
     }
 
     fn handle_slash_command(&mut self, prompt: &str) -> Option<bool> {
-        let command = command::lookup(prompt)?;
-        if let Some(reason) =
-            command::command_unavailable_reason(command, self.active_run_id.is_some())
+        let (command, tail) = command::resolve_operator_input(prompt)?;
+        if let Some(reason) = command::command_unavailable_reason(command, self.has_retained_run())
         {
             self.notice = Notice::localized(reason);
+            return Some(false);
+        }
+        if tail.is_some() && !command::accepts_arguments(command.id) {
+            self.notice = Notice::localized(MessageId::CommandArgumentsNotAccepted);
             return Some(false);
         }
         self.remember_command_use(command::operator_id(command.id));
@@ -5022,6 +5126,10 @@ impl App {
                     self.open_session_browser();
                 }
             }
+            CommandId::New => self.start_new_conversation(),
+            CommandId::Fork => self.fork_current_conversation(),
+            CommandId::Compact => self.compact_current_checkpoint(),
+            CommandId::Goal => self.handle_goal_command(tail.unwrap_or("")),
             CommandId::Cancel => {
                 if let Some(run_id) = self.retained_run_id().map(str::to_owned) {
                     self.cancel_execution(&run_id);
@@ -5122,6 +5230,143 @@ impl App {
             self.notice.clear();
         } else {
             self.notice = Notice::localized(MessageId::PlanReviewUnavailable);
+        }
+    }
+
+    fn conversation_switch_blocked(&mut self) -> bool {
+        if self.has_retained_run() {
+            self.notice = Notice::localized(MessageId::HistoryBusy);
+            return true;
+        }
+        if self.overlays.active().is_some_and(Overlay::is_governance) {
+            self.notice = Notice::localized(MessageId::HistoryBusy);
+            return true;
+        }
+        if !self.composer.text().trim().is_empty() {
+            self.notice = Notice::localized(MessageId::CommandRequiresIdleComposer);
+            return true;
+        }
+        false
+    }
+
+    fn start_new_conversation(&mut self) {
+        if self.conversation_switch_blocked() {
+            return;
+        }
+        self.apply_action(Action::CreateSession);
+    }
+
+    fn fork_current_conversation(&mut self) {
+        if self.conversation_switch_blocked() {
+            return;
+        }
+        let Some(source_session) = self
+            .active_session
+            .as_ref()
+            .map(|session| session.session_id.clone())
+        else {
+            self.notice = Notice::localized(MessageId::ModeConversationRequired);
+            return;
+        };
+        let target_id = "fork".to_owned();
+        let generation = self.session_browser.begin_load(target_id.clone());
+        let client_fork_id = operation_id("operator-fork");
+        let socket = self.options.socket.clone();
+        let tx = self.async_tx.clone();
+        self.notice = Notice::localized(MessageId::HistoryBranchCreating);
+        std::thread::spawn(move || {
+            let result = fork_latest_and_load(&socket, &source_session, &client_fork_id);
+            let _ = tx.send(AsyncMessage::SessionLoaded {
+                generation,
+                target_id,
+                result,
+            });
+        });
+    }
+
+    fn compact_current_checkpoint(&mut self) {
+        let Some(session_id) = self
+            .active_session
+            .as_ref()
+            .map(|session| session.session_id.clone())
+        else {
+            self.notice = Notice::localized(MessageId::ModeConversationRequired);
+            return;
+        };
+        match self.rpc.compact_checkpoint(&session_id) {
+            Ok(result) if result.compacted => {
+                self.notice = Notice::localized(MessageId::Compacted);
+            }
+            Ok(result) => {
+                let reason = if result.reason.trim().is_empty() {
+                    "not compacted".to_owned()
+                } else {
+                    result.reason
+                };
+                self.notice =
+                    Notice::localized_with(MessageId::CompactUnavailable, [("error", reason)]);
+            }
+            Err(error) => {
+                self.notice = Notice::localized_with(
+                    MessageId::CompactUnavailable,
+                    [("error", error.to_string())],
+                );
+            }
+        }
+        self.request_context_summary();
+        self.overlays.replace(Overlay::Context(
+            self.context_summary.clone().unwrap_or_default(),
+        ));
+    }
+
+    fn handle_goal_command(&mut self, tail: &str) {
+        let Some(session_id) = self
+            .active_session
+            .as_ref()
+            .map(|session| session.session_id.clone())
+        else {
+            self.notice = Notice::localized(MessageId::ModeConversationRequired);
+            return;
+        };
+        let verb = tail.split_whitespace().next().unwrap_or("");
+        let result = match verb {
+            "" => self.rpc.goal_get(&session_id).map(|got| got.goal),
+            "clear" if tail.trim() == "clear" => self.rpc.goal_clear(&session_id).map(|_| None),
+            "pause" if tail.trim() == "pause" => self.rpc.goal_pause(&session_id).map(Some),
+            "resume" if tail.trim() == "resume" => self.rpc.goal_resume(&session_id).map(Some),
+            "complete" if tail.trim() == "complete" => {
+                self.rpc.goal_complete(&session_id).map(Some)
+            }
+            "continue" if tail.trim() == "continue" => match self.rpc.goal_continue(&session_id) {
+                Ok(_) => {
+                    self.notice = Notice::localized(MessageId::GoalContinued);
+                    self.rpc.goal_get(&session_id).map(|got| got.goal)
+                }
+                Err(error) => Err(error),
+            },
+            _ => self.rpc.goal_set(&session_id, tail).map(Some),
+        };
+        match result {
+            Ok(goal) => {
+                if verb != "continue" {
+                    self.notice = Notice::localized(match verb {
+                        "" => MessageId::GoalTitle,
+                        "clear" => MessageId::GoalCleared,
+                        "pause" => MessageId::GoalPaused,
+                        "resume" => MessageId::GoalResumed,
+                        "complete" => MessageId::GoalCompleted,
+                        _ => MessageId::GoalSet,
+                    });
+                }
+                self.overlays
+                    .replace(Overlay::Goal(crate::overlay::GoalOverlay { goal }));
+            }
+            Err(error) => {
+                self.notice = Notice::localized_with(
+                    MessageId::GoalUnavailable,
+                    [("error", error.to_string())],
+                );
+            }
         }
     }
 
@@ -5634,6 +5879,12 @@ impl App {
             },
             Some(Overlay::Context(_)) => match key.code {
                 KeyCode::Char('r') => self.request_context_summary(),
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => {
+                    deferred = Some(Action::CloseOverlay)
+                }
+                _ => {}
+            },
+            Some(Overlay::Goal(_)) => match key.code {
                 KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => {
                     deferred = Some(Action::CloseOverlay)
                 }
@@ -6514,6 +6765,49 @@ impl App {
         if conversation_ready && !retained_run {
             self.notice = Notice::localized(MessageId::HistoryBranched);
         }
+    }
+
+    fn capture_reading_envelope(&self) -> Option<reading_state::ReadingStateEnvelopeV1> {
+        let session_id = self.active_session.as_ref()?.session_id.clone();
+        Some(reading_state::capture_reading_state(
+            &session_id,
+            &self.blocks,
+            self.history_selected,
+            &self.tool_disclosure_overrides,
+            self.transcript_follow_bottom,
+            self.transcript_anchor
+                .as_ref()
+                .map(TranscriptScrollAnchor::to_logical),
+            self.scrollback.committed_snapshot(),
+        ))
+    }
+
+    fn apply_reading_envelope(
+        &mut self,
+        envelope: &reading_state::ReadingStateEnvelopeV1,
+        session_id: &str,
+    ) -> Result<(), reading_state::ReadingStateError> {
+        let restored = reading_state::restore_reading_state(
+            envelope,
+            session_id,
+            &self.blocks,
+            &mut self.scrollback,
+        )?;
+        self.tool_disclosure_overrides = restored.disclosure_overrides.into_iter().collect();
+        self.history_selected = restored.selected_index;
+        self.transcript_follow_bottom = restored.follow_bottom;
+        self.transcript_anchor = restored.top_visible.map(|anchor| {
+            let index = self
+                .blocks
+                .iter()
+                .position(|block| block.id == anchor.block_id)
+                .unwrap_or(0);
+            TranscriptScrollAnchor::from_logical(anchor, index)
+        });
+        if restored.follow_bottom {
+            self.transcript_scroll = 0;
+        }
+        Ok(())
     }
 
     fn reset_transcript_viewport(&mut self) {
@@ -7942,12 +8236,13 @@ fn reconnect_runtime_and_session(
         .config_inventory(session_id)
         .ok()
         .map(|config| config.effective);
-    let items = rpc.items(session_id).map_err(|error| error.to_string())?;
     let active_run = load_active_run(&mut rpc, &session);
     let (prompt_history, prompt_history_unavailable) = match rpc.prompt_history(session_id, 200) {
         Ok(history) => (history.entries, false),
         Err(_) => (Vec::new(), true),
     };
+    let (items, watermark, catch_up, live, boundary) =
+        attach_reconnect_projection(&mut rpc, socket, session_id, &runtime)?;
     Ok(RuntimeReconnectOutcome {
         rpc,
         runtime,
@@ -7959,7 +8254,125 @@ fn reconnect_runtime_and_session(
         prompt_history,
         prompt_history_unavailable,
         security_context,
+        watermark,
+        catch_up,
+        live,
+        boundary,
     })
+}
+
+type ReconnectProjectionAttach = (
+    Vec<SessionItemEvent>,
+    usize,
+    Vec<ReceivedEvent>,
+    Option<std::sync::mpsc::Receiver<Result<ReceivedEvent, RpcError>>>,
+    Option<ReplayBoundaryV1>,
+);
+
+fn attach_reconnect_projection(
+    rpc: &mut Client,
+    socket: &Path,
+    session_id: &str,
+    runtime: &RuntimeInitialize,
+) -> Result<ReconnectProjectionAttach, String> {
+    if runtime.capabilities.event_replay_tail_v1()
+        && runtime.capabilities.session_items_watermark.version == 1
+    {
+        let snapshot = rpc
+            .items_watermarked(session_id, runtime)
+            .map_err(|error| error.to_string())?;
+        let watermark = snapshot.durable_cursor;
+        let attached = attach_replay_tail_v1(
+            socket,
+            &ReplayTailAttachRequest {
+                session_id: session_id.to_owned(),
+                since: watermark,
+                runtime_id: runtime.runtime.runtime_id.clone(),
+                runtime_epoch: runtime.runtime.epoch.clone(),
+                runtime_process_epoch: runtime.runtime.process_epoch,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        validate_reconnect_boundary(session_id, &runtime.runtime, watermark, &attached.boundary)?;
+        if !reconnect_stream_is_strictly_after_watermark(watermark, &attached.catch_up) {
+            return Err("stream catch-up overlapped the items watermark".into());
+        }
+        return Ok((
+            snapshot.items,
+            watermark,
+            attached.catch_up,
+            Some(attached.live),
+            Some(attached.boundary),
+        ));
+    }
+    let items = rpc.items(session_id).map_err(|error| error.to_string())?;
+    Ok((items, 0, Vec::new(), None, None))
+}
+
+fn validate_reconnect_boundary(
+    session_id: &str,
+    runtime: &crate::rpc::RuntimeIdentity,
+    watermark: usize,
+    boundary: &ReplayBoundaryV1,
+) -> Result<(), String> {
+    if boundary.session_id != session_id {
+        return Err("replay_boundary session_id does not match".into());
+    }
+    if !runtime.runtime_id.is_empty() && boundary.runtime_id != runtime.runtime_id {
+        return Err("replay_boundary runtime_id does not match".into());
+    }
+    if !runtime.epoch.is_empty() && boundary.runtime_epoch != runtime.epoch {
+        return Err("replay_boundary runtime_epoch does not match".into());
+    }
+    let watermark = i64::try_from(watermark).unwrap_or(-1);
+    if boundary.requested_since != watermark {
+        return Err("requested_since does not match items watermark".into());
+    }
+    if boundary.durable_cursor < watermark {
+        return Err("durable_cursor is below items watermark".into());
+    }
+    Ok(())
+}
+
+fn hydrate_reconnect_blocks(
+    items: Vec<SessionItemEvent>,
+    catch_up: Vec<ReceivedEvent>,
+) -> (TranscriptReducer, Vec<TranscriptBlock>, usize) {
+    let mut reducer = TranscriptReducer::default();
+    let mut blocks = reducer.hydrate(items);
+    let mut cursor = 0usize;
+    for received in catch_up {
+        if let Some(raw) = received.durable_raw_cursor() {
+            cursor = cursor.max(raw);
+        }
+        reducer.reduce_event(&mut blocks, received.event);
+    }
+    (reducer, blocks, cursor)
+}
+
+fn reconnect_event_cursor(
+    previous: usize,
+    watermark: usize,
+    catch_up_cursor: usize,
+    has_v1_boundary: bool,
+) -> usize {
+    if has_v1_boundary {
+        watermark.max(catch_up_cursor)
+    } else {
+        previous.max(watermark).max(catch_up_cursor)
+    }
+}
+
+fn reconnect_stream_is_strictly_after_watermark(
+    watermark: usize,
+    catch_up: &[ReceivedEvent],
+) -> bool {
+    catch_up
+        .iter()
+        .all(|received| match received.durable_raw_cursor() {
+            Some(cursor) => cursor > watermark,
+            None => true,
+        })
 }
 
 fn session_preview_lines(items: Vec<SessionItemEvent>) -> Vec<String> {
@@ -7990,6 +8403,33 @@ fn session_preview_lines(items: Vec<SessionItemEvent>) -> Vec<String> {
         .collect::<Vec<_>>();
     lines.reverse();
     lines
+}
+
+fn fork_latest_and_load(
+    socket: &Path,
+    source_session_id: &str,
+    client_fork_id: &str,
+) -> Result<HistoryBranchOutcome, String> {
+    let mut rpc = Client::connect(socket).map_err(|error| error.to_string())?;
+    let session = rpc
+        .fork_session_latest(source_session_id, client_fork_id)
+        .map_err(|error| error.to_string())?;
+    let items = rpc
+        .items(&session.session_id)
+        .map_err(|error| error.to_string())?;
+    let active_run = load_active_run(&mut rpc, &session);
+    let (prompt_history, prompt_history_unavailable) =
+        match rpc.prompt_history(&session.session_id, 200) {
+            Ok(history) => (history.entries, false),
+            Err(_) => (Vec::new(), true),
+        };
+    Ok(HistoryBranchOutcome {
+        session,
+        items,
+        active_run,
+        prompt_history,
+        prompt_history_unavailable,
+    })
 }
 
 fn branch_history_and_load(
@@ -8330,6 +8770,7 @@ fn relaunch_in_screen_mode(app: &App, mode: ScreenMode) -> Result<Outcome> {
             transcript_scroll: app.transcript_scroll,
             transcript_follow_bottom: app.transcript_follow_bottom,
             transcript_anchor: app.transcript_anchor.clone(),
+            reading_state: app.capture_reading_envelope(),
         },
     )
     .context("write screen mode handoff")?;
@@ -9999,6 +10440,7 @@ mod tests {
                 transcript_scroll: 0,
                 transcript_follow_bottom: true,
                 transcript_anchor: None,
+                reading_state: None,
             })
             .unwrap(),
         )
@@ -10032,6 +10474,39 @@ mod tests {
         assert_eq!(handoff.transcript_scroll, 17);
         assert!(!handoff.transcript_follow_bottom);
         assert_eq!(handoff.transcript_anchor, None);
+        assert_eq!(handoff.reading_state, None);
+    }
+
+    #[test]
+    fn screen_handoff_reading_envelope_is_authoritative_over_loose_fields() {
+        let envelope = reading_state::ReadingStateEnvelopeV1 {
+            version: 1,
+            session_id: "sess_1".into(),
+            selected_block_id: Some("assistant:keep".into()),
+            disclosure_overrides: std::collections::BTreeMap::from([("tool:1".into(), true)]),
+            follow_bottom: false,
+            top_visible: Some(reading_state::LogicalTranscriptAnchorV1 {
+                block_id: "assistant:keep".into(),
+                logical_line: 2,
+                wrapped_sub_row: 1,
+                position_hint: 0,
+                previous_block_id: None,
+                next_block_id: None,
+            }),
+            committed_scrollback: Vec::new(),
+        };
+        let json = serde_json::to_string(&ScreenModeHandoff {
+            session_id: "sess_1".into(),
+            transcript_scroll: 99,
+            transcript_follow_bottom: true,
+            reading_state: Some(envelope.clone()),
+            ..ScreenModeHandoff::default()
+        })
+        .unwrap();
+        let handoff: ScreenModeHandoff = serde_json::from_str(&json).unwrap();
+        assert_eq!(handoff.reading_state, Some(envelope));
+        assert!(handoff.transcript_follow_bottom);
+        assert_eq!(handoff.transcript_scroll, 99);
     }
 
     #[test]
@@ -10336,6 +10811,544 @@ mod tests {
             Some("run-latest"),
             "run-old",
             Some(ExecutionLifecycle::Queued),
+        ));
+    }
+
+    fn reconnect_item(kind: &str, run_id: &str, text: &str) -> SessionItemEvent {
+        serde_json::from_value(serde_json::json!({
+            "type": "item.completed",
+            "session_id": "sess-reconnect",
+            "turn_id": run_id,
+            "item": {
+                "id": run_id,
+                "type": if kind == "user" { "user" } else { "agent_message" },
+                "status": "completed",
+                "task_id": run_id,
+                "details": { "text": text }
+            }
+        }))
+        .unwrap()
+    }
+
+    fn reconnect_event(
+        kind: &str,
+        run_id: &str,
+        cursor: usize,
+        payload: serde_json::Value,
+    ) -> ReceivedEvent {
+        ReceivedEvent {
+            event: WireEvent {
+                session_id: "sess-reconnect".into(),
+                run_id: run_id.into(),
+                kind: kind.into(),
+                raw_cursor: cursor,
+                payload: payload
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect(),
+                ..WireEvent::default()
+            },
+            received_at: std::time::Instant::now(),
+            replayed: cursor > 0,
+            delivery: None,
+        }
+    }
+
+    #[test]
+    fn reconnect_hydrate_includes_snapshot_before_the_projection_is_swapped() {
+        let items = vec![reconnect_item("user", "run-new", "hello")];
+        let catch_up = vec![
+            reconnect_event(
+                "assistant.message.snapshot",
+                "run-new",
+                0,
+                serde_json::json!({
+                    "generation": 1,
+                    "sequence": 4,
+                    "phase": "final_answer",
+                    "content": "draft",
+                    "tail_revision": 8,
+                    "state": "open"
+                }),
+            ),
+            reconnect_event(
+                "ToolCallStarted",
+                "run-new",
+                12,
+                serde_json::json!({"call_id": "c1", "tool": "read"}),
+            ),
+        ];
+        let (_reducer, blocks, cursor) = hydrate_reconnect_blocks(items, catch_up);
+        assert!(
+            blocks
+                .iter()
+                .any(|block| block.id == "assistant:run-new" && block.body == "draft"),
+            "hydrated projection missing transient snapshot: {blocks:?}"
+        );
+        assert_eq!(cursor, 12);
+    }
+
+    #[test]
+    fn reconnect_legacy_path_keeps_the_durable_cursor() {
+        assert_eq!(reconnect_event_cursor(7, 0, 0, false), 7);
+        assert_eq!(reconnect_event_cursor(7, 4, 0, false), 7);
+        assert_eq!(reconnect_event_cursor(7, 9, 12, true), 12);
+        assert_eq!(reconnect_event_cursor(7, 9, 8, true), 9);
+    }
+
+    #[test]
+    fn reconnect_items_and_stream_partition_at_watermark() {
+        let watermark = 10;
+        let after = reconnect_event(
+            "ToolCallCompleted",
+            "run-new",
+            11,
+            serde_json::json!({"call_id": "c1"}),
+        );
+        let overlap = reconnect_event(
+            "ToolCallStarted",
+            "run-new",
+            10,
+            serde_json::json!({"call_id": "c1"}),
+        );
+        assert!(reconnect_stream_is_strictly_after_watermark(
+            watermark,
+            &[after]
+        ));
+        assert!(!reconnect_stream_is_strictly_after_watermark(
+            watermark,
+            &[overlap]
+        ));
+    }
+
+    #[test]
+    fn reconnect_rejects_identity_and_watermark_drift() {
+        let runtime = crate::rpc::RuntimeIdentity {
+            runtime_id: "rt".into(),
+            epoch: "ep".into(),
+            process_epoch: 3,
+            ..crate::rpc::RuntimeIdentity::default()
+        };
+        let mut boundary = ReplayBoundaryV1 {
+            version: 1,
+            session_id: "sess".into(),
+            runtime_id: "rt".into(),
+            runtime_epoch: "ep".into(),
+            runtime_process_epoch: 3,
+            requested_since: 7,
+            durable_cursor: 9,
+            durable_replayed: 1,
+            ..ReplayBoundaryV1::default()
+        };
+        assert!(validate_reconnect_boundary("sess", &runtime, 7, &boundary).is_ok());
+        boundary.requested_since = 6;
+        assert!(validate_reconnect_boundary("sess", &runtime, 7, &boundary).is_err());
+        boundary.requested_since = 7;
+        boundary.durable_cursor = 6;
+        assert!(validate_reconnect_boundary("sess", &runtime, 7, &boundary).is_err());
+        boundary.durable_cursor = 9;
+        boundary.session_id = "other".into();
+        assert!(validate_reconnect_boundary("sess", &runtime, 7, &boundary).is_err());
+    }
+
+    #[test]
+    fn reconnect_cursor_zero_does_not_promote_older_completed_run() {
+        assert!(!execution_event_owns_projection(
+            None,
+            Some("run-new"),
+            "run-old",
+            Some(ExecutionLifecycle::Queued),
+        ));
+        assert!(!execution_event_owns_projection(
+            None,
+            Some("run-new"),
+            "run-old",
+            Some(ExecutionLifecycle::Completed),
+        ));
+        assert!(execution_event_owns_projection(
+            None,
+            Some("run-new"),
+            "run-new",
+            Some(ExecutionLifecycle::Completed),
+        ));
+    }
+
+    #[test]
+    fn reconnect_legacy_cursor_does_not_promote_older_queued_run() {
+        assert!(!execution_event_owns_projection(
+            Some("run-new"),
+            Some("run-new"),
+            "run-old",
+            Some(ExecutionLifecycle::Queued),
+        ));
+        assert!(!execution_event_owns_projection(
+            Some("run-new"),
+            Some("run-new"),
+            "run-old",
+            Some(ExecutionLifecycle::Completed),
+        ));
+    }
+
+    #[test]
+    fn reconnect_stale_generation_is_ignored() {
+        assert!(!artifact_target_is_current(
+            3,
+            4,
+            Some("sess-current"),
+            "sess-current"
+        ));
+    }
+
+    fn assistant_bodies(blocks: &[TranscriptBlock]) -> Vec<(&str, &str)> {
+        blocks
+            .iter()
+            .filter(|block| block.kind == crate::transcript::BlockKind::Assistant)
+            .map(|block| (block.id.as_str(), block.body.as_str()))
+            .collect()
+    }
+
+    fn reading_block(id: &str, kind: crate::transcript::BlockKind, body: &str) -> TranscriptBlock {
+        let mut block = TranscriptBlock::local_user(id.into(), body.into());
+        block.id = id.into();
+        block.kind = kind;
+        block.body = body.into();
+        block.collapsible = matches!(
+            kind,
+            crate::transcript::BlockKind::Tool
+                | crate::transcript::BlockKind::Thinking
+                | crate::transcript::BlockKind::Diagnostic
+        );
+        block
+    }
+
+    #[test]
+    fn disconnect_after_delta_then_reconnect_seals_canonical_final_once() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::os::unix::net::UnixListener;
+        use std::time::Duration;
+
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("daemon.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let (started, first_closed) = (
+            std::sync::mpsc::channel::<()>(),
+            std::sync::mpsc::channel::<()>(),
+        );
+        let server = std::thread::spawn(move || {
+            let write_line = |stream: &mut std::os::unix::net::UnixStream,
+                              value: serde_json::Value| {
+                writeln!(stream, "{value}").unwrap();
+                stream.flush().unwrap();
+            };
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["params"]["replay_tail_version"], 1);
+            assert_eq!(request["params"]["since"], 0);
+            write_line(
+                &mut stream,
+                serde_json::json!({
+                    "jsonrpc":"2.0","id":1,"result":{
+                        "subscription_id":"sub_live",
+                        "cursor":2,
+                        "replayed":0,
+                        "event_mode":"canonical",
+                        "replay_boundary":{
+                            "version":1,
+                            "session_id":"sess-reconnect",
+                            "runtime_id":"rt",
+                            "runtime_epoch":"ep",
+                            "runtime_process_epoch":3,
+                            "requested_since":0,
+                            "durable_cursor":2,
+                            "durable_replayed":0,
+                            "transient_tail_revision":0,
+                            "transient_snapshots":0,
+                            "buffered_live":0
+                        }
+                    }
+                }),
+            );
+            for (kind, sequence, extra) in [
+                ("reset", 1, serde_json::json!({})),
+                ("delta", 2, serde_json::json!({"delta":"Hel"})),
+                ("delta", 3, serde_json::json!({"delta":"lo"})),
+            ] {
+                let mut payload = extra;
+                payload["generation"] = serde_json::json!(1);
+                payload["sequence"] = serde_json::json!(sequence);
+                payload["phase"] = serde_json::json!("final_answer");
+                write_line(
+                    &mut stream,
+                    serde_json::json!({
+                        "jsonrpc":"2.0","method":"event","params":{
+                            "type":format!("assistant.message.{kind}"),
+                            "session_id":"sess-reconnect",
+                            "run_id":"run-live",
+                            "payload":payload
+                        }
+                    }),
+                );
+            }
+            let _ = started.0.send(());
+            let _ = first_closed.1.recv_timeout(Duration::from_secs(2));
+            drop(stream);
+
+            let (mut stream, _) = listener.accept().unwrap();
+            line.clear();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["params"]["since"], 2);
+            write_line(
+                &mut stream,
+                serde_json::json!({
+                    "jsonrpc":"2.0","method":"event","params":{
+                        "type":"assistant.message.snapshot",
+                        "session_id":"sess-reconnect",
+                        "run_id":"run-live",
+                        "payload":{
+                            "generation":1,"sequence":3,"phase":"final_answer",
+                            "content":"Hello","tail_revision":4,"state":"open"
+                        }
+                    }
+                }),
+            );
+            write_line(
+                &mut stream,
+                serde_json::json!({
+                    "jsonrpc":"2.0","method":"event","params":{
+                        "type":"ModelResponded",
+                        "session_id":"sess-reconnect",
+                        "run_id":"run-live",
+                        "payload":{"text":"Hello, world"}
+                    }
+                }),
+            );
+            write_line(
+                &mut stream,
+                serde_json::json!({
+                    "jsonrpc":"2.0","id":1,"result":{
+                        "subscription_id":"sub_reconnect",
+                        "cursor":2,
+                        "replayed":0,
+                        "event_mode":"canonical",
+                        "replay_boundary":{
+                            "version":1,
+                            "session_id":"sess-reconnect",
+                            "runtime_id":"rt",
+                            "runtime_epoch":"ep",
+                            "runtime_process_epoch":3,
+                            "requested_since":2,
+                            "durable_cursor":2,
+                            "durable_replayed":0,
+                            "transient_tail_revision":4,
+                            "transient_snapshots":1,
+                            "buffered_live":1
+                        }
+                    }
+                }),
+            );
+        });
+
+        let first = attach_replay_tail_v1(
+            &socket,
+            &ReplayTailAttachRequest {
+                session_id: "sess-reconnect".into(),
+                since: 0,
+                runtime_id: "rt".into(),
+                runtime_epoch: "ep".into(),
+                runtime_process_epoch: 3,
+            },
+        )
+        .unwrap();
+        started.1.recv_timeout(Duration::from_secs(2)).unwrap();
+        let mut live = Vec::new();
+        for _ in 0..3 {
+            live.push(
+                first
+                    .live
+                    .recv_timeout(Duration::from_secs(1))
+                    .unwrap()
+                    .unwrap(),
+            );
+        }
+        let _ = first_closed.0.send(());
+        drop(first.live);
+        let mut reducer = crate::transcript::TranscriptReducer::default();
+        let mut live_blocks = Vec::new();
+        for received in live {
+            reducer.reduce_event(&mut live_blocks, received.event);
+        }
+        assert_eq!(
+            assistant_bodies(&live_blocks),
+            vec![("assistant:run-live", "Hello")]
+        );
+
+        let attached = attach_replay_tail_v1(
+            &socket,
+            &ReplayTailAttachRequest {
+                session_id: "sess-reconnect".into(),
+                since: 2,
+                runtime_id: "rt".into(),
+                runtime_epoch: "ep".into(),
+                runtime_process_epoch: 3,
+            },
+        )
+        .unwrap();
+        assert_eq!(attached.catch_up.len(), 2);
+        let items = vec![reconnect_item("user", "run-live", "prompt")];
+        let (_reducer, blocks, _) = hydrate_reconnect_blocks(items, attached.catch_up);
+        assert_eq!(
+            assistant_bodies(&blocks),
+            vec![("assistant:run-live", "Hello, world")],
+            "canonical final must replace the transient tail exactly once: {blocks:?}"
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn reconnect_reading_survives_insert_remove_disclosure_and_follow_mode() {
+        let tool = reading_block("tool:keep", crate::transcript::BlockKind::Tool, "tool body");
+        let selected = reading_block(
+            "assistant:keep",
+            crate::transcript::BlockKind::Assistant,
+            "line0\nline1\nline2",
+        );
+        let before = vec![
+            reading_block("user:old", crate::transcript::BlockKind::User, "old prompt"),
+            reading_block(
+                "user:before",
+                crate::transcript::BlockKind::User,
+                "before selection",
+            ),
+            tool.clone(),
+            selected.clone(),
+        ];
+        let mut disclosure = std::collections::HashMap::new();
+        disclosure.insert("tool:keep".into(), true);
+        let paused = reading_state::capture_reading_state(
+            "sess-reconnect",
+            &before,
+            Some(3),
+            &disclosure,
+            false,
+            Some(reading_state::LogicalTranscriptAnchorV1 {
+                block_id: "assistant:keep".into(),
+                logical_line: 1,
+                wrapped_sub_row: 0,
+                position_hint: 3,
+                previous_block_id: Some("tool:keep".into()),
+                next_block_id: None,
+            }),
+            Vec::new(),
+        );
+        let following = reading_state::capture_reading_state(
+            "sess-reconnect",
+            &before,
+            Some(3),
+            &disclosure,
+            true,
+            Some(reading_state::LogicalTranscriptAnchorV1 {
+                block_id: "assistant:keep".into(),
+                logical_line: 1,
+                wrapped_sub_row: 0,
+                position_hint: 3,
+                previous_block_id: Some("tool:keep".into()),
+                next_block_id: None,
+            }),
+            Vec::new(),
+        );
+        assert!(following.top_visible.is_none());
+
+        let after = vec![
+            reading_block(
+                "user:inserted",
+                crate::transcript::BlockKind::User,
+                "inserted before selection",
+            ),
+            tool,
+            selected,
+            reading_block(
+                "user:after",
+                crate::transcript::BlockKind::User,
+                "appended after",
+            ),
+        ];
+        let mut ledger = crate::native_scrollback::ScrollbackLedger::default();
+        let restored =
+            reading_state::restore_reading_state(&paused, "sess-reconnect", &after, &mut ledger)
+                .unwrap();
+        assert_eq!(
+            after[restored.selected_index.unwrap()].id,
+            "assistant:keep",
+            "selection must follow the stable block ID across insert/remove"
+        );
+        assert_eq!(restored.selected_index, Some(2));
+        assert_eq!(restored.disclosure_overrides.len(), 1);
+        assert!(restored.disclosure_overrides["tool:keep"]);
+        assert!(!restored.follow_bottom);
+        let anchor = restored.top_visible.expect("paused reader keeps an anchor");
+        assert_eq!(anchor.block_id, "assistant:keep");
+        assert_eq!(anchor.logical_line, 1);
+        assert_eq!(anchor.wrapped_sub_row, 0);
+
+        let restored_follow =
+            reading_state::restore_reading_state(&following, "sess-reconnect", &after, &mut ledger)
+                .unwrap();
+        assert!(restored_follow.follow_bottom);
+        assert!(restored_follow.top_visible.is_none());
+        assert_eq!(
+            after[restored_follow.selected_index.unwrap()].id,
+            "assistant:keep"
+        );
+    }
+
+    #[test]
+    fn reconnect_cursor_zero_does_not_let_old_run_own_hydrated_foreground() {
+        let items = vec![
+            reconnect_item("user", "run-new", "hello"),
+            reconnect_item("assistant", "run-new", "new final"),
+        ];
+        let catch_up = vec![
+            reconnect_event(
+                "ExecutionCompleted",
+                "run-old",
+                0,
+                serde_json::json!({"summary": "stale old final"}),
+            ),
+            reconnect_event(
+                "ModelResponded",
+                "run-old",
+                0,
+                serde_json::json!({"text": "stale old final"}),
+            ),
+        ];
+        let (_reducer, blocks, _) = hydrate_reconnect_blocks(items, catch_up);
+        assert_eq!(
+            assistant_bodies(&blocks)
+                .into_iter()
+                .filter(|(id, _)| *id == "assistant:run-new")
+                .collect::<Vec<_>>(),
+            vec![("assistant:run-new", "new final")]
+        );
+        assert!(!execution_event_owns_projection(
+            None,
+            Some("run-new"),
+            "run-old",
+            Some(ExecutionLifecycle::Completed),
+        ));
+        assert!(execution_event_owns_projection(
+            None,
+            Some("run-new"),
+            "run-new",
+            Some(ExecutionLifecycle::Completed),
         ));
     }
 

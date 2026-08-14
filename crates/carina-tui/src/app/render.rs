@@ -5179,6 +5179,58 @@ impl App {
                     inner,
                 );
             }
+            Overlay::Goal(goal) => {
+                let popup = centered(
+                    area,
+                    layout_contract::CHECKPOINT_POPUP.0,
+                    layout_contract::CHECKPOINT_POPUP.1,
+                );
+                frame.render_widget(Clear, popup);
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(self.theme.glyphs.outer_border_type())
+                    .border_style(self.theme.focus())
+                    .title(format!(" {} ", tr(locale, MessageId::GoalTitle)))
+                    .style(Style::default());
+                let inner = block.inner(popup).inner(Margin::new(2, 1));
+                frame.render_widget(block, popup);
+                let mut body = if let Some(goal) = &goal.goal {
+                    let used = crate::render_contract::format_tokens(goal.tokens_used);
+                    let budget = crate::render_contract::format_tokens(goal.token_budget);
+                    let used_n = goal.continuations_used.to_string();
+                    let max = goal.max_continuations.to_string();
+                    vec![
+                        Line::from(Span::styled(
+                            goal.objective.clone(),
+                            Style::default().fg(self.theme.text),
+                        )),
+                        Line::from(tr_format(
+                            locale,
+                            MessageId::GoalSummary,
+                            &[
+                                ("status", goal.status.as_str()),
+                                ("used", used.as_str()),
+                                ("budget", budget.as_str()),
+                                ("used_n", used_n.as_str()),
+                                ("max", max.as_str()),
+                            ],
+                        )),
+                    ]
+                } else {
+                    vec![Line::from(tr(locale, MessageId::GoalEmpty).to_owned())]
+                };
+                body.push(Line::from(""));
+                body.push(Line::from(Span::styled(
+                    "Enter/Esc close",
+                    Style::default().fg(self.theme.muted),
+                )));
+                frame.render_widget(
+                    Paragraph::new(body)
+                        .style(Style::default().fg(self.theme.text))
+                        .wrap(Wrap { trim: false }),
+                    inner,
+                );
+            }
             Overlay::Agents(overlay) => {
                 let popup = centered(
                     area,
@@ -7917,22 +7969,19 @@ impl TranscriptLayout {
                     .then_some(scroll_anchor)
                     .flatten()
                     .and_then(|anchor| {
-                        let exact_index =
-                            blocks.iter().position(|block| block.id == anchor.block_id);
-                        let index = exact_index
-                            .unwrap_or(anchor.block_index.min(blocks.len().saturating_sub(1)));
+                        let resolved =
+                            super::reading_state::resolve_anchor(blocks, &anchor.to_logical())?;
+                        let index = blocks
+                            .iter()
+                            .position(|block| block.id == resolved.block_id)?;
                         let block = blocks.get(index)?;
                         let item = items.get(index)?;
-                        let row = if exact_index.is_some() {
-                            transcript_row_for_anchor(
-                                block,
-                                render_options,
-                                anchor.logical_line,
-                                anchor.sub_rows,
-                            )
-                        } else {
-                            0
-                        };
+                        let row = transcript_row_for_anchor(
+                            block,
+                            render_options,
+                            resolved.logical_line,
+                            resolved.wrapped_sub_row,
+                        );
                         Some(item.top.saturating_add(row).min(max_scroll))
                     })
             })
@@ -7982,11 +8031,16 @@ impl TranscriptLayout {
             },
             rows_into_block,
         );
+        let (previous_block_id, next_block_id) =
+            super::reading_state::neighbors_for(blocks, item.index);
         Some(TranscriptScrollAnchor {
             block_id: block.id.clone(),
             block_index: item.index,
             logical_line,
             sub_rows,
+            position_hint: super::reading_state::position_hint_for(blocks, item.index),
+            previous_block_id,
+            next_block_id,
         })
     }
 }
@@ -10600,6 +10654,7 @@ mod transcript_tests {
                     },
                     received_at: std::time::Instant::now(),
                     replayed: false,
+                    delivery: None,
                 })),
             });
 
@@ -14889,6 +14944,75 @@ mod transcript_tests {
         assert_eq!(after.logical_line, before.logical_line);
     }
 
+    fn assert_layout_has_no_overlaps(layout: &TranscriptLayout) {
+        for pair in layout.items.windows(2) {
+            if pair[0].height == 0 || pair[1].height == 0 {
+                continue;
+            }
+            assert!(
+                pair[0].top + pair[0].height <= pair[1].top,
+                "transcript items overlap: {:?} then {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+    }
+
+    #[test]
+    fn width_round_trip_preserves_block_id_logical_line_and_sub_row() {
+        let mut intro = block(BlockKind::User, "please inspect the long answer below");
+        intro.id = "user:intro".into();
+        let mut wrapping = block(
+            BlockKind::Tool,
+            &(1..=8)
+                .map(|line| format!("tool evidence {line}: {}", "wrap ".repeat(20)))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        wrapping.id = "tool:evidence".into();
+        wrapping.collapsible = true;
+        let mut answer = block(
+            BlockKind::Assistant,
+            &(1..=16)
+                .map(|line| format!("anchor line {line}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        answer.id = "assistant:answer".into();
+        let blocks = [intro, wrapping, answer];
+        let initial =
+            TranscriptLayout::new(&blocks, viewport(80, 5, 0, false), &mut HashMap::new());
+        let answer_top = initial
+            .items
+            .iter()
+            .find(|item| blocks[item.index].id == "assistant:answer")
+            .expect("answer is visible")
+            .top;
+        let start = captured_anchor(
+            &blocks,
+            viewport(80, 5, answer_top.saturating_add(3), false),
+        );
+        assert_eq!(start.block_id, "assistant:answer");
+        assert_eq!(start.sub_rows, 0);
+
+        let mut current = start.clone();
+        for width in [80_u16, 120, 160, 80] {
+            let layout = TranscriptLayout::new(
+                &blocks,
+                anchored_viewport(width, 5, current.clone()),
+                &mut HashMap::new(),
+            );
+            assert_layout_has_no_overlaps(&layout);
+            let recaptured = layout
+                .capture_anchor(&blocks, anchored_viewport(width, 5, current.clone()))
+                .expect("anchor must survive reflow");
+            assert_eq!(recaptured.block_id, start.block_id, "width={width}");
+            assert_eq!(recaptured.logical_line, start.logical_line, "width={width}");
+            assert_eq!(recaptured.sub_rows, start.sub_rows, "width={width}");
+            current = recaptured;
+        }
+    }
+
     #[test]
     fn role_breakpoint_reflow_preserves_the_anchored_logical_line() {
         let mut answer = block(
@@ -14972,7 +15096,7 @@ mod transcript_tests {
     }
 
     #[test]
-    fn missing_anchor_block_falls_back_to_the_same_block_index() {
+    fn missing_anchor_block_falls_back_to_neighbor_then_hint() {
         let blocks = [
             {
                 let mut block = block(BlockKind::Assistant, "first");
@@ -14987,9 +15111,12 @@ mod transcript_tests {
         ];
         let missing = TranscriptScrollAnchor {
             block_id: "removed".into(),
-            block_index: 1,
+            block_index: 99,
             logical_line: 99,
             sub_rows: 99,
+            position_hint: 1,
+            previous_block_id: None,
+            next_block_id: Some("fallback".into()),
         };
         let layout = TranscriptLayout::new(
             &blocks,
@@ -15033,7 +15160,9 @@ mod transcript_tests {
         let blocks = [first, block(BlockKind::Assistant, "new output")];
         let after = captured_anchor(&blocks, anchored_viewport(40, 3, before.clone()));
 
-        assert_eq!(after, before);
+        assert_eq!(after.block_id, before.block_id);
+        assert_eq!(after.logical_line, before.logical_line);
+        assert_eq!(after.sub_rows, before.sub_rows);
     }
 
     #[test]

@@ -137,6 +137,78 @@ func TestStreamReturnsSubscriptionIdentityAndCatchUpCursor(t *testing.T) {
 	}
 }
 
+func TestExclusiveReplayTailRejectsLaterRequests(t *testing.T) {
+	s := NewServer()
+	s.RegisterStream("sub.exclusive", func(_ json.RawMessage, sub *Subscription) error {
+		if sub.RequestSeq() != 1 {
+			t.Fatalf("first stream request seq = %d", sub.RequestSeq())
+		}
+		sub.MarkExclusiveReplayTail()
+		return sub.CommitResult(map[string]any{"subscription_id": sub.ID(), "exclusive": true})
+	})
+	s.Register("ping", func(json.RawMessage) (any, error) {
+		return map[string]any{"ok": true}, nil
+	})
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+	go s.serveWithScopes(serverConn, OriginLocal, nil)
+
+	if err := json.NewEncoder(clientConn).Encode(Request{JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "sub.exclusive"}); err != nil {
+		t.Fatal(err)
+	}
+	var response Response
+	if err := json.NewDecoder(clientConn).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	result, ok := response.Result.(map[string]any)
+	if !ok || result["exclusive"] != true {
+		t.Fatalf("exclusive subscribe = %#v", response)
+	}
+	if err := json.NewEncoder(clientConn).Encode(Request{JSONRPC: "2.0", ID: json.RawMessage("2"), Method: "ping"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewDecoder(clientConn).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error == nil || response.Error.Code != CodeInvalidRequest {
+		t.Fatalf("later request = %#v, want exclusive invalid request", response)
+	}
+}
+
+func TestReplayTailMustBeFirstRequestOnConnection(t *testing.T) {
+	s := NewServer()
+	s.Register("ping", func(json.RawMessage) (any, error) {
+		return map[string]any{"ok": true}, nil
+	})
+	s.RegisterStream("sub.exclusive", func(_ json.RawMessage, sub *Subscription) error {
+		if sub.RequestSeq() != 1 {
+			return fmt.Errorf("replay tail must be the first request")
+		}
+		sub.MarkExclusiveReplayTail()
+		return sub.CommitResult(map[string]any{"ok": true})
+	})
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+	go s.serveWithScopes(serverConn, OriginLocal, nil)
+	dec := json.NewDecoder(clientConn)
+	if err := json.NewEncoder(clientConn).Encode(Request{JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "ping"}); err != nil {
+		t.Fatal(err)
+	}
+	var response Response
+	if err := dec.Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewEncoder(clientConn).Encode(Request{JSONRPC: "2.0", ID: json.RawMessage("2"), Method: "sub.exclusive"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := dec.Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error == nil || !strings.Contains(response.Error.Message, "first request") {
+		t.Fatalf("second-request replay tail = %#v", response)
+	}
+}
+
 func TestStreamCommittedResponseSkipsLegacyPostHandlerResponse(t *testing.T) {
 	s := NewServer()
 	s.RegisterStream("sub.commit", func(_ json.RawMessage, sub *Subscription) error {

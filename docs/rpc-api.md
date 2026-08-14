@@ -38,9 +38,9 @@ pauses the goal.
 The returned `SessionGoal` includes `objective`, `status` (`active`, `paused`,
 `blocked`, `budget_limited`, `usage_limited`, or `complete`), `token_budget`,
 `tokens_used`, `time_used_seconds`, timestamps, and continuation counters. The TUI
-surface is `/goal [--tokens N] <objective>` plus
-`/goal clear|pause|resume|complete|continue`; `/goal` alone
-prints the current state.
+surface is `/goal` (inspect), `/goal <objective>` (set), and
+`/goal clear|pause|resume|complete|continue`. Token-budget flags stay on the
+RPC/`carina` CLI; the TUI does not parse `--tokens`.
 
 Transport (MVP): **JSON-RPC 2.0 over unix socket** or stdio. Workspace mode
 uses a bounded socket name under `~/.carina/run/v1/`; the exact path is carried

@@ -239,7 +239,7 @@ TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
 wait_for_text "Connect a provider"
 # The title renders before the provider inventory on slower Linux runners.
 # Wait for the completed frame instead of sampling the first titled frame.
-wait_for_text "Search all 159 providers by name or ID"
+wait_for_text "Search all 159 providers by provider or model name / ID"
 require_screen_text "Connection" "provider detail panel"
 if grep -Fq "SETUP" <<<"$SCREEN" || grep -Fq "Choose model" <<<"$SCREEN" || has_conversation_composer; then
   printf '%s\n' "$SCREEN" >&2
@@ -273,7 +273,7 @@ provider_ultrawide_screen="$(sed \
   ')"
 check_snapshot scripts/testdata/rust-tui-provider-ultrawide.snap "$provider_ultrawide_screen" "ultrawide provider"
 TMUX_TMPDIR="$WORK" tmux resize-window -t "$SESSION" -x 160 -y 44
-wait_for_text "Search all 159 providers by name or ID"
+wait_for_text "Search all 159 providers by provider or model name / ID"
 
 TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l /open
 wait_for_text "/  open"
@@ -342,6 +342,7 @@ RECONNECT_CONTROL_CONTINUE="$WORK/reconnect-control-continue"
 RECONNECT_CAPTURE="$WORK/reconnect-stream-rpc.jsonl"
 RECONNECT_SUBMIT_CAPTURE="$WORK/reconnect-submit.json"
 UNKNOWN_SUBMIT_CAPTURE="$WORK/unknown-submit.jsonl"
+SCREEN_MODE_LIVE="$WORK/screen-mode-live"
 MEDIA_IMAGE="$WORK/media-sample.png"
 
 assert_plan_review_local_only() {
@@ -371,7 +372,7 @@ pathlib.Path(sys.argv[1]).write_bytes(base64.b64decode(
 ))
 PY
 GOV_EXIT_FILE="$WORK/governance-ui-exit"
-python3 - "$GOV_SOCKET" "$EMPTY_MODELS_SOCKET" "$CCSWITCH_SOCKET" "$MODEL_JOURNEY_SOCKET" "$PLAN_SOCKET" "$REVOCATION_SOCKET" "$WORKSPACE" "$LOCALE_CAPTURE" "$PLAN_CAPTURE" "$HISTORY_FORK_CAPTURE" "$REVOCATION_SUBMIT_CAPTURE" "$MEDIA_SUBMIT_CAPTURE" "$STREAM_CONTINUE" "$RECONNECT_CONTINUE" "$RECONNECT_CONTROL_CONTINUE" "$RECONNECT_CAPTURE" "$RECONNECT_SUBMIT_CAPTURE" "$UNKNOWN_SUBMIT_CAPTURE" "$MODEL_PROVIDER_READY_FILE" <<'PY' &
+python3 - "$GOV_SOCKET" "$EMPTY_MODELS_SOCKET" "$CCSWITCH_SOCKET" "$MODEL_JOURNEY_SOCKET" "$PLAN_SOCKET" "$REVOCATION_SOCKET" "$WORKSPACE" "$LOCALE_CAPTURE" "$PLAN_CAPTURE" "$HISTORY_FORK_CAPTURE" "$REVOCATION_SUBMIT_CAPTURE" "$MEDIA_SUBMIT_CAPTURE" "$STREAM_CONTINUE" "$RECONNECT_CONTINUE" "$RECONNECT_CONTROL_CONTINUE" "$RECONNECT_CAPTURE" "$RECONNECT_SUBMIT_CAPTURE" "$UNKNOWN_SUBMIT_CAPTURE" "$MODEL_PROVIDER_READY_FILE" "$SCREEN_MODE_LIVE" <<'PY' &
 import base64
 import json
 import os
@@ -399,6 +400,7 @@ reconnect_capture_path = sys.argv[16]
 reconnect_submit_capture_path = sys.argv[17]
 unknown_submit_capture_path = sys.argv[18]
 model_provider_ready_path = sys.argv[19]
+screen_mode_live_path = sys.argv[20]
 resolved = threading.Event()
 answered = threading.Event()
 checkpoint_restored = threading.Event()
@@ -486,6 +488,19 @@ def handle(connection, mode="normal"):
             if method == "session.events.stream":
                 session_id = request.get("params", {}).get("session_id")
                 send(stream, {"jsonrpc": "2.0", "id": request_id, "result": {"cursor": 0}})
+                if session_id == "sess_screen_mode":
+                    for _ in range(300):
+                        if os.path.exists(screen_mode_live_path):
+                            break
+                        time.sleep(0.1)
+                    else:
+                        return
+                    send(stream, {"jsonrpc": "2.0", "method": "event", "params": {
+                        "type": "ModelResponded", "event_id": "evt_screen_mode_live",
+                        "session_id": session_id, "run_id": "run_screen_live", "raw_cursor": 3,
+                        "payload": {"text": "SCREEN-MODE-LIVE-AFTER-HANDOFF"}
+                    }})
+                    continue
                 if session_id == "sess_reconnect":
                     reconnect_stream_calls[0] += 1
                     with open(reconnect_capture_path, "a", encoding="utf-8") as stream_out:
@@ -932,6 +947,7 @@ def handle(connection, mode="normal"):
                     {"session_id": "sess_reconnect", "workspace_root": workspace_path, "status": "active", "next_model": "test/model", **session_execution_snapshot("sess_reconnect")}
                     ,{"session_id": "sess_unknown_submit", "workspace_root": workspace_path, "status": "active", "next_model": "test/model", "latest_run_id": "", "execution_status": "ready"}
                     ,{"session_id": "sess_governance_restart", "workspace_root": workspace_path, "status": "active", "next_model": "test/model", **session_execution_snapshot("sess_governance_restart")}
+                    ,{"session_id": "sess_screen_mode", "workspace_root": workspace_path, "status": "active", "next_model": "test/model", "latest_run_id": "run_screen", "execution_status": "completed"}
                 ]
                     if media_available.is_set():
                         result.append({"session_id": "sess_media_target", "name": "Media target", "workspace_root": workspace_path, "status": "active", "next_model": "test/model", "next_reasoning_effort": "high", "latest_run_id": "", "execution_status": "ready", "created_at": "2026-07-27T11:00:00Z"})
@@ -1168,6 +1184,40 @@ def handle(connection, mode="normal"):
                 elif session_id == "sess_returning":
                     result = [
                         {"type": "item.recorded", "session_id": session_id, "item_id": "session_start", "item": {"id": "session_start", "type": "session.started", "status": "recorded", "run_id": "", "details": {}}}
+                    ]
+                elif session_id == "sess_screen_mode":
+                    result = [
+                        {"type": "item.recorded", "session_id": session_id,
+                         "turn_id": "turn_screen", "run_id": "run_screen",
+                         "item_id": "user_screen", "item": {
+                            "id": "user_screen", "type": "user", "status": "completed",
+                            "run_id": "run_screen", "details": {"prompt": "SCREEN-MODE-USER-PROMPT"}}},
+                        {"type": "item.started", "session_id": session_id,
+                         "turn_id": "turn_screen", "run_id": "run_screen",
+                         "item_id": "call-screen-run", "item": {
+                            "id": "call-screen-run", "type": "tool_call", "status": "requested",
+                            "run_id": "run_screen", "details": {
+                                "tool": "run", "arguments": {"executable": "rg", "argc": 1}}}},
+                        {"type": "item.updated", "session_id": session_id,
+                         "turn_id": "turn_screen", "run_id": "run_screen",
+                         "item_id": "call-screen-run", "item": {
+                            "id": "call-screen-run", "type": "tool_call", "status": "running",
+                            "run_id": "run_screen", "details": {
+                                "tool": "run", "command": "rg SCREEN-MODE-MARKER",
+                                "aggregated_output": "SCREEN-MODE-TOOL-BODY"}}},
+                        {"type": "item.completed", "session_id": session_id,
+                         "turn_id": "turn_screen", "run_id": "run_screen",
+                         "item_id": "call-screen-run", "item": {
+                            "id": "call-screen-run", "type": "tool_call", "status": "completed",
+                            "run_id": "run_screen", "details": {"tool": "run"}}},
+                        {"type": "item.recorded", "session_id": session_id,
+                         "turn_id": "turn_screen", "run_id": "run_screen",
+                         "item_id": "assistant_screen", "item": {
+                            "id": "assistant_screen", "type": "assistant", "status": "completed",
+                            "run_id": "run_screen", "details": {
+                                "content": "SCREEN-MODE-PREFIX\n" + "\n".join(
+                                    f"screen mode row {index:02d}" for index in range(1, 16)
+                                ) + "\nSCREEN-MODE-ANCHOR-LINE"}}}
                     ]
                 else:
                     result = []
@@ -3085,6 +3135,137 @@ done
   echo "rust-tui-journey: reconnect UI did not exit cleanly" >&2
   exit 1
 }
+
+TMUX_TMPDIR="$WORK" tmux kill-session -t "$SESSION" >/dev/null 2>&1 || true
+SCREEN_MODE_EXIT_FILE="$WORK/screen-mode-ui-exit"
+SESSION="carina-rust-tui-screen-mode-$$"
+TMUX_TMPDIR="$WORK" tmux new-session -d -s "$SESSION" -x 120 -y 40 \
+  "cd '$WORKSPACE' && env -i HOME='$HOME_DIR' PATH='$STAGE:/usr/bin:/bin' TERM=xterm-256color '$STAGE/carina-ui' --socket '$GOV_SOCKET' --workspace '$WORKSPACE' --session sess_screen_mode --locale en --screen-mode fullscreen; code=\$?; printf '%s' \"\$code\" > '$SCREEN_MODE_EXIT_FILE'; sleep 300"
+
+wait_for_text "SCREEN-MODE-USER-PROMPT"
+wait_for_text "SCREEN-MODE-ANCHOR-LINE"
+wait_for_text "Run     rg SCREEN-MODE-MARKER"
+if grep -Fq "SCREEN-MODE-TOOL-BODY" <<<"$SCREEN"; then
+  echo "rust-tui-journey: screen-mode command output started expanded" >&2
+  exit 1
+fi
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-o
+for _ in $(seq 1 20); do
+  capture
+  if grep -Fq "SCREEN-MODE-TOOL-BODY" <<<"$SCREEN"; then
+    break
+  fi
+  sleep 0.1
+done
+if ! grep -Fq "SCREEN-MODE-TOOL-BODY" <<<"$SCREEN"; then
+  command_row="$(awk '/Run     rg SCREEN-MODE-MARKER/ { print NR; exit }' <<<"$SCREEN")"
+  printf -v command_click '\033[<0;5;%dM\033[<0;5;%dm' "$command_row" "$command_row"
+  TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l "$command_click"
+  wait_for_text "SCREEN-MODE-TOOL-BODY"
+fi
+grep -Fq "SCREEN-MODE-TOOL-BODY" <<<"$SCREEN" || {
+  printf '%s\n' "$SCREEN" >&2
+  echo "rust-tui-journey: pointer/keyboard disclosure did not expand the screen-mode tool" >&2
+  exit 1
+}
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" PPage PPage
+wait_for_text "SCREEN-MODE-USER-PROMPT"
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l /minimal
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
+wait_for_text "SCREEN-MODE-ANCHOR-LINE"
+grep -Fq "SCREEN-MODE-TOOL-BODY" <<<"$SCREEN" || {
+  printf '%s\n' "$SCREEN" >&2
+  echo "rust-tui-journey: Minimal handoff lost tool disclosure" >&2
+  exit 1
+}
+FULL_HISTORY="$(TMUX_TMPDIR="$WORK" tmux capture-pane -p -S - -t "$SESSION" 2>/dev/null || true)"
+if [[ "$(grep -Fo "SCREEN-MODE-ANCHOR-LINE" <<<"$FULL_HISTORY" | wc -l | tr -d ' ')" != "1" ]]; then
+  printf '%s\n' "$FULL_HISTORY" >&2
+  echo "rust-tui-journey: Minimal handoff duplicated native scrollback" >&2
+  exit 1
+fi
+TMUX_TMPDIR="$WORK" tmux resize-window -t "$SESSION" -x 80 -y 40
+wait_for_text "SCREEN-MODE-ANCHOR-LINE"
+TMUX_TMPDIR="$WORK" tmux resize-window -t "$SESSION" -x 160 -y 40
+wait_for_text "SCREEN-MODE-ANCHOR-LINE"
+TMUX_TMPDIR="$WORK" tmux resize-window -t "$SESSION" -x 120 -y 40
+wait_for_text "SCREEN-MODE-ANCHOR-LINE"
+grep -Fq "SCREEN-MODE-TOOL-BODY" <<<"$SCREEN" || {
+  printf '%s\n' "$SCREEN" >&2
+  echo "rust-tui-journey: resize reflow lost tool disclosure" >&2
+  exit 1
+}
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" -l /inline
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" Enter
+wait_for_text "SCREEN-MODE-ANCHOR-LINE"
+grep -Fq "SCREEN-MODE-TOOL-BODY" <<<"$SCREEN" || {
+  printf '%s\n' "$SCREEN" >&2
+  echo "rust-tui-journey: Inline handoff lost tool disclosure" >&2
+  exit 1
+}
+touch "$SCREEN_MODE_LIVE"
+live_seen=0
+for _ in $(seq 1 150); do
+  FULL_HISTORY="$(TMUX_TMPDIR="$WORK" tmux capture-pane -p -S - -t "$SESSION" 2>/dev/null || true)"
+  capture
+  if grep -Fq "SCREEN-MODE-LIVE-AFTER-HANDOFF" <<<"$FULL_HISTORY$SCREEN"; then
+    live_seen=1
+    break
+  fi
+  TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" NPage
+  sleep 0.1
+done
+if [[ "$live_seen" != "1" ]]; then
+  printf '%s\n' "$SCREEN" >&2
+  echo "rust-tui-journey: live streaming did not continue after ScreenMode handoff" >&2
+  exit 1
+fi
+TMUX_TMPDIR="$WORK" tmux send-keys -t "$SESSION" C-c C-c
+for _ in $(seq 1 50); do
+  [[ -s "$SCREEN_MODE_EXIT_FILE" ]] && break
+  sleep 0.1
+done
+[[ -s "$SCREEN_MODE_EXIT_FILE" && "$(cat "$SCREEN_MODE_EXIT_FILE")" == "0" ]] || {
+  echo "rust-tui-journey: ScreenMode UI did not exit cleanly" >&2
+  exit 1
+}
+
+TMUX_TMPDIR="$WORK" tmux kill-session -t "$SESSION" >/dev/null 2>&1 || true
+STALE_HANDOFF="$WORK/stale-screen-handoff.json"
+python3 - "$STALE_HANDOFF" <<'PY'
+import json
+import sys
+json.dump({
+    "session_id": "sess_screen_mode",
+    "runtime_id": "stale-runtime",
+    "runtime_epoch": "stale-epoch",
+    "runtime_process_epoch": 9,
+    "runtime_pid": 1,
+    "draft": "should-not-restore",
+    "queued_prompts": [],
+    "committed_scrollback": [],
+    "pending_governance": [],
+    "transcript_follow_bottom": True,
+}, open(sys.argv[1], "w", encoding="utf-8"))
+PY
+IDENTITY_EXIT_FILE="$WORK/screen-mode-identity-exit"
+SESSION="carina-rust-tui-screen-identity-$$"
+TMUX_TMPDIR="$WORK" tmux new-session -d -s "$SESSION" -x 100 -y 24 \
+  "cd '$WORKSPACE' && env -i HOME='$HOME_DIR' PATH='$STAGE:/usr/bin:/bin' TERM=xterm-256color '$STAGE/carina-ui' --socket '$GOV_SOCKET' --workspace '$WORKSPACE' --session sess_screen_mode --locale en --screen-mode minimal --no-alt-screen --screen-handoff '$STALE_HANDOFF'; code=\$?; printf '%s' \"\$code\" > '$IDENTITY_EXIT_FILE'; sleep 300"
+for _ in $(seq 1 50); do
+  [[ -s "$IDENTITY_EXIT_FILE" ]] && break
+  sleep 0.1
+done
+[[ -s "$IDENTITY_EXIT_FILE" ]] || {
+  echo "rust-tui-journey: identity-mismatched ScreenMode handoff did not exit" >&2
+  exit 1
+}
+if [[ "$(cat "$IDENTITY_EXIT_FILE")" == "0" ]]; then
+  capture
+  printf '%s\n' "$SCREEN" >&2
+  echo "rust-tui-journey: identity-mismatched ScreenMode handoff was accepted" >&2
+  exit 1
+fi
 
 TMUX_TMPDIR="$WORK" tmux kill-session -t "$SESSION" >/dev/null 2>&1 || true
 UNKNOWN_EXIT_FILE="$WORK/unknown-submit-exit"

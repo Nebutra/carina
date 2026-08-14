@@ -100,6 +100,7 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 	}
 	mergeRawBody(bodyMap, a.body)
 	mergeRawBody(bodyMap, override.Body)
+	attachAnthropicTools(bodyMap, req.Tools)
 	effectiveEffort, err := validateReasoningEffort(nativeReasoningEffortSpec(a.id, model), req.ReasoningEffort)
 	if err != nil {
 		return nil, fmt.Errorf("%s/%s: %w", a.errorName(), model, err)
@@ -129,7 +130,11 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 	}
 	var out struct {
 		Content []struct {
-			Text string `json:"text"`
+			Type  string         `json:"type"`
+			ID    string         `json:"id"`
+			Name  string         `json:"name"`
+			Text  string         `json:"text"`
+			Input map[string]any `json:"input"`
 		} `json:"content"`
 		Usage struct {
 			InputTokens         int `json:"input_tokens"`
@@ -142,8 +147,14 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 		return nil, err
 	}
 	text := ""
+	var calls []modelrouter.ToolCall
 	for _, c := range out.Content {
 		text += c.Text
+		if c.Type == "tool_use" && c.Name != "" {
+			calls = append(calls, modelrouter.ToolCall{
+				ID: c.ID, Name: c.Name, Arguments: encodeJSONArguments(c.Input),
+			})
+		}
 	}
 	return &modelrouter.Response{
 		Provider:                 a.Name(),
@@ -154,6 +165,7 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 		CacheReadTokens:          out.Usage.CacheReadTokens,
 		CacheWriteTokens:         out.Usage.CacheCreationTokens,
 		EffectiveReasoningEffort: effectiveEffort,
+		ToolCalls:                calls,
 	}, nil
 }
 

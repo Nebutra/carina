@@ -23,20 +23,20 @@ func TestAssistantTailRequiresResetOneAndStrictSequence(t *testing.T) {
 		{kind: "reset", generation: 1, sequence: 2},
 	}
 	for _, update := range invalid {
-		if err := registry.publish(owner, update.kind, update.generation, update.sequence, "x", false); !errors.Is(err, errAssistantTailTransition) {
+		if _, err := registry.publish(owner, update.kind, update.generation, update.sequence, "x", false); !errors.Is(err, errAssistantTailTransition) {
 			t.Fatalf("invalid first update %+v = %v", update, err)
 		}
 	}
-	if err := registry.publish(owner, "reset", 1, 1, "", false); err != nil {
+	if _, err := registry.publish(owner, "reset", 1, 1, "", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := registry.publish(owner, "delta", 1, 3, "gap", false); !errors.Is(err, errAssistantTailTransition) {
+	if _, err := registry.publish(owner, "delta", 1, 3, "gap", false); !errors.Is(err, errAssistantTailTransition) {
 		t.Fatalf("gap = %v", err)
 	}
-	if err := registry.publish(owner, "delta", 2, 1, "no reset", false); !errors.Is(err, errAssistantTailTransition) {
+	if _, err := registry.publish(owner, "delta", 2, 1, "no reset", false); !errors.Is(err, errAssistantTailTransition) {
 		t.Fatalf("higher generation delta = %v", err)
 	}
-	if err := registry.publish(owner, "reset", 2, 1, "", false); err != nil {
+	if _, err := registry.publish(owner, "reset", 2, 1, "", false); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -57,7 +57,7 @@ func TestAssistantTailBuildsSnapshotsAndAwaitingCanonical(t *testing.T) {
 		{kind: "delta", sequence: 3, text: "lo"},
 		{kind: "completed", sequence: 4, text: "hello"},
 	} {
-		if err := registry.publish(owner, update.kind, 1, update.sequence, update.text, false); err != nil {
+		if _, err := registry.publish(owner, update.kind, 1, update.sequence, update.text, false); err != nil {
 			t.Fatalf("%s: %v", update.kind, err)
 		}
 	}
@@ -69,7 +69,7 @@ func TestAssistantTailBuildsSnapshotsAndAwaitingCanonical(t *testing.T) {
 	if snapshot.Content != "hello" || snapshot.Sequence != 4 || snapshot.State != assistantTailAwaitingCanonical || revision != snapshot.Revision {
 		t.Fatalf("snapshot = %+v revision=%d", snapshot, revision)
 	}
-	if err := registry.publish(owner, "delta", 1, 5, "late", false); !errors.Is(err, errAssistantTailTransition) {
+	if _, err := registry.publish(owner, "delta", 1, 5, "late", false); !errors.Is(err, errAssistantTailTransition) {
 		t.Fatalf("late delta = %v", err)
 	}
 }
@@ -81,17 +81,17 @@ func TestAssistantTailOwnerRevocationPreventsResurrection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := registry.publish(first, "reset", 1, 1, "", false); err != nil {
+	if _, err := registry.publish(first, "reset", 1, 1, "", false); err != nil {
 		t.Fatal(err)
 	}
 	second, err := registry.begin(key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := registry.publish(first, "delta", 1, 2, "late", false); !errors.Is(err, errAssistantTailOwner) {
+	if _, err := registry.publish(first, "delta", 1, 2, "late", false); !errors.Is(err, errAssistantTailOwner) {
 		t.Fatalf("stale owner = %v", err)
 	}
-	if err := registry.publish(second, "reset", 2, 1, "", false); err != nil {
+	if _, err := registry.publish(second, "reset", 2, 1, "", false); err != nil {
 		t.Fatal(err)
 	}
 	snapshots, _ := registry.capture("session")
@@ -110,7 +110,7 @@ func TestAssistantTailCaptureIsRevisionOrdered(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := registry.publish(owner, "reset", 1, 1, "", false); err != nil {
+		if _, err := registry.publish(owner, "reset", 1, 1, "", false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -128,18 +128,18 @@ func TestAssistantTailBoundsFailWithoutTruncation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := registry.publish(owner, "reset", 1, 1, "", false); err != nil {
+	if _, err := registry.publish(owner, "reset", 1, 1, "", false); err != nil {
 		t.Fatal(err)
 	}
 	tooLarge := strings.Repeat("x", maxProviderResponseBytes+1)
-	if err := registry.publish(owner, "delta", 1, 2, tooLarge, false); !errors.Is(err, errAssistantTailOverflow) {
+	if _, err := registry.publish(owner, "delta", 1, 2, tooLarge, false); !errors.Is(err, errAssistantTailOverflow) {
 		t.Fatalf("oversized body = %v", err)
 	}
 	snapshots, _ := registry.capture("session")
 	if len(snapshots) != 0 {
 		t.Fatalf("overflow retained an unsafe replacement: %+v", snapshots)
 	}
-	if err := registry.publish(owner, "delta", 1, 2, "late", false); !errors.Is(err, errAssistantTailOwner) {
+	if _, err := registry.publish(owner, "delta", 1, 2, "late", false); !errors.Is(err, errAssistantTailOwner) {
 		t.Fatalf("overflow did not revoke owner: %v", err)
 	}
 
@@ -150,5 +150,28 @@ func TestAssistantTailBoundsFailWithoutTruncation(t *testing.T) {
 	}
 	if _, err := registry.begin(assistantTailKey{sessionID: "session", runID: "overflow", phase: assistantPhaseFinalAnswer}); !errors.Is(err, errAssistantTailOverflow) {
 		t.Fatalf("entry overflow = %v", err)
+	}
+}
+
+func TestAssistantTailSealRejectsResurrection(t *testing.T) {
+	var registry assistantTailRegistry
+	key := assistantTailKey{sessionID: "session", runID: "run", phase: assistantPhaseFinalAnswer}
+	owner, err := registry.begin(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.publish(owner, "reset", 1, 1, "", false); err != nil {
+		t.Fatal(err)
+	}
+	registry.seal(key)
+	snapshots, _ := registry.capture("session")
+	if len(snapshots) != 0 {
+		t.Fatalf("sealed tail still captured: %+v", snapshots)
+	}
+	if _, err := registry.begin(key); !errors.Is(err, errAssistantTailSealed) {
+		t.Fatalf("begin after seal = %v", err)
+	}
+	if _, err := registry.publish(owner, "delta", 1, 2, "late", false); !errors.Is(err, errAssistantTailSealed) {
+		t.Fatalf("publish after seal = %v", err)
 	}
 }
