@@ -165,7 +165,7 @@ func builtinAgentSpecs() map[string]*AgentSpec {
 			Hidden:          true,
 			MaxTurns:        8,
 			Source:          "built-in",
-			RestrictedTools: map[string]bool{"patch": true, "run": true, "memory": true, "spawn": true, "workflow": true, "mcp": true},
+			RestrictedTools: map[string]bool{"patch": true, "edit": true, "run": true, "memory": true, "spawn": true, "workflow": true, "mcp": true},
 			SystemPrompt: `You are a candidate-drafter for Carina's best-of-n patch generation. You
 explore the workspace (list/read/search/code.*) and design a full-file edit,
 but you NEVER apply it yourself — the "patch" tool is unavailable to you and

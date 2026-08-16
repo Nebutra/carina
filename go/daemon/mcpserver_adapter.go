@@ -62,6 +62,8 @@ func actionFromMCP(name string, args map[string]any) *action {
 		return &action{Tool: "search", Pattern: str("pattern")}
 	case "patch":
 		return &action{Tool: "patch", Path: str("path"), Content: str("content")}
+	case "edit":
+		return &action{Tool: "edit", Path: str("path"), Old: str("old"), New: str("new")}
 	case "run":
 		var cmd []string
 		if raw, ok := args["command"].([]any); ok {

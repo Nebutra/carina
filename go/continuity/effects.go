@@ -26,7 +26,7 @@ func ClassifyTool(tool string, arguments map[string]any) EffectContract {
 	switch tool {
 	case "read", "list", "search", "code.search", "code.symbols", "code.map", "code.def", "code.refs", "code.impact", "mcp_find":
 		return NewEffectContract(EffectPure, "")
-	case "patch":
+	case "patch", "edit":
 		return NewEffectContract(EffectWorkspaceTransactional, "")
 	case "memory":
 		return NewEffectContract(EffectIdempotentExternal, key)

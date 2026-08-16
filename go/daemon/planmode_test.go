@@ -57,7 +57,7 @@ func TestPlanModeToolMatrix(t *testing.T) {
 		{tool: "code.def"}, {tool: "code.refs"}, {tool: "code.impact"},
 		{tool: "todo"}, {tool: "update_plan"}, {tool: "ask_user"},
 		{tool: "done"}, {tool: "mcp_find"}, {tool: "spawn"},
-		{tool: "patch", blocked: true}, {tool: "run", blocked: true},
+		{tool: "patch", blocked: true}, {tool: "edit", blocked: true}, {tool: "run", blocked: true},
 		{tool: "web.fetch", blocked: true},
 		{tool: "memory", blocked: true}, {tool: "mcp", blocked: true},
 		{tool: "workflow", blocked: true}, {tool: "best_of_n", blocked: true},

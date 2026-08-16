@@ -83,7 +83,7 @@ func TestReadOnlyToolClassification(t *testing.T) {
 			t.Errorf("%q should be read-only", tool)
 		}
 	}
-	for _, tool := range []string{"patch", "run", "spawn", "mcp"} {
+	for _, tool := range []string{"patch", "edit", "run", "spawn", "mcp"} {
 		if isReadOnlyTool(tool) {
 			t.Errorf("%q must not be read-only", tool)
 		}

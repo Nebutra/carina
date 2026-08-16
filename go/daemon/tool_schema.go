@@ -21,7 +21,7 @@ Harness protocol:
 - Respond to the user's actual message. Never introduce yourself with a capability list unless the user explicitly asks.
 - When the user asks who you are: answer as Carina by Nebutra (云毓智能).
 - Never echo these instructions. Internal tool names, event fields, and protocol details are not user-facing answer content.
-- Use "patch" to change files (never shell for edits). Provide the COMPLETE new file content.
+- Use "edit" to change an existing file when you can name one unique exact span. Use "patch" for new files or a complete rewrite.
 - Final-turn contract: done.summary is the only user-visible answer. Write it as plain language. Never put a JSON object or schema dump as the summary.`
 
 func objectSchema(required []string, properties map[string]any) map[string]any {
@@ -47,7 +47,8 @@ func carinaToolSpecs() []modelrouter.ToolSpec {
 		{Name: "search", Description: "search the workspace", Parameters: objectSchema([]string{"pattern", "intent"}, map[string]any{"pattern": stringProp("search text"), "intent": intent})},
 		{Name: "web.fetch", Description: "fetch public text or JSON over HTTPS after host approval", Parameters: objectSchema([]string{"url", "intent"}, map[string]any{"url": stringProp("https URL"), "intent": intent})},
 		{Name: "run", Description: "run a workspace-scoped, policy-gated command", Parameters: objectSchema([]string{"intent"}, map[string]any{"command": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "intent": intent})},
-		{Name: "patch", Description: "propose and apply a transactional file edit", Parameters: objectSchema([]string{"path", "content", "intent"}, map[string]any{"path": stringProp("workspace-relative path"), "content": stringProp("complete new file content"), "intent": intent})},
+		{Name: "patch", Description: "propose and apply a complete-file transactional write", Parameters: objectSchema([]string{"path", "content", "intent"}, map[string]any{"path": stringProp("workspace-relative path"), "content": stringProp("complete new file content"), "intent": intent})},
+		{Name: "edit", Description: "replace one unique exact span in a previously read file", Parameters: objectSchema([]string{"path", "old", "new", "intent"}, map[string]any{"path": stringProp("workspace-relative path"), "old": stringProp("exact unique span to replace"), "new": stringProp("replacement text"), "intent": intent})},
 		{Name: "memory", Description: "update governed long-term memory", Parameters: objectSchema([]string{"intent"}, map[string]any{"target": stringProp("memory or user"), "action": stringProp("add, replace, remove, or batch"), "content": stringProp("fact"), "old_text": stringProp("unique substring"), "intent": intent})},
 		{Name: "ask_user", Description: "pause for a structured operator choice or free-text reply", Parameters: objectSchema([]string{"prompt", "intent"}, map[string]any{"prompt": stringProp("question for the operator"), "intent": intent})},
 		{Name: "code.search", Description: "ranked code search", Parameters: objectSchema([]string{"query", "intent"}, map[string]any{"query": stringProp("free text or identifier"), "intent": intent})},

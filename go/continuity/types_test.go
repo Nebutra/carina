@@ -27,6 +27,9 @@ func TestToolEffectRegistryFailsClosed(t *testing.T) {
 	if got := ClassifyTool("web.fetch", nil); got.Class != EffectNonIdempotent || got.ReplaySafe {
 		t.Fatalf("web.fetch is time-varying external input and must not replay: %+v", got)
 	}
+	if got := ClassifyTool("edit", nil); got.Class != EffectWorkspaceTransactional || !got.ReplaySafe {
+		t.Fatalf("edit must share patch's workspace-transactional contract, got %+v", got)
+	}
 }
 
 func TestUnknownEffectIsNotReplaySafe(t *testing.T) {

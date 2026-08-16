@@ -13,7 +13,7 @@ func TestCarinaToolSpecsIncludeDoneAndRead(t *testing.T) {
 	if len(specs) < 8 {
 		t.Fatalf("tool catalog too small: %d", len(specs))
 	}
-	var haveRead, haveDone bool
+	var haveRead, haveDone, haveEdit bool
 	for _, spec := range specs {
 		if spec.Name == "read" {
 			haveRead = true
@@ -24,9 +24,12 @@ func TestCarinaToolSpecsIncludeDoneAndRead(t *testing.T) {
 		if spec.Name == "done" {
 			haveDone = true
 		}
+		if spec.Name == "edit" {
+			haveEdit = true
+		}
 	}
-	if !haveRead || !haveDone {
-		t.Fatalf("missing read or done in %+v", specs)
+	if !haveRead || !haveDone || !haveEdit {
+		t.Fatalf("missing read, done, or edit in %+v", specs)
 	}
 }
 
@@ -57,6 +60,16 @@ func TestDecodeNativeToolCallsReadAndBatch(t *testing.T) {
 		{Name: "patch", Arguments: json.RawMessage(`{"path":"a.go","content":"x","intent":"edit"}`)},
 	}); err == nil {
 		t.Fatal("mixed read/write native set must be rejected")
+	}
+
+	act, err = decodeNativeToolCalls([]modelrouter.ToolCall{{
+		Name: "edit", Arguments: json.RawMessage(`{"path":"a.go","old":"foo","new":"bar","intent":"rename"}`),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if act.Tool != "edit" || act.Path != "a.go" || act.Old != "foo" || act.New != "bar" {
+		t.Fatalf("native edit = %+v", act)
 	}
 }
 

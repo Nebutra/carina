@@ -651,7 +651,7 @@ func parseSummaryContent(text string) (SummaryContent, bool) {
 
 // filesTouched derives the Files(read+modified) section deterministically
 // from the transcript's own turns rather than trusting the model to recall
-// which files it read or changed: ActionBrief for "read" and "patch" tools
+// which files it read or changed: ActionBrief for "read", "patch", and "edit"
 // is always exactly "<tool> <path>" (see briefAction in agent.go), so this
 // is a factual read of what already ran through the kernel, not a
 // re-summarization. Order is first-seen, deduplicated; both are capped so a
@@ -671,8 +671,8 @@ func filesTouched(turns []Turn) (read, modified []string) {
 					read = append(read, path)
 				}
 			}
-		case "patch":
-			path := strings.TrimSpace(strings.TrimPrefix(turn.ActionBrief, "patch "))
+		case "patch", "edit":
+			path := strings.TrimSpace(strings.TrimPrefix(turn.ActionBrief, turn.Tool+" "))
 			if path != "" && !seenMod[path] {
 				seenMod[path] = true
 				if len(modified) < maxFiles {

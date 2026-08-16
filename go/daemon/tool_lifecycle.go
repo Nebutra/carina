@@ -444,7 +444,7 @@ func toolKind(tool string) string {
 		return "read"
 	case "web.fetch":
 		return "network"
-	case "patch", "memory":
+	case "patch", "edit", "memory":
 		return "write"
 	case "run":
 		return "command"
@@ -462,7 +462,7 @@ func toolKind(tool string) string {
 func redactedToolArguments(act *action) map[string]any {
 	args := map[string]any{}
 	switch act.Tool {
-	case "read", "patch":
+	case "read", "patch", "edit":
 		args["path"] = act.Path
 	case "search":
 		args["pattern"] = act.Pattern
