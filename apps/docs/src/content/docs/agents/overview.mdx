@@ -67,7 +67,9 @@ Each turn the reasoner emits one JSON action — or a batch of **read-only** act
 | `{"tool":"read","path":"…"}` | FileRead | kernel-gated read |
 | `{"tool":"search","pattern":"…"}` | FileRead | Zig `carina-grep` |
 | `{"tool":"run","command":["…"]}` | CommandExec (risk-classified) | Zig `carina-run` |
+| `{"tool":"edit","path","old","new"}` | PatchApply | exact unique span → same transactional patch as `patch` |
 | `{"tool":"patch",…}` | PatchApply | Rust transaction → Zig `carina-patch-native` |
+| `{"tool":"web.fetch","url"}` | NetworkAccess | public HTTPS; host approval; no redirects |
 | `{"tool":"memory",…}` | MemoryWrite | governed long-term memory |
 | `{"tool":"ask_user",…}` | — | structured operator choice |
 | `{"tool":"code.search/symbols/…"}` | FileRead | code-intelligence index (+LSP) |
@@ -92,7 +94,7 @@ Destructive commands (`rm -rf`, `curl … | sh`) are **denied** before they run.
 
 | Backend | Role |
 | --- | --- |
-| **model-router** | BYOK provider adapters; prompt segments for caching; media parts when catalog allows |
+| **model-router** | BYOK provider adapters; prompt segments for caching; media parts when catalog allows. Catalog tool-calling models use HTTP tools then JSON fallback. `grok-build/*` stays JSON-only through an isolated `grok` CLI. |
 | **claude-cli** | Explicit compatibility backend using the local `claude -p` headless mode with tools disabled and an empty cwd |
 | **codex-cli** | Explicit compatibility backend using `codex exec` with ephemeral JSONL output, tool features disabled, read-only isolation, and fail-closed event parsing |
 | **scripted** | Fixed decisions for deterministic tests |

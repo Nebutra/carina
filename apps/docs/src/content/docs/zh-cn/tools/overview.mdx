@@ -15,7 +15,8 @@ import Callout from '../../../../components/ui/Callout.astro';
 
 | 工具族 | 典型动作 | 治理边界 |
 | --- | --- | --- |
-| 文件系统 | list / read / search / patch | 只能访问会话工作区 |
+| 文件系统 | list / read / search / edit / patch | 只能访问会话工作区；`edit` 是精确唯一片段 |
+| 网络 | `web.fetch` | 公开 HTTPS、按主机审批、不跟随重定向 |
 | Shell | `run` | `CommandExec` 风险分级、超时、环境白名单 |
 | Memory | add / replace / remove | `MemoryWrite` 审批与内容扫描 |
 | 代码智能 | symbols / def / refs / impact | `FileRead` + 本地索引 |

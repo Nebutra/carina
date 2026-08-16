@@ -23,7 +23,9 @@ carina runs it and feeds back an observation:
 | `{"tool":"read","path":"…"}` | FileRead capability | kernel-gated read |
 | `{"tool":"search","pattern":"…"}` | FileRead capability | Zig `carina-grep` |
 | `{"tool":"run","command":["…"]}` | CommandExec capability (risk-classified) | Zig `carina-run` |
+| `{"tool":"edit","path":"…","old":"…","new":"…"}` | PatchApply capability | exact unique span → same transactional patch as `patch` |
 | `{"tool":"patch","path":"…","content":"…"}` | PatchApply capability | Rust transaction → Zig `carina-patch-native` |
+| `{"tool":"web.fetch","url":"…"}` | NetworkAccess capability | public HTTPS only; host approval; no redirects |
 | `{"tool":"memory","target":"…","action":"…"}` | MemoryWrite capability | governed long-term memory store |
 | `{"tool":"ask_user","prompt":"…","options":[…]}` | — | pauses for a structured operator choice |
 | `{"tool":"code.search/symbols/map/def/refs/impact"}` | FileRead capability | code-intelligence index (+LSP when available) |
@@ -51,11 +53,16 @@ switches are injected as urgent notices.
 ## The reasoner (model backend)
 
 `go/daemon/reasoner.go` defines the `Reasoner` interface (a pure "think"
-step). Four implementations:
+step). Four implementations, plus one dedicated route inside model-router:
 
 - **model-router** — routes through `go/model-router` provider adapters (BYOK).
   Supports prompt segments (stable prefix / volatile suffix) for prompt caching
-  and media parts for catalog-gated vision delivery.
+  and media parts for catalog-gated vision delivery. Catalog models that
+  advertise native tool calling use HTTP tools on the first try and fall back
+  to JSON ReAct. The `grok-build/*` route is JSON-only: Carina drives an
+  isolated `grok` CLI as a pure inference engine and does not enable Grok
+  native tools. If Grok emits a native `tool_call`, Carina keeps any streamed
+  text or requeries instead of executing it.
 - **claude-cli** — uses the local `claude` binary in headless mode
   (`claude -p … --allowedTools "" `) as a pure inference engine, running in an
   isolated empty cwd so it cannot touch the workspace. This supports gateway
@@ -73,7 +80,9 @@ step). Four implementations:
   deterministically with no model and no cost.
 
 The agent's actual file, command, patch, MCP, and web work remains in Carina's
-capability-governed runtime, not in either external CLI.
+capability-governed runtime, not in an external CLI. Interactive turns without
+an output schema or success criteria accept last-turn prose as `done.summary`
+when the model explored and then answered in natural language.
 
 The daemon is provider-first: it selects `model-router` only when an enabled
 provider has a BYOK credential, provider environment variable, or an explicitly

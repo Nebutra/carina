@@ -1,6 +1,6 @@
 # Plugin Model
 
-Plugins extend the runtime without breaking the security boundary. Execution target: **WASM** (Phase 4), hosted by `crates/carina-plugin-runtime`.
+Plugins extend the runtime without breaking the security boundary. Execution target: **WASM**, hosted by `crates/carina-plugin-runtime`. Command/tool plugins can run today; UI/model/policy kinds are declared in the manifest and are not a separate product surface yet.
 
 ## Plugin types
 

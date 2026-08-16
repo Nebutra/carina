@@ -12,12 +12,13 @@
 
 ## Capabilities
 
-Every side effect is one of fourteen capability types (see `protocol/capabilities/capabilities.json`):
+Every side effect is one of eighteen capability types (see `protocol/capabilities/capabilities.json`):
 
 ```
 FileRead  FileWrite  CommandExec  NetworkAccess  SecretRead
 GitOperation  PatchApply  ProcessSpawn  PluginLoad  RemoteExecute
-MemoryWrite  CodeIndex  ContextCompress  SubagentSpawn
+MemoryWrite  MemoryExternalize  CodeIndex  ContextCompress  SubagentSpawn
+SwarmMessage  RemoteDispatch  SwarmSpawn
 ```
 
 A capability request carries: requesting principal (agent / plugin / user), resource (path, command, host), session id, and task id. The kernel returns a `PermissionDecision` (allow / deny / require-approval) with the policy that produced it. Every decision is an audit event; side-effect events reference their decision id. `SubagentSpawn` requests carry a typed resource of the form `agent:NAME:profile:PROFILE` and require approval by default; the child's capabilities are attenuated to a subset of the parent's before the spawn.

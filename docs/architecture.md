@@ -46,7 +46,9 @@ Client Surfaces ──JSON-RPC──▶ Go Control Plane (agent loop) ──Capa
 - `go/artifact` — retention-tiered tool-output artifact store.
 - `go/extensions` — local marketplace: manifest validation, install/enable lifecycle.
 - `go/mcp` / `go/mcpserver` — governed MCP manager and server.
-- `go/contextengine` — context assembly and compaction support.
+- `go/contextengine` — optional compressor boundary; `auto` is a no-op.
+  Live transcript compact (elide → collapse → summary) lives in
+  `go/daemon/transcript.go`.
 - `go/telemetry` — versioned newline-JSON telemetry and cost attribution.
 - `go/runtimecontract` — runtime protocol contracts.
 - `crates/carina-tui` — Grok-derived Ratatui product shell, typed daemon client,

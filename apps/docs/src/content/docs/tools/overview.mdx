@@ -46,7 +46,8 @@ Tools are the only path from model intent to system effect. Carina normalizes to
 
 See the full action table in [Agents overview](/agents/overview/). Families:
 
-- Filesystem: list, read, search, patch
+- Filesystem: list, read, search, edit (exact unique span), patch
+- Network: `web.fetch` (public HTTPS, host approval)
 - Shell: `run` (risk-classified `CommandExec`)
 - Memory: governed long-term entries
 - Code intelligence: search / symbols / map / def / refs / impact
