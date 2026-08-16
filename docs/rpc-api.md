@@ -5,13 +5,14 @@
 `workspace.diff` returns tracked and untracked changes for a session workspace.
 It runs Git with optional locks, fsmonitor, external diff, and textconv disabled;
 it does not refresh the index. Binary contents are omitted, each textual diff is
-capped at 256 KiB, and the response is capped at 1 MiB. The TUI `/diff` command
-opens the result in a pager.
+capped at 256 KiB, and the response is capped at 1 MiB. The TUI surface is
+`/changes`; there is no `/diff` slash command.
 
 `mcp.inventory` returns public MCP server names, tool names, prompt counts, and
-connection health. `/mcp verbose` additionally shows public tool descriptions.
-Process commands, arguments, environment variables, input schemas, and private
-managed servers are never returned.
+connection health. Listed MCP prompts appear as `/mcp.<server>.<prompt>`;
+there is no `/mcp verbose` slash command. Process commands, arguments,
+environment variables, input schemas, and private managed servers are never
+returned.
 
 ## Atomic checkpoint compaction
 

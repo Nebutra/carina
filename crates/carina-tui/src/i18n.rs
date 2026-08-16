@@ -231,6 +231,7 @@ pub enum MessageId {
     NextRun,
     ReadyInWorkspace,
     EmptyConversationPrompt,
+    EmptyConversationHint,
     WorkspaceFallback,
     NewConversation,
     ProductMenu,
@@ -775,6 +776,8 @@ pub enum MessageId {
     FailureReasonEffortUnsupported,
     FailureReasonGenericTurn,
     FailureReasonPolicyProfile,
+    FailureReasonOutputSchema,
+    FailureReasonInvalidActions,
     ToolStatusDenied,
     FailureModelLabel,
     FailureAttemptOne,
@@ -891,6 +894,7 @@ impl MessageId {
         Self::NextRun,
         Self::ReadyInWorkspace,
         Self::EmptyConversationPrompt,
+        Self::EmptyConversationHint,
         Self::WorkspaceFallback,
         Self::NewConversation,
         Self::ProductMenu,
@@ -1435,6 +1439,8 @@ impl MessageId {
         Self::FailureReasonEffortUnsupported,
         Self::FailureReasonGenericTurn,
         Self::FailureReasonPolicyProfile,
+        Self::FailureReasonOutputSchema,
+        Self::FailureReasonInvalidActions,
         Self::ToolStatusDenied,
         Self::FailureModelLabel,
         Self::FailureAttemptOne,
@@ -1549,6 +1555,7 @@ pub fn text(locale: Locale, id: MessageId) -> &'static str {
         (ZhHans, NextRun) => "下一轮",
         (ZhHans, ReadyInWorkspace) => "已在 {workspace} 中就绪",
         (ZhHans, EmptyConversationPrompt) => "描述你想完成的改动。",
+        (ZhHans, EmptyConversationHint) => "输入需求，或 /help · /model · /status",
         (ZhHans, WorkspaceFallback) => "工作区",
         (ZhHans, NewConversation) => "新会话",
         (ZhHans, ProductMenu) => "Carina 菜单",
@@ -1795,6 +1802,12 @@ pub fn localize_operator_failure_reason(locale: Locale, reason: &str) -> String 
         || lower.contains("risk level")
     {
         MessageId::FailureReasonPolicyProfile
+    } else if lower.contains("never matched the required schema")
+        || lower.contains("output schema")
+    {
+        MessageId::FailureReasonOutputSchema
+    } else if lower.contains("invalid actions") {
+        MessageId::FailureReasonInvalidActions
     } else if lower == "the execution did not complete" {
         MessageId::FailureReasonDidNotComplete
     } else {
@@ -2514,6 +2527,7 @@ fn en(id: MessageId) -> &'static str {
         NextRun => "next",
         ReadyInWorkspace => "Ready in {workspace}",
         EmptyConversationPrompt => "Describe the change you want to make.",
+        EmptyConversationHint => "Type a request, or /help · /model · /status",
         WorkspaceFallback => "workspace",
         NewConversation => "New conversation",
         ProductMenu => "Carina menu",
@@ -2767,6 +2781,7 @@ fn zh_hant(id: MessageId) -> &'static str {
         NextRun => "下一輪",
         ReadyInWorkspace => "已在 {workspace} 中就緒",
         EmptyConversationPrompt => "描述你想完成的變更。",
+        EmptyConversationHint => "輸入需求，或 /help · /model · /status",
         WorkspaceFallback => "工作區",
         NewConversation => "新對話",
         ProductMenu => "Carina 選單",
@@ -3168,6 +3183,12 @@ fn translated_compact(id: MessageId, lang: usize) -> &'static str {
             "원하는 변경 사항을 설명하세요.",
             "Describe el cambio que quieres realizar.",
             "Décrivez la modification à effectuer.",
+        ],
+        EmptyConversationHint => [
+            "依頼を入力するか、/help · /model · /status",
+            "요청을 입력하거나 /help · /model · /status",
+            "Escribe una petición, o /help · /model · /status",
+            "Saisissez une demande, ou /help · /model · /status",
         ],
         WorkspaceFallback => [
             "ワークスペース",
@@ -7186,6 +7207,24 @@ fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
             "El modelo no pudo completar este turno. Revisa el proveedor y la red y reintenta si hace falta.",
             "Le modèle n’a pas pu terminer ce tour. Vérifiez le fournisseur et le réseau, puis réessayez si besoin.",
         ],
+        FailureReasonOutputSchema => [
+            "The final answer was not valid JSON for this run. Retry, or ask again without a required output schema.",
+            "最终回答不符合这次运行要求的 JSON。请重试，或在不要求输出 schema 的情况下再问一次。",
+            "最終回答不符合這次執行要求的 JSON。請重試，或不要求輸出 schema 再問一次。",
+            "最終回答がこの実行の JSON 要件に合いませんでした。再試行するか、出力スキーマなしで聞き直してください。",
+            "최종 답변이 이 실행의 JSON 요구와 맞지 않습니다. 다시 시도하거나 출력 스키마 없이 다시 물어보세요.",
+            "La respuesta final no era JSON válido para esta ejecución. Reintenta o pregunta de nuevo sin un esquema de salida.",
+            "La réponse finale n’était pas un JSON valide pour cette exécution. Réessayez ou reposez la question sans schéma de sortie.",
+        ],
+        FailureReasonInvalidActions => [
+            "The model explored but did not finish with a usable answer. Retry the same question.",
+            "模型已探索，但没有给出可用的最终回答。请用同一问题重试。",
+            "模型已探索，但沒有給出可用的最終回答。請用同一問題重試。",
+            "モデルは調査しましたが、使える最終回答を出しませんでした。同じ質問でもう一度試してください。",
+            "모델이 탐색했지만 쓸 수 있는 최종 답을 내지 못했습니다. 같은 질문으로 다시 시도하세요.",
+            "El modelo exploró pero no dejó una respuesta usable. Reintenta la misma pregunta.",
+            "Le modèle a exploré mais n’a pas fourni de réponse utilisable. Réessayez la même question.",
+        ],
         FailureReasonPolicyProfile => [
             "Current policy does not allow this command. Raise the workspace profile or use web.fetch for a public page.",
             "当前策略不允许这条命令。提高工作区权限配置，或对公开网页使用 web.fetch。",
@@ -7637,6 +7676,18 @@ mod tests {
         assert!(policy.contains("策略"), "policy={policy}");
         assert!(!policy.contains("risk level"), "policy={policy}");
         assert_eq!(localize_tool_status(Locale::ZhHans, "denied"), "已拒绝");
+        let schema = localize_operator_failure_reason(
+            Locale::ZhHans,
+            "final output never matched the required schema",
+        );
+        assert!(schema.contains("JSON"), "schema={schema}");
+        assert_ne!(schema, "final output never matched the required schema");
+        let invalid = localize_operator_failure_reason(
+            Locale::ZhHans,
+            "model kept emitting invalid actions",
+        );
+        assert!(invalid.contains("探索") || invalid.contains("回答"), "invalid={invalid}");
+        assert!(!invalid.contains("invalid actions"), "invalid={invalid}");
     }
 
     #[test]
@@ -7675,6 +7726,14 @@ mod tests {
         assert_eq!(
             text(Locale::ZhHans, MessageId::BackToConversation),
             "返回会话"
+        );
+        assert_ne!(
+            text(Locale::En, MessageId::EmptyConversationHint),
+            text(Locale::En, MessageId::EmptyConversationPrompt)
+        );
+        assert_ne!(
+            text(Locale::ZhHans, MessageId::EmptyConversationHint),
+            text(Locale::ZhHans, MessageId::EmptyConversationPrompt)
         );
         for locale in Locale::ALL {
             assert_ne!(

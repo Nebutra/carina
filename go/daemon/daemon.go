@@ -2960,8 +2960,8 @@ func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, provenance tas
 		d.sched.SetTokenBudget(task.RunID, int(budget))
 	}
 	d.sched.SetMode(task.RunID, p.Mode)
-	if len(p.OutputSchema) > 0 {
-		d.sched.SetOutputSchema(task.RunID, p.OutputSchema)
+	if schema := activeOutputSchema(p.OutputSchema); len(schema) > 0 {
+		d.sched.SetOutputSchema(task.RunID, schema)
 	}
 	// Scheduler setters publish immutable task copies. Capture the final
 	// submission envelope once and use that same row for WAL, persistence, and

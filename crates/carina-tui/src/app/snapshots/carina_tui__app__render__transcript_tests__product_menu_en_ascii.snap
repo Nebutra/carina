@@ -22,7 +22,7 @@ Carina v   |  product-menu conversation         model  |  reasoning off   Build
 
 
    Ready in product-menu
-   Describe the change you want to make.
+   Type a request, or /help · /model · /status
 
 
  ──────────────────────────────────────────────────────────────────────────────
@@ -47,6 +47,6 @@ styles:
 (27,7)..(28,7) (Rgb(142, 219, 210), Reset, BOLD)
 (0,8)..(28,8) (Rgb(142, 219, 210), Reset, BOLD)
 (3,18)..(24,18) (Reset, Reset, BOLD)
-(3,19)..(40,19) (Rgb(150, 160, 156), Reset, NONE)
+(3,19)..(46,19) (Rgb(150, 160, 156), Reset, NONE)
 (1,22)..(79,22) (Rgb(52, 65, 68), Reset, NONE)
 (1,23)..(79,23) (Rgb(150, 160, 156), Reset, NONE)

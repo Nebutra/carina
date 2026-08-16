@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -312,7 +313,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 	verifyAttempts := 0
 	streamPublisher := &assistantStreamPublisher{
 		d: d, sessionID: sess.SessionID, taskID: task.RunID,
-		structuredOutput: len(task.OutputSchema) > 0,
+		structuredOutput: len(activeOutputSchema(task.OutputSchema)) > 0,
 	}
 	assistantStream := newReasonerStreamController(streamPublisher.publish)
 	// A cheap summarizer for compaction: reuse the reasoner on the head. The
@@ -583,14 +584,18 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			turnTokens += result.Usage.totalTokens()
 			responsePayload := map[string]any{
 				"turn": turn, "text": sanitizeModelResponseForAudit(raw), "usage": result.Usage,
-				"structured_output": len(task.OutputSchema) > 0,
+				"structured_output": len(activeOutputSchema(task.OutputSchema)) > 0,
 			}
-			if perr == nil && strings.EqualFold(strings.TrimSpace(a.Tool), "done") && len(task.OutputSchema) == 0 {
+			if perr == nil && strings.EqualFold(strings.TrimSpace(a.Tool), "done") && len(activeOutputSchema(task.OutputSchema)) == 0 {
 				responsePayload["presentation_text"] = presentDoneSummary(a.Summary)
 			}
 			d.record(sess.SessionID, "ModelResponded", task.RunID, "model", responsePayload, "")
 			if perr == nil {
 				act, ok = a, true
+				break
+			}
+			if salvaged, accepted := salvageConversationalDone(raw, task); accepted {
+				act, ok = salvaged, true
 				break
 			}
 			lastNativeFallback = fmt.Sprintf("Your last reply was not a valid action JSON (%s). "+
@@ -639,7 +644,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		}
 
 		if act.Tool == "done" {
-			if len(task.OutputSchema) == 0 {
+			if len(activeOutputSchema(task.OutputSchema)) == 0 {
 				act.Summary = presentDoneSummary(act.Summary)
 			}
 			if task.Agent == "plan" && act.ResultKind != "answer" && act.ResultKind != "plan" {
@@ -671,8 +676,8 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 					continue
 				}
 			}
-			if len(task.OutputSchema) > 0 {
-				if missing := carinajsonschema.ValidateJSON(act.Summary, task.OutputSchema); len(missing) > 0 {
+			if schema := activeOutputSchema(task.OutputSchema); len(schema) > 0 {
+				if missing := carinajsonschema.ValidateJSON(act.Summary, schema); len(missing) > 0 {
 					assistantStream.reset()
 					verifyAttempts++
 					if verifyAttempts > maxVerifyAttempts {
@@ -969,7 +974,7 @@ func (d *Daemon) finish(sess *sessionstore.Session, task *scheduler.ExecutionRun
 	}
 	d.record(sess.SessionID, "ExecutionCompleted", task.RunID, "go", map[string]any{
 		"summary": summary, "result_kind": task.ResultKind,
-		"structured_output": len(task.OutputSchema) > 0,
+		"structured_output": len(activeOutputSchema(task.OutputSchema)) > 0,
 	}, "")
 	d.persistRun(task.RunID)
 	if task.Continuity.RecoveryGeneration > 0 {
@@ -1926,6 +1931,46 @@ func redactMemoryActionFields(obj map[string]any) {
 			}
 		}
 	}
+}
+
+// activeOutputSchema returns a real structured-output schema, or nil when the
+// bytes are absent, JSON null, a non-object, or an empty object with no
+// type/required/properties. Interactive TUI turns must not treat those as a
+// required final JSON shape.
+func activeOutputSchema(raw json.RawMessage) json.RawMessage {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil
+	}
+	var spec map[string]any
+	if json.Unmarshal(trimmed, &spec) != nil || spec == nil {
+		return nil
+	}
+	if _, ok := spec["type"]; ok {
+		return raw
+	}
+	if _, ok := spec["required"]; ok {
+		return raw
+	}
+	if _, ok := spec["properties"]; ok {
+		return raw
+	}
+	return nil
+}
+
+// salvageConversationalDone accepts a last-turn prose reply as done.summary
+// when the model explored then answered in natural language instead of the
+// ReAct JSON envelope. Structured-output and success-criteria runs stay
+// fail-closed.
+func salvageConversationalDone(raw string, task *scheduler.ExecutionRun) (action, bool) {
+	if task == nil || len(activeOutputSchema(task.OutputSchema)) > 0 || len(task.SuccessCriteria) > 0 {
+		return action{}, false
+	}
+	text := strings.TrimSpace(raw)
+	if text == "" || looksLikeActionEnvelope(text) {
+		return action{}, false
+	}
+	return action{Tool: "done", Summary: text, ResultKind: "answer"}, true
 }
 
 func parseAction(raw string) (action, error) {

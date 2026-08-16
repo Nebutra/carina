@@ -1,5 +1,7 @@
+use std::path::Path;
+
 use carina_tui::{
-    conversation::{ChromeTone, ComposerChrome, ComposerChromeInput},
+    conversation::{ChromeTone, ComposerChrome, ComposerChromeInput, EmptyConversation},
     i18n::Locale,
     markdown,
     rpc::ModelContextTokens,
@@ -368,13 +370,23 @@ fn golden_reduced_motion_keeps_every_spinner_static() {
 
 #[test]
 fn golden_empty_conversation() {
-    insta::assert_snapshot!(render_case(
-        80,
-        24,
-        "workspace / model",
-        vec![Line::from("Start a conversation.")],
-        false
-    ));
+    insta::assert_snapshot!(render_empty_conversation(80, 24));
+}
+
+fn render_empty_conversation(width: u16, height: u16) -> String {
+    let theme = deterministic_theme(carina_tui::glyphs::GlyphMode::Unicode);
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| {
+            EmptyConversation {
+                workspace: Path::new("/tmp/workspace"),
+                locale: Locale::En,
+            }
+            .render(frame, frame.area(), theme);
+        })
+        .unwrap();
+    serialize_frame(terminal.backend().buffer())
 }
 
 #[test]

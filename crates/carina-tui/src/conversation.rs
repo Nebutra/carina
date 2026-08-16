@@ -46,7 +46,7 @@ impl EmptyConversation<'_> {
                     Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
                 )),
                 Line::from(Span::styled(
-                    tr(self.locale, MessageId::EmptyConversationPrompt),
+                    tr(self.locale, MessageId::EmptyConversationHint),
                     Style::default().fg(theme.muted),
                 )),
             ])
