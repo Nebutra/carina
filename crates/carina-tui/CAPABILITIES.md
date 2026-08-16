@@ -38,8 +38,8 @@ States:
 | Layout constants | **kept** | `layout_contract.rs` | #10 |
 | Live status cell | **kept** | `conversation.rs` typed `ComposerChrome` projection | #21 |
 | i18n/width correctness | **kept** | `i18n.rs`, width helpers | #24 |
-| Transcript typography | **wired** | `layout_contract` role prefix widths; `render.rs` hanging prefixes | #16 |
-| Role labels + accents | **wired** | `theme::transcript_*`; role prefix tests in render | #17 |
+| Transcript typography | **wired** | two-cell dialogue marks; `render.rs` hanging prefixes | #16 |
+| Role labels + accents | **wired** | `theme::transcript_*`; speaker words stay out of the reading measure | #17 |
 | Syntax highlighting | **wired** | `syntax.rs` + markdown fenced code path | #18 |
 | Diff line numbers + word-level | **wired** | `diff_render.rs` + tool Diff body | #19 |
 | Tool intent + grouping + truncation hatch | **wired** | daemon `ToolCallRequested.intent`; `tool_projection` fallback; `transcript` group/expand tests | #20 |

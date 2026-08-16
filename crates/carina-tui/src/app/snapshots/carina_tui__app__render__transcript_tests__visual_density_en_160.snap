@@ -3,9 +3,9 @@ source: crates/carina-tui/src/app/render.rs
 expression: rendered
 ---
 size=160x40
-                    • You     Refactor the transcript without hiding risk.
+                    ❯ Refactor the transcript without hiding risk.
 
-                    • Carina  I will keep routine work quiet and reviewable changes visible across every supported terminal width.
+                    • I will keep routine work quiet and reviewable changes visible across every supported terminal width.
 
                     ▾ Thinking  Inspecting the projection boundary
                     │ Mapping lifecycle owners and render paths.
@@ -27,8 +27,10 @@ size=160x40
                     • Diagnostic  Context compacted
                     │ Older routine tool detail was summarized.
 styles:
-(20,0)..(30,0) (Rgb(195, 202, 198), Reset, BOLD)
-(20,2)..(30,2) (Rgb(142, 219, 210), Reset, BOLD)
+(19,0)..(20,0) (Reset, Rgb(38, 43, 44), NONE)
+(20,0)..(22,0) (Rgb(195, 202, 198), Rgb(38, 43, 44), BOLD)
+(22,0)..(140,0) (Reset, Rgb(38, 43, 44), NONE)
+(20,2)..(22,2) (Rgb(90, 101, 99), Reset, NONE)
 (20,4)..(66,4) (Rgb(90, 101, 99), Reset, DIM | ITALIC)
 (20,5)..(22,5) (Rgb(90, 101, 99), Reset, NONE)
 (22,5)..(64,5) (Rgb(90, 101, 99), Reset, DIM | ITALIC)

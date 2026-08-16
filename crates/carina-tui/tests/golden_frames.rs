@@ -387,27 +387,12 @@ fn golden_single_turn() {
         "carina / high",
         vec![
             Line::from(vec![
-                Span::styled(
-                    format!(
-                        "{}You{}{}",
-                        glyphs.role_prefix(),
-                        " ".repeat(carina_tui::layout_contract::TRANSCRIPT_ROLE_LABEL_WIDTH - 3),
-                        " ".repeat(carina_tui::layout_contract::TRANSCRIPT_ROLE_GAP_WIDTH)
-                    ),
-                    theme.transcript_user(),
-                ),
+                Span::styled(glyphs.prompt(), theme.transcript_user()),
                 Span::raw("Explain the renderer."),
             ]),
             Line::from(""),
             Line::from(vec![
-                Span::styled(
-                    format!(
-                        "{}Carina{}",
-                        glyphs.role_prefix(),
-                        " ".repeat(carina_tui::layout_contract::TRANSCRIPT_ROLE_GAP_WIDTH)
-                    ),
-                    theme.transcript_assistant(),
-                ),
+                Span::styled(glyphs.role_prefix(), theme.transcript_metadata()),
                 Span::raw("The transcript is retained and width-aware."),
             ]),
         ],

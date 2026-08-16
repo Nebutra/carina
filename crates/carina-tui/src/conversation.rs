@@ -1,15 +1,15 @@
 use std::path::Path;
 use std::time::Duration;
 
-use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
+use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::glyphs::Glyphs;
-use crate::i18n::{Locale, MessageId, format as tr_format, text as tr};
+use crate::i18n::{format as tr_format, text as tr, Locale, MessageId};
 use crate::render_contract::truncate_width_with_glyphs;
 use crate::rpc::{ExecutionRun, LiveActivityUpdate, ModelContextTokens, Session, WireEvent};
 use crate::theme::Theme;
@@ -153,11 +153,17 @@ impl ComposerChrome {
             input.priority_notice,
             !input.notice.trim().is_empty(),
         );
-        let (mut run_value, run_tone, active) = execution_state(locale, input.execution_status);
-        if active && let Some(elapsed) = input.elapsed {
-            run_value.push(' ');
-            run_value.push_str(&fmt_elapsed_compact(elapsed));
-        }
+        let (status_value, run_tone, active) = execution_state(locale, input.execution_status);
+        let run_value = if active {
+            input.elapsed.map(fmt_elapsed_compact)
+        } else if matches!(
+            mode,
+            FooterMode::Idle | FooterMode::Notice | FooterMode::PriorityNotice
+        ) {
+            None
+        } else {
+            Some(status_value)
+        };
         let notice = input.notice.trim();
         let primary = if input.priority_notice && !notice.is_empty() {
             Some(ChromePrimary {
@@ -201,12 +207,10 @@ impl ComposerChrome {
             None
         };
 
-        let mut slots = vec![slot(
-            ChromeSlotKind::Run,
-            label(locale, MessageId::ChromeRun),
-            run_value,
-            run_tone,
-        )];
+        let mut slots = Vec::new();
+        if let Some(run_value) = run_value {
+            slots.push(slot(ChromeSlotKind::Run, "", run_value, run_tone));
+        }
         if input.queued_follow_ups > 0 {
             slots.push(slot(
                 ChromeSlotKind::Queue,
@@ -370,14 +374,19 @@ fn minimum_slot_width(kind: ChromeSlotKind) -> usize {
 }
 
 fn slot(kind: ChromeSlotKind, label: &str, value: String, tone: ChromeTone) -> ChromeSlot {
-    let compact_text = if kind == ChromeSlotKind::Queue {
+    let labeled = if label.is_empty() {
+        value.clone()
+    } else {
         format!("{label} {value}")
+    };
+    let compact_text = if kind == ChromeSlotKind::Queue {
+        labeled.clone()
     } else {
         value.clone()
     };
     ChromeSlot {
         kind,
-        text: format!("{label} {value}"),
+        text: labeled,
         compact_text,
         tone,
         capability: (kind == ChromeSlotKind::Queue).then_some(ChromeCapability::OpenQueue),
@@ -1048,12 +1057,10 @@ mod tests {
         let primary = &chrome.primary.as_ref().expect("active primary").text;
         assert!(primary.starts_with("list 2s"), "{primary}");
         assert!(!primary.contains("11m47"), "{primary}");
-        assert!(
-            chrome
-                .visible_slots(120)
-                .iter()
-                .any(|slot| slot.kind == ChromeSlotKind::Run && slot.text.contains("11m47"))
-        );
+        assert!(chrome
+            .visible_slots(120)
+            .iter()
+            .any(|slot| slot.kind == ChromeSlotKind::Run && slot.text.contains("11m47")));
     }
 
     #[test]
@@ -1121,12 +1128,10 @@ mod tests {
         assert!(!primary.text.contains("1m02"));
         assert!(primary.text.contains("Esc pause safely"));
         assert!(!primary.text.contains("+2 queued"));
-        assert!(
-            chrome
-                .visible_slots(120)
-                .iter()
-                .any(|slot| slot.kind == ChromeSlotKind::Run && slot.text.contains("1m02"))
-        );
+        assert!(chrome
+            .visible_slots(120)
+            .iter()
+            .any(|slot| slot.kind == ChromeSlotKind::Run && slot.text.contains("1m02")));
     }
 
     #[test]
@@ -1156,7 +1161,7 @@ mod tests {
             let slots = chrome.layout_slots(60, glyphs);
             assert_eq!(
                 slots.iter().map(|slot| slot.kind).collect::<Vec<_>>(),
-                [ChromeSlotKind::Run, ChromeSlotKind::Queue]
+                [ChromeSlotKind::Queue]
             );
             let separator_width =
                 UnicodeWidthStr::width(format!(" {} ", glyphs.separator()).as_str()) as u16;
@@ -1330,7 +1335,7 @@ mod tests {
         };
 
         assert_eq!(project("ready", "", 80), 0);
-        assert_eq!(project("running", "", 80), 2);
+        assert_eq!(project("running", "", 80), 1);
         assert_eq!(project("waiting_approval", "", 80), 1);
         assert_eq!(project("failed", "", 80), 1);
         assert_eq!(project("ready", "Message added", 60), 1);
@@ -1387,7 +1392,7 @@ mod tests {
             .iter()
             .find(|slot| slot.kind == ChromeSlotKind::Run)
             .unwrap();
-        assert_eq!(run.text, "run unknown");
+        assert_eq!(run.text, "unknown");
         assert!(!run.text.contains("future_wire_state"));
         assert_eq!(slots.len(), 1);
     }
@@ -1441,11 +1446,7 @@ mod tests {
                 let slots = chrome.layout_slots(60, glyphs);
                 assert_eq!(
                     slots.iter().map(|slot| slot.kind).collect::<Vec<_>>(),
-                    [
-                        ChromeSlotKind::Run,
-                        ChromeSlotKind::Queue,
-                        ChromeSlotKind::Context,
-                    ],
+                    [ChromeSlotKind::Queue, ChromeSlotKind::Context,],
                     "protected slot set changed for {locale:?} in {mode:?}"
                 );
                 let queue = slots
@@ -1556,11 +1557,9 @@ mod tests {
                 animated: false,
             })
         );
-        assert!(
-            !chrome
-                .visible_slots(120)
-                .iter()
-                .any(|slot| slot.text.contains("stale activity"))
-        );
+        assert!(!chrome
+            .visible_slots(120)
+            .iter()
+            .any(|slot| slot.text.contains("stale activity")));
     }
 }

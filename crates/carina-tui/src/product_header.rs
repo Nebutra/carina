@@ -1,16 +1,16 @@
 use std::path::Path;
 
-use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::component::{Action, ComponentId, HitRegion, InteractionMap};
-use crate::i18n::{Locale, MessageId, text};
+use crate::i18n::{text, Locale, MessageId};
 use crate::layout_contract as layout;
-use crate::terminal_logo::{MARK_HEIGHT_CELLS, MARK_WIDTH_CELLS, lines as terminal_logo_lines};
+use crate::terminal_logo::{lines as terminal_logo_lines, MARK_HEIGHT_CELLS, MARK_WIDTH_CELLS};
 use crate::theme::Theme;
 
 const COMPACT_NAME: &str = "Carina";
@@ -209,9 +209,7 @@ impl ProductHeader<'_> {
             Paragraph::new(Line::from(vec![
                 Span::styled(
                     COMPACT_NAME,
-                    Style::default()
-                        .fg(theme.brand)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
                     truncate_width(
@@ -404,9 +402,7 @@ impl ConversationHeader<'_> {
             format!("  {separator}  {}", self.title)
         };
         let name_width = UnicodeWidthStr::width(product_label.as_str());
-        let product_style = Style::default()
-            .fg(theme.brand)
-            .add_modifier(Modifier::BOLD);
+        let product_style = Style::default().fg(theme.text).add_modifier(Modifier::BOLD);
         let product_style = if self.product_menu_open {
             product_style.patch(theme.focus())
         } else if interactions.hovered(product_component) {
@@ -464,9 +460,9 @@ fn truncate_width(value: &str, max_width: usize, glyphs: crate::glyphs::Glyphs) 
 
 #[cfg(test)]
 mod tests {
-    use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::layout::Position;
+    use ratatui::Terminal;
 
     use super::*;
 
@@ -567,11 +563,9 @@ mod tests {
             .flat_map(|row| (1..=MARK_WIDTH_CELLS).map(move |column| (column, row)))
             .map(|position| buffer.cell(position).unwrap().symbol())
             .collect::<String>();
-        assert!(
-            rendered
-                .chars()
-                .any(|glyph| ('\u{2801}'..='\u{28ff}').contains(&glyph))
-        );
+        assert!(rendered
+            .chars()
+            .any(|glyph| ('\u{2801}'..='\u{28ff}').contains(&glyph)));
         assert!(!rendered.contains('\u{10eeee}'));
         assert!(!rendered.contains("\x1b_G"));
     }
@@ -617,13 +611,11 @@ mod tests {
         assert!(rendered.contains("carina"));
         assert!(!rendered.contains("private session id"));
         assert!(!rendered.contains("failed"));
-        assert!(
-            buffer
-                .cell((0, 0))
-                .unwrap()
-                .modifier
-                .contains(Modifier::BOLD)
-        );
+        assert!(buffer
+            .cell((0, 0))
+            .unwrap()
+            .modifier
+            .contains(Modifier::BOLD));
     }
 
     #[test]

@@ -4,7 +4,7 @@ expression: "render_status(\"running\", Some(\"running tests\"), 0, None)"
 ---
 size=120x2
 ⠦ running tests 4s  Esc pause safely
-run running 1m02
+1m02
 styles:
 (0, 0)..(36, 0) (Rgb(142, 219, 210), Reset, NONE)
-(0, 1)..(16, 1) (Rgb(142, 219, 210), Reset, NONE)
+(0, 1)..(4, 1) (Rgb(142, 219, 210), Reset, NONE)

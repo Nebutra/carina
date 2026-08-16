@@ -26,7 +26,7 @@ Carina ▾   ·  carina conversation                                            
                              │ [ Enter Apply ] [ Esc Keep current ]                       │
                              ╰────────────────────────────────────────────────────────────╯
 styles:
-(0,0)..(9,0) (Rgb(222, 133, 155), Reset, BOLD)
+(0,0)..(9,0) (Reset, Reset, BOLD)
 (9,0)..(33,0) (Rgb(150, 160, 156), Reset, NONE)
 (87,0)..(112,0) (Rgb(150, 160, 156), Reset, NONE)
 (113,0)..(120,0) (Rgb(142, 219, 210), Reset, BOLD)

@@ -4,7 +4,5 @@ expression: rendered
 ---
 size=120x2
 ⠋ 正在运行聚焦检查 0s  Esc 在安全点暂停
-执行 正在运行
 styles:
 (0,0)..(39,0) (Rgb(142, 219, 210), Reset, NONE)
-(0,1)..(13,1) (Rgb(142, 219, 210), Reset, NONE)

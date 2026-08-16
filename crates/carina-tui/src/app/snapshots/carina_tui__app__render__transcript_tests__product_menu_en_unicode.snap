@@ -26,7 +26,7 @@ Carina ▾   ·  product-menu conversation         model  ·  reasoning off   Bu
 
 
  ──────────────────────────────────────────────────────────────────────────────
- ❯
+ ❯ Describe the change you want to make.
 styles:
 (0,0)..(9,0) (Rgb(142, 219, 210), Reset, BOLD)
 (9,0)..(39,0) (Rgb(150, 160, 156), Reset, NONE)
@@ -49,4 +49,4 @@ styles:
 (3,18)..(24,18) (Reset, Reset, BOLD)
 (3,19)..(40,19) (Rgb(150, 160, 156), Reset, NONE)
 (1,22)..(79,22) (Rgb(52, 65, 68), Reset, NONE)
-(1,23)..(3,23) (Rgb(150, 160, 156), Reset, NONE)
+(1,23)..(79,23) (Rgb(150, 160, 156), Reset, NONE)

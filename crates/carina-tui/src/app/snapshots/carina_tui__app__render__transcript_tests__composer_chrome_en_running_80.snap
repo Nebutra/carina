@@ -4,7 +4,5 @@ expression: rendered
 ---
 size=80x2
 ⠋ Running focused checks 0s  Esc pause safely
-run running
 styles:
 (0,0)..(45,0) (Rgb(142, 219, 210), Reset, NONE)
-(0,1)..(11,1) (Rgb(142, 219, 210), Reset, NONE)

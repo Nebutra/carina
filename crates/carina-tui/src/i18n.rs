@@ -756,6 +756,8 @@ pub enum MessageId {
     FailureReasonCircuitOpen,
     FailureReasonEffortUnsupported,
     FailureReasonGenericTurn,
+    FailureReasonPolicyProfile,
+    ToolStatusDenied,
     FailureModelLabel,
     FailureAttemptOne,
     FailureAttemptOther,
@@ -1396,6 +1398,8 @@ impl MessageId {
         Self::FailureReasonCircuitOpen,
         Self::FailureReasonEffortUnsupported,
         Self::FailureReasonGenericTurn,
+        Self::FailureReasonPolicyProfile,
+        Self::ToolStatusDenied,
         Self::FailureModelLabel,
         Self::FailureAttemptOne,
         Self::FailureAttemptOther,
@@ -1750,11 +1754,35 @@ pub fn localize_operator_failure_reason(locale: Locale, reason: &str) -> String 
         || lower.contains("could not complete this turn")
     {
         MessageId::FailureReasonGenericTurn
+    } else if lower.contains("requires an explicit profile")
+        || lower.contains("exceeds profile ceiling")
+        || lower.contains("risk level")
+    {
+        MessageId::FailureReasonPolicyProfile
     } else if lower == "the execution did not complete" {
         MessageId::FailureReasonDidNotComplete
     } else {
         // Unknown product copy: keep operator-facing text as-is.
         return trimmed.to_owned();
+    };
+    text(locale, id).to_owned()
+}
+
+pub fn localize_tool_status(locale: Locale, status: &str) -> String {
+    let id = match status.trim().to_ascii_lowercase().as_str() {
+        "denied" => MessageId::ToolStatusDenied,
+        "failed" | "error" => MessageId::StatusFailed,
+        "cancelled" | "canceled" => MessageId::StatusCancelled,
+        "waiting approval" | "awaiting_approval" | "permission_requested" => {
+            MessageId::StatusWaitingApproval
+        }
+        "pending" | "requested" => MessageId::StatusQueued,
+        "running" | "started" => MessageId::StatusRunning,
+        "rolled back" | "rolled_back" => {
+            return text(locale, MessageId::StatusCancelled).to_owned()
+        }
+        "" => return String::new(),
+        _ => return status.to_owned(),
     };
     text(locale, id).to_owned()
 }
@@ -6966,6 +6994,24 @@ fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
             "El modelo no pudo completar este turno. Revisa el proveedor y la red y reintenta si hace falta.",
             "Le modèle n’a pas pu terminer ce tour. Vérifiez le fournisseur et le réseau, puis réessayez si besoin.",
         ],
+        FailureReasonPolicyProfile => [
+            "Current policy does not allow this command. Raise the workspace profile or use web.fetch for a public page.",
+            "当前策略不允许这条命令。提高工作区权限配置，或对公开网页使用 web.fetch。",
+            "目前策略不允許這條命令。提高工作區權限設定，或對公開網頁使用 web.fetch。",
+            "現在のポリシーではこのコマンドを許可していません。ワークスペース権限を上げるか、公開ページは web.fetch を使ってください。",
+            "현재 정책은 이 명령을 허용하지 않습니다. 작업 공간 권한을 높이거나 공개 페이지는 web.fetch를 사용하세요.",
+            "La política actual no permite este comando. Sube el perfil del espacio o usa web.fetch para una página pública.",
+            "La politique actuelle n’autorise pas cette commande. Augmentez le profil de l’espace ou utilisez web.fetch pour une page publique.",
+        ],
+        ToolStatusDenied => [
+            "denied",
+            "已拒绝",
+            "已拒絕",
+            "拒否",
+            "거부됨",
+            "denegado",
+            "refusé",
+        ],
         FailureModelLabel => [
             "Failed model",
             "失败模型",
@@ -7392,6 +7438,13 @@ mod tests {
             "ccswitch-codex/x: reasoning effort is not supported by this adapter",
         );
         assert!(effort.contains("推理"), "effort={effort}");
+        let policy = localize_operator_failure_reason(
+            Locale::ZhHans,
+            "risk level 4 requires an explicit profile",
+        );
+        assert!(policy.contains("策略"), "policy={policy}");
+        assert!(!policy.contains("risk level"), "policy={policy}");
+        assert_eq!(localize_tool_status(Locale::ZhHans, "denied"), "已拒绝");
     }
 
     #[test]

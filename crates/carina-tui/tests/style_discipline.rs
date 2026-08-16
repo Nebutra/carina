@@ -46,6 +46,7 @@ fn transcript_uses_owned_role_and_accent_helpers() {
         .expect("transcript renderer stays between named functions");
     for owned in [
         "transcript_user()",
+        "transcript_user_band()",
         "transcript_assistant()",
         "transcript_thinking()",
         "transcript_tool()",
@@ -76,7 +77,7 @@ fn transcript_uses_owned_role_and_accent_helpers() {
     let contract = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("styles.md"))
         .expect("read terminal style contract");
     assert!(contract.contains("no more than three saturated foreground hues"));
-    assert!(contract.contains("same ten-cell first-line prefix"));
+    assert!(contract.contains("speaker words"));
     assert!(contract.contains("Below 72"));
     assert!(contract.contains("two-cell semantic rail"));
 }

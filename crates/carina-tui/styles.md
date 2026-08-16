@@ -41,17 +41,28 @@ approximation of a dark truecolor screenshot.
 
 ## Transcript grammar
 
-User and assistant messages share one responsive styled role-prefix grammar. The
-prefix is part of the wrap input, not inserted after wrapping: a two-cell
-semantic mark, a six-cell locale-owned role label, and a two-cell relationship
-gap produce the same ten-cell first-line prefix for both roles. At 72 content
-cells and above, continuation rows retain that ten-cell hanging indent. Below 72
-cells, continuation rows retain only the two-cell semantic rail so the role does
-not consume a disproportionate share of the reading measure. All seven locale
-labels must fit the six-cell field. Extreme-width degradation may clip the
-prefix to preserve one body cell; it must never drop or rewrite message
-graphemes. Long URLs wrap at grapheme boundaries without inserted whitespace,
-hyphens, or mutated bytes.
+Dialogue turns are typed cells, not an IRC nick column. User and assistant
+bodies share one wrap grammar: a two-cell semantic mark is part of the wrap
+input, continuation rows hang by those same two cells, and the locale-owned
+speaker words (`You` / `Carina` / `你`) stay out of the reading measure.
+Identity lives in the product header.
+
+The user mark is the same width-locked prompt glyph as the composer (`❯ ` /
+`> `). The assistant mark is the quiet two-cell bullet. User turns paint the
+sanctioned `user_message_bg` band behind the prompt and body so turns stay
+scannable; selection replaces that band. Basic and no-color modes keep the
+background Reset.
+
+Steer turns keep the steer mark and the localized "You steered" metadata; they
+do not add a second speaker word. Imported history may show its source marker
+on the first visual row. Below 72 content cells, imported continuation rows
+retain only the two-cell semantic rail so a long source label does not consume
+the reading measure. All seven locale labels must still fit the six-cell field
+when a surface has to name a role.
+
+Extreme-width degradation may clip the prefix to preserve one body cell; it
+must never drop or rewrite message graphemes. Long URLs wrap at grapheme
+boundaries without inserted whitespace, hyphens, or mutated bytes.
 Production rendering and golden frames share `transcript_content`, which applies
 the `TRANSCRIPT_READING_MAX_WIDTH` measure instead of the wider product canvas.
 

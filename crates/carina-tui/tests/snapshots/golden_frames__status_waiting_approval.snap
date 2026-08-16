@@ -4,6 +4,6 @@ expression: "render_status(\"waiting_approval\", None, 0, None)"
 ---
 size=120x2
 
-run waiting for approval
+waiting for approval
 styles:
-(0, 1)..(24, 1) (Rgb(232, 168, 95), Reset, NONE)
+(0, 1)..(20, 1) (Rgb(232, 168, 95), Reset, NONE)

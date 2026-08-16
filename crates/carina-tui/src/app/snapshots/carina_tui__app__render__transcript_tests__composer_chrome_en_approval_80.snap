@@ -3,6 +3,6 @@ source: crates/carina-tui/src/app/render.rs
 expression: rendered
 ---
 size=80x2
-run waiting for approval
+waiting for approval
 styles:
-(0,0)..(24,0) (Rgb(232, 168, 95), Reset, NONE)
+(0,0)..(20,0) (Rgb(232, 168, 95), Reset, NONE)

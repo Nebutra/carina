@@ -172,7 +172,7 @@ impl TranscriptBlock {
     pub fn localized_status(&self, locale: Locale) -> String {
         match self.tool_group_state() {
             Some((_, _, _, failures)) => i18n::tool_group_failure(locale, failures),
-            None => self.status.clone(),
+            None => i18n::localize_tool_status(locale, &self.status),
         }
     }
 

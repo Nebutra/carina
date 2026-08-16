@@ -4,9 +4,9 @@ expression: "render_status(\"running\", Some(\"checking context\"), 0, Some(&war
 ---
 size=120x2
 ⠦ checking context 4s  Esc pause safely
-run running 1m02 · ctx 85%
+1m02 · ctx 85%
 styles:
 (0, 0)..(39, 0) (Rgb(142, 219, 210), Reset, NONE)
-(0, 1)..(16, 1) (Rgb(142, 219, 210), Reset, NONE)
-(16, 1)..(19, 1) (Rgb(150, 160, 156), Reset, NONE)
-(19, 1)..(26, 1) (Rgb(232, 168, 95), Reset, NONE)
+(0, 1)..(4, 1) (Rgb(142, 219, 210), Reset, NONE)
+(4, 1)..(7, 1) (Rgb(150, 160, 156), Reset, NONE)
+(7, 1)..(14, 1) (Rgb(232, 168, 95), Reset, NONE)

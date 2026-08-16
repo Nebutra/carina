@@ -3,9 +3,9 @@ source: crates/carina-tui/src/app/render.rs
 expression: rendered_frame_text(terminal.backend().buffer())
 ---
 size=120x40
- • You     Refactor the transcript without hiding risk.
+ ❯ Refactor the transcript without hiding risk.
 
- • Carina  I will keep routine work quiet and reviewable changes visible across every supported terminal width.
+ • I will keep routine work quiet and reviewable changes visible across every supported terminal width.
 
  ▾ Thinking  Inspecting the projection boundary
  │ Mapping lifecycle owners and render paths.

@@ -32,7 +32,7 @@ use crate::glyphs::{GlyphMode, GlyphPreference, GlyphSource, Glyphs};
 use crate::history_search::HistoryMode;
 use crate::i18n::{
     Locale, MessageId, count as tr_count, format as tr_format, localize_operator_failure_reason,
-    model_health_reason_label, model_health_status_label, text as tr,
+    localize_tool_status, model_health_reason_label, model_health_status_label, text as tr,
 };
 use crate::layout_contract;
 use crate::markdown::{
@@ -3013,6 +3013,7 @@ impl App {
             let component = ComponentId::stable("transcript", &block.id);
             let hovered = self.interactions.hovered(component);
             let dimmed = selection_anchor.is_some_and(|anchor| relative_index > anchor);
+            let user_band = cell_kind == SemanticCellKind::User && !block.selected;
             let mut label_style = match cell_kind {
                 SemanticCellKind::User => self.theme.transcript_user(),
                 SemanticCellKind::Assistant
@@ -3142,10 +3143,15 @@ impl App {
                     span.style = span.style.patch(hover_style);
                 }
             }
+            let band = if user_band {
+                self.theme.transcript_user_band()
+            } else {
+                Style::default()
+            };
             let style = if block.selected {
                 self.theme.selected().add_modifier(Modifier::BOLD)
             } else {
-                Style::default()
+                band
             };
             // Chrome lives in the outer gutter and never changes the content
             // width. Use a blank cell when inactive: Color::Reset is the
@@ -3167,16 +3173,15 @@ impl App {
                 layout_contract::TRANSCRIPT_HORIZONTAL_INSET,
                 block_area.height,
             );
+            let chrome_style = if chrome_visible {
+                Style::default().fg(accent)
+            } else {
+                Style::default()
+            }
+            .patch(band);
             frame.render_widget(
                 Paragraph::new(vec![
-                    Line::styled(
-                        chrome_glyph,
-                        if chrome_visible {
-                            Style::default().fg(accent)
-                        } else {
-                            Style::default()
-                        },
-                    );
+                    Line::styled(chrome_glyph, chrome_style);
                     chrome_area.height as usize
                 ]),
                 chrome_area,
@@ -3417,6 +3422,13 @@ impl App {
             frame.buffer_mut(),
             &mut self.composer_state,
         );
+        if self.composer.is_empty() && input.width > 0 && input.height > 0 {
+            frame.render_widget(
+                Paragraph::new(tr(locale, MessageId::EmptyConversationPrompt))
+                    .style(self.theme.muted()),
+                input,
+            );
+        }
         self.composer_area = input;
         self.interactions.register(HitRegion {
             component,
@@ -8303,18 +8315,19 @@ fn transcript_lines_with_tool_key_and_density(
         let marker = if block.user_kind == UserBlockKind::Steer {
             glyphs.steer()
         } else {
-            glyphs.role_prefix()
+            glyphs.prompt()
         };
-        let role_label = imported_transcript_role_label(block)
-            .unwrap_or_else(|| tr(locale, MessageId::TranscriptYou));
-        let prefix = transcript_role_prefix_with_width(
-            marker,
-            role_label,
-            label_style,
-            metadata_style,
-            content_width,
-            imported_transcript_role_width(block),
-        );
+        let prefix = match imported_transcript_role_label(block) {
+            Some(role_label) => transcript_role_prefix_with_width(
+                marker,
+                role_label,
+                label_style,
+                metadata_style,
+                content_width,
+                imported_transcript_role_width(block),
+            ),
+            None => transcript_dialogue_mark(marker, label_style, metadata_style),
+        };
         let mut body = block.body.split('\n');
         let mut first = Vec::new();
         if block.user_kind == UserBlockKind::Steer {
@@ -8335,16 +8348,17 @@ fn transcript_lines_with_tool_key_and_density(
         return wrap_styled_lines(logical_lines, usize::from(content_width), &prefix);
     }
     if cell_kind == SemanticCellKind::Assistant {
-        let role_label = imported_transcript_role_label(block)
-            .unwrap_or_else(|| tr(locale, MessageId::TranscriptCarina));
-        let prefix = transcript_role_prefix_with_width(
-            glyphs.role_prefix(),
-            role_label,
-            label_style,
-            metadata_style,
-            content_width,
-            imported_transcript_role_width(block),
-        );
+        let prefix = match imported_transcript_role_label(block) {
+            Some(role_label) => transcript_role_prefix_with_width(
+                glyphs.role_prefix(),
+                role_label,
+                label_style,
+                metadata_style,
+                content_width,
+                imported_transcript_role_width(block),
+            ),
+            None => transcript_dialogue_mark(glyphs.role_prefix(), metadata_style, metadata_style),
+        };
         return render_markdown_prefixed(
             &block.body,
             content_width,
@@ -8547,8 +8561,16 @@ fn transcript_lines_with_tool_key_and_density(
     {
         lines.extend(todo_item_lines(&block.todo_items, tool_context));
     } else if block.kind == BlockKind::Tool && !block.body.is_empty() {
+        let body = if matches!(
+            block.status.as_str(),
+            "denied" | "failed" | "cancelled" | "timed_out"
+        ) {
+            localize_operator_failure_reason(locale, &block.body)
+        } else {
+            block.body.clone()
+        };
         lines.extend(tool_detail_lines(
-            &block.body,
+            &body,
             block.body_kind,
             block.expanded,
             tool_context,
@@ -8721,10 +8743,13 @@ fn tool_group_member_lines(
             styles.removed,
         ),
         Span::styled(
-            if member.status.is_empty() {
-                String::new()
-            } else {
-                format!("  {}", member.status)
+            {
+                let status = localize_tool_status(context.locale, &member.status);
+                if status.is_empty() {
+                    String::new()
+                } else {
+                    format!("  {status}")
+                }
             },
             styles.metadata,
         ),
@@ -9525,23 +9550,12 @@ fn tool_hint_line(hint: String, context: ToolLineContext, nested: bool) -> Line<
     ])
 }
 
-#[cfg(test)]
-#[cfg(test)]
-fn transcript_role_prefix(
+fn transcript_dialogue_mark(
     marker: &'static str,
-    label: &str,
-    label_style: Style,
+    mark_style: Style,
     continuation_style: Style,
-    content_width: u16,
 ) -> StyledPrefix {
-    transcript_role_prefix_with_width(
-        marker,
-        label,
-        label_style,
-        continuation_style,
-        content_width,
-        layout_contract::TRANSCRIPT_ROLE_LABEL_WIDTH,
-    )
+    StyledPrefix::hanging(vec![Span::styled(marker, mark_style)], continuation_style)
 }
 
 fn transcript_role_prefix_with_width(
@@ -9555,14 +9569,14 @@ fn transcript_role_prefix_with_width(
     let label = truncate_cells(label, label_field_width, Glyphs::new(GlyphMode::Unicode));
     let label_width = UnicodeWidthStr::width(label.as_str());
     let padded_label = format!(
-        "{label}{}{}",
-        " ".repeat(label_field_width.saturating_sub(label_width)),
+        "{label}{}",
         " ".repeat(layout_contract::TRANSCRIPT_ROLE_GAP_WIDTH)
     );
+    let first_width = layout_contract::transcript_role_first_width(label_width);
     let continuation_width = if content_width < layout_contract::TRANSCRIPT_FULL_ROLE_MIN_WIDTH {
         layout_contract::TRANSCRIPT_ROLE_MARK_WIDTH
     } else {
-        layout_contract::TRANSCRIPT_ROLE_PREFIX_WIDTH
+        first_width
     };
     let prefix = StyledPrefix::hanging_with_width(
         vec![
@@ -9572,12 +9586,7 @@ fn transcript_role_prefix_with_width(
         continuation_width,
         continuation_style,
     );
-    debug_assert_eq!(
-        prefix.width(),
-        layout_contract::TRANSCRIPT_ROLE_MARK_WIDTH
-            + label_field_width
-            + layout_contract::TRANSCRIPT_ROLE_GAP_WIDTH
-    );
+    debug_assert_eq!(prefix.width(), first_width);
     prefix
 }
 
@@ -9591,10 +9600,7 @@ fn imported_transcript_role_width(block: &TranscriptBlock) -> usize {
     imported_transcript_role_label(block)
         .map(UnicodeWidthStr::width)
         .unwrap_or(layout_contract::TRANSCRIPT_ROLE_LABEL_WIDTH)
-        .clamp(
-            layout_contract::TRANSCRIPT_ROLE_LABEL_WIDTH,
-            layout_contract::TRANSCRIPT_IMPORTED_ROLE_LABEL_MAX_WIDTH,
-        )
+        .clamp(1, layout_contract::TRANSCRIPT_IMPORTED_ROLE_LABEL_MAX_WIDTH)
 }
 
 #[cfg(test)]
@@ -10562,21 +10568,29 @@ mod transcript_tests {
         let mut imported_assistant = block(BlockKind::Assistant, "The parser is bounded.");
         imported_assistant.title = "Claude Code import".into();
 
-        for imported in [&imported_user, &imported_assistant] {
-            let rendered = plain(&transcript_lines_with_tool_key(
-                imported,
-                Locale::En,
-                TranscriptStyles::default(),
-                80,
-                "Ctrl+O",
-            ));
-            let first = rendered.first().map(String::as_str).unwrap_or_default();
-            assert!(first.starts_with(&format!(
-                "{}Claude Code import",
-                Glyphs::default().role_prefix()
-            )));
-            assert!(!first.starts_with(&format!("{}Carina", Glyphs::default().role_prefix())));
-        }
+        let user = plain(&transcript_lines_with_tool_key(
+            &imported_user,
+            Locale::En,
+            TranscriptStyles::default(),
+            80,
+            "Ctrl+O",
+        ));
+        let assistant = plain(&transcript_lines_with_tool_key(
+            &imported_assistant,
+            Locale::En,
+            TranscriptStyles::default(),
+            80,
+            "Ctrl+O",
+        ));
+        assert!(user[0].starts_with(&format!(
+            "{}Claude Code import",
+            Glyphs::default().prompt()
+        )));
+        assert!(assistant[0].starts_with(&format!(
+            "{}Claude Code import",
+            Glyphs::default().role_prefix()
+        )));
+        assert!(!assistant[0].contains("Carina"));
     }
 
     #[test]
@@ -11999,7 +12013,7 @@ mod transcript_tests {
             );
             if height == 8 {
                 assert_eq!(app.transcript_geometry.viewport.y, 0);
-                assert_eq!(app.composer_area.height, 1);
+                assert_eq!(app.composer_area.height, 2);
             }
 
             server.join().unwrap();
@@ -14285,8 +14299,9 @@ mod transcript_tests {
         let visible = plain(&lines);
         assert_eq!(block.user_kind, UserBlockKind::Steer);
         assert!(visible[0].starts_with(&format!(
-            "{}你      你追加了指令  继续检查",
-            Glyphs::default().steer()
+            "{}{}  继续检查",
+            Glyphs::default().steer(),
+            tr(Locale::ZhHans, MessageId::TranscriptYouSteered),
         )));
         assert!(visible[0].ends_with("  queued"));
     }
@@ -14677,8 +14692,16 @@ mod transcript_tests {
     }
 
     #[test]
-    fn every_locale_keeps_equal_user_and_assistant_role_geometry() {
+    fn every_locale_keeps_equal_user_and_assistant_dialogue_geometry() {
         let glyphs = Glyphs::default();
+        let user = transcript_dialogue_mark(glyphs.prompt(), Style::default(), Style::default());
+        let assistant =
+            transcript_dialogue_mark(glyphs.role_prefix(), Style::default(), Style::default());
+        assert_eq!(user.width(), layout_contract::TRANSCRIPT_ROLE_MARK_WIDTH);
+        assert_eq!(assistant.width(), user.width());
+        assert_eq!(user.continuation_width(), user.width());
+        assert_eq!(assistant.continuation_width(), assistant.width());
+
         for locale in Locale::ALL {
             for message in [MessageId::TranscriptYou, MessageId::TranscriptCarina] {
                 let label = tr(locale, message);
@@ -14686,39 +14709,6 @@ mod transcript_tests {
                 assert!(
                     UnicodeWidthStr::width(label) <= layout_contract::TRANSCRIPT_ROLE_LABEL_WIDTH,
                     "{locale:?} {message:?} is wider than the owned role field"
-                );
-                assert_eq!(
-                    transcript_role_prefix(
-                        glyphs.role_prefix(),
-                        label,
-                        Style::default(),
-                        Style::default(),
-                        layout_contract::TRANSCRIPT_FULL_ROLE_MIN_WIDTH,
-                    )
-                    .width(),
-                    layout_contract::TRANSCRIPT_ROLE_PREFIX_WIDTH
-                );
-                assert_eq!(
-                    transcript_role_prefix(
-                        glyphs.role_prefix(),
-                        label,
-                        Style::default(),
-                        Style::default(),
-                        layout_contract::TRANSCRIPT_FULL_ROLE_MIN_WIDTH - 1,
-                    )
-                    .continuation_width(),
-                    layout_contract::TRANSCRIPT_ROLE_MARK_WIDTH
-                );
-                assert_eq!(
-                    transcript_role_prefix(
-                        glyphs.role_prefix(),
-                        label,
-                        Style::default(),
-                        Style::default(),
-                        layout_contract::TRANSCRIPT_FULL_ROLE_MIN_WIDTH,
-                    )
-                    .continuation_width(),
-                    layout_contract::TRANSCRIPT_ROLE_PREFIX_WIDTH
                 );
             }
         }
@@ -14743,6 +14733,32 @@ mod transcript_tests {
     }
 
     #[test]
+    fn native_dialogue_turns_omit_speaker_words() {
+        let mut user = block(BlockKind::User, "ship the dialogue grammar");
+        user.status.clear();
+        let mut assistant = block(BlockKind::Assistant, "the header already names the product");
+        assistant.status.clear();
+        let user_line = plain(&transcript_lines(
+            &user,
+            Locale::En,
+            TranscriptStyles::default(),
+            80,
+        ));
+        let assistant_line = plain(&transcript_lines(
+            &assistant,
+            Locale::ZhHans,
+            TranscriptStyles::default(),
+            80,
+        ));
+
+        assert!(user_line[0].starts_with(Glyphs::default().prompt()));
+        assert!(!user_line[0].contains("You"));
+        assert!(assistant_line[0].starts_with(Glyphs::default().role_prefix()));
+        assert!(!assistant_line[0].contains("Carina"));
+        assert!(!assistant_line[0].contains("你"));
+    }
+
+    #[test]
     fn narrow_user_and_assistant_share_the_same_semantic_rail_snapshot() {
         let mut user = block(BlockKind::User, "abcdefghijklmno");
         user.status.clear();
@@ -14752,13 +14768,13 @@ mod transcript_tests {
             &user,
             Locale::En,
             TranscriptStyles::default(),
-            18,
+            12,
         ));
         let assistant = plain(&transcript_lines(
             &assistant,
             Locale::En,
             TranscriptStyles::default(),
-            18,
+            12,
         ));
 
         assert!(user[1].starts_with(&" ".repeat(2)));
@@ -14768,11 +14784,11 @@ mod transcript_tests {
         insta::assert_snapshot!(
             [user.join("\n"), assistant.join("\n")].join("\n\n"),
             @r###"
-        • You     abcdefgh
-          ijklmno
+        ❯ abcdefghij
+          klmno
 
-        • Carina  abcdefgh
-          ijklmno
+        • abcdefghij
+          klmno
         "###
         );
     }
@@ -14791,7 +14807,7 @@ mod transcript_tests {
             ));
 
             assert!(lines.len() > 1);
-            assert!(lines[1].starts_with(&" ".repeat(10)));
+            assert!(lines[1].starts_with(&" ".repeat(layout_contract::TRANSCRIPT_ROLE_MARK_WIDTH)));
         }
     }
 
@@ -14799,11 +14815,7 @@ mod transcript_tests {
     fn production_role_geometry_tracks_the_responsive_width_matrix() {
         let body = "x".repeat(180);
         for width in [60, 71, 72, 80, 120] {
-            let expected_continuation = if width < layout_contract::TRANSCRIPT_FULL_ROLE_MIN_WIDTH {
-                layout_contract::TRANSCRIPT_ROLE_MARK_WIDTH
-            } else {
-                layout_contract::TRANSCRIPT_ROLE_PREFIX_WIDTH
-            };
+            let expected_continuation = |_kind: BlockKind| layout_contract::TRANSCRIPT_ROLE_MARK_WIDTH;
             let mut rendered = Vec::new();
             for kind in [BlockKind::User, BlockKind::Assistant] {
                 let mut message = block(kind, &body);
@@ -14824,7 +14836,7 @@ mod transcript_tests {
                 );
                 assert_eq!(
                     lines[1].chars().take_while(|ch| *ch == ' ').count(),
-                    expected_continuation,
+                    expected_continuation(kind),
                     "width={width} kind={kind:?}"
                 );
                 rendered.push(lines);
@@ -14892,9 +14904,9 @@ mod transcript_tests {
         let visible = plain(&lines);
         assert_eq!(
             visible[0],
-            format!("{}Carina  line 1", Glyphs::default().role_prefix())
+            format!("{}line 1", Glyphs::default().role_prefix())
         );
-        assert_eq!(visible.last().unwrap(), "          line 10");
+        assert_eq!(visible.last().unwrap(), "  line 10");
         assert_eq!(height, 10);
     }
 

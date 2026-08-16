@@ -4,9 +4,7 @@ expression: rendered
 ---
 size=120x2
 ⠋ 正在整理后续工作 0s  Esc 在安全点暂停
-执行 正在运行 · 队列 2
+队列 2
 styles:
 (0,0)..(39,0) (Rgb(142, 219, 210), Reset, NONE)
-(0,1)..(13,1) (Rgb(142, 219, 210), Reset, NONE)
-(13,1)..(16,1) (Rgb(150, 160, 156), Reset, NONE)
-(16,1)..(22,1) (Rgb(142, 219, 210), Reset, NONE)
+(0,1)..(6,1) (Rgb(142, 219, 210), Reset, NONE)

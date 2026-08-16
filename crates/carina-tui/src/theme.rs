@@ -334,6 +334,12 @@ impl Theme {
     pub fn transcript_user(self) -> Style {
         self.bright_muted().add_modifier(Modifier::BOLD)
     }
+    pub fn transcript_user_band(self) -> Style {
+        match self.user_message_bg {
+            Color::Reset => Style::default(),
+            bg => Style::default().bg(bg),
+        }
+    }
     pub fn transcript_assistant(self) -> Style {
         Style::default()
             .fg(self.accent)
@@ -679,26 +685,25 @@ mod tests {
         for polarity in [Polarity::Dark, Polarity::Light] {
             let theme = Theme::new(polarity, ColorLevel::TrueColor);
             assert_eq!(theme.transcript_user().fg, Some(theme.gray_bright));
+            assert_eq!(theme.transcript_user_band().bg, Some(theme.user_message_bg));
             assert_eq!(theme.transcript_assistant().fg, Some(theme.accent));
             assert_ne!(theme.transcript_assistant().fg, Some(theme.success));
             assert_eq!(theme.transcript_metadata().fg, Some(theme.gray_dim));
             assert_eq!(theme.transcript_tool().fg, Some(theme.warning));
             assert_eq!(theme.transcript_tool_settled().fg, Some(theme.gray_bright));
-            assert!(
-                theme
-                    .transcript_thinking()
-                    .add_modifier
-                    .contains(Modifier::DIM | Modifier::ITALIC)
-            );
+            assert!(theme
+                .transcript_thinking()
+                .add_modifier
+                .contains(Modifier::DIM | Modifier::ITALIC));
         }
+        let basic = Theme::new(Polarity::Dark, ColorLevel::Basic);
+        assert_eq!(basic.transcript_user_band().bg, None);
 
         let fallback = Theme::new(Polarity::Dark, ColorLevel::None).transcript_thinking();
         assert_eq!(fallback.fg, None);
-        assert!(
-            fallback
-                .add_modifier
-                .contains(Modifier::DIM | Modifier::ITALIC)
-        );
+        assert!(fallback
+            .add_modifier
+            .contains(Modifier::DIM | Modifier::ITALIC));
     }
 
     #[test]
