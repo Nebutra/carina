@@ -1049,6 +1049,28 @@ pub struct EffectiveConfig {
     pub permission_profile: String,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct InteractiveApprovalState {
+    #[serde(default)]
+    pub interactive_approval: bool,
+    #[serde(default)]
+    pub approval_mode: String,
+    #[serde(default)]
+    pub previous_mode: String,
+    #[serde(default)]
+    pub disable_always_approve: bool,
+    #[serde(default)]
+    pub warning: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct SideQueryResult {
+    #[serde(default)]
+    pub answer: String,
+    #[serde(default)]
+    pub ephemeral: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlanModeState {
     pub session_id: String,
@@ -1404,7 +1426,7 @@ impl ExecutionLifecycle {
         self.is_terminal() || matches!(self, Self::Paused | Self::Interrupted)
     }
 
-    fn can_transition_to(self, next: Self) -> bool {
+    pub(crate) fn can_transition_to(self, next: Self) -> bool {
         if self.is_terminal() {
             return false;
         }
@@ -2580,6 +2602,99 @@ mod tests {
             ExecutionLifecycle::from_status("needs_input"),
             Some(ExecutionLifecycle::WaitingInput)
         );
+    }
+
+    #[test]
+    fn lifecycle_transition_matrix_is_exhaustive() {
+        use ExecutionLifecycle::*;
+        let all = [
+            Queued,
+            Started,
+            WaitingInput,
+            WaitingApproval,
+            Paused,
+            Interrupted,
+            Completed,
+            Failed,
+            Degraded,
+            Cancelled,
+        ];
+        let allowed = |from: ExecutionLifecycle, to: ExecutionLifecycle| -> bool {
+            match from {
+                Queued => matches!(to, Started | Failed | Cancelled),
+                Started => matches!(
+                    to,
+                    WaitingInput
+                        | WaitingApproval
+                        | Paused
+                        | Interrupted
+                        | Completed
+                        | Failed
+                        | Degraded
+                        | Cancelled
+                ),
+                WaitingInput | WaitingApproval => matches!(
+                    to,
+                    Started
+                        | WaitingInput
+                        | WaitingApproval
+                        | Paused
+                        | Interrupted
+                        | Failed
+                        | Degraded
+                        | Cancelled
+                ),
+                Paused | Interrupted => matches!(to, Started | Failed | Degraded | Cancelled),
+                Completed | Failed | Degraded | Cancelled => false,
+            }
+        };
+        for from in all {
+            for to in all {
+                assert_eq!(
+                    from.can_transition_to(to),
+                    allowed(from, to),
+                    "{from:?} -> {to:?}"
+                );
+            }
+            assert_eq!(
+                from.is_terminal(),
+                matches!(from, Completed | Failed | Degraded | Cancelled)
+            );
+        }
+
+        let encodings = [
+            ("ExecutionQueued", None, Queued),
+            ("ExecutionStarted", None, Started),
+            ("ExecutionProgressed", Some("waiting_input"), WaitingInput),
+            (
+                "ExecutionProgressed",
+                Some("waiting_approval"),
+                WaitingApproval,
+            ),
+            ("ExecutionProgressed", Some("paused"), Paused),
+            ("ExecutionInterrupted", None, Interrupted),
+            ("ExecutionCompleted", None, Completed),
+            ("ExecutionFailed", None, Failed),
+            ("execution.completed", Some("degraded"), Degraded),
+            ("ExecutionCancelled", None, Cancelled),
+        ];
+        for (kind, status, lifecycle) in encodings {
+            let mut value = json!({
+                "type": kind,
+                "run_id": "run_1",
+            });
+            if let Some(status) = status {
+                value["status"] = status.into();
+            }
+            let event: WireEvent = serde_json::from_value(value).unwrap();
+            assert_eq!(event.execution_lifecycle(), Some(lifecycle), "{kind}");
+        }
+        for lifecycle in all {
+            assert!(
+                encodings.iter().any(|(_, _, encoded)| *encoded == lifecycle),
+                "missing wire encoding for {lifecycle:?}"
+            );
+        }
     }
 
     #[test]

@@ -5243,6 +5243,44 @@ impl App {
                     inner,
                 );
             }
+            Overlay::SideQuery(query) => {
+                let popup = centered(
+                    area,
+                    layout_contract::CHECKPOINT_POPUP.0,
+                    layout_contract::CHECKPOINT_POPUP.1,
+                );
+                frame.render_widget(Clear, popup);
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(self.theme.glyphs.outer_border_type())
+                    .border_style(self.theme.focus())
+                    .title(format!(" {} ", tr(locale, MessageId::BtwTitle)))
+                    .style(Style::default());
+                let inner = block.inner(popup).inner(Margin::new(2, 1));
+                frame.render_widget(block, popup);
+                let body = vec![
+                    Line::from(Span::styled(
+                        query.question.clone(),
+                        Style::default().fg(self.theme.muted),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        query.answer.clone(),
+                        Style::default().fg(self.theme.text),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        tr(locale, MessageId::BtwEphemeralHint).to_owned(),
+                        Style::default().fg(self.theme.muted),
+                    )),
+                ];
+                frame.render_widget(
+                    Paragraph::new(body)
+                        .style(Style::default().fg(self.theme.text))
+                        .wrap(Wrap { trim: false }),
+                    inner,
+                );
+            }
             Overlay::Agents(overlay) => {
                 let popup = centered(
                     area,

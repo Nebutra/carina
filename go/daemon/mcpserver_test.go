@@ -81,6 +81,27 @@ func TestServeMCPExposesKernelGatedTools(t *testing.T) {
 	}
 }
 
+func TestCarinaToolCatalogAdvertisesEdit(t *testing.T) {
+	var found bool
+	for _, tool := range carinaToolCatalog {
+		if tool.Name != "edit" {
+			continue
+		}
+		found = true
+		required, _ := tool.InputSchema["required"].([]string)
+		if len(required) != 3 {
+			t.Fatalf("edit must require path, old, new; got %#v", tool.InputSchema["required"])
+		}
+	}
+	if !found {
+		t.Fatal("MCP catalog must advertise the Wave 3 edit tool")
+	}
+	act := actionFromMCP("edit", map[string]any{"path": "src/a.rs", "old": "left", "new": "right"})
+	if act == nil || act.Tool != "edit" || act.Path != "src/a.rs" || act.Old != "left" || act.New != "right" {
+		t.Fatalf("edit must map onto the same kernel-gated action: %+v", act)
+	}
+}
+
 func toolText(t *testing.T, resp map[string]any) string {
 	t.Helper()
 	res, ok := resp["result"].(map[string]any)

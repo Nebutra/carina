@@ -78,6 +78,7 @@ complete, authoritative registry. Groups not summarized here include `agent.*`,
 | `daemon.doctor` | independent health probes |
 | `daemon.remote.disable` | remote kill-switch: disable remote-exposed method dispatch |
 | `daemon.reload` | reload daemon configuration |
+| `daemon.set_interactive_approval` | set product HITL mode (`ask` \| `always-approve` \| `dont-ask` \| `accept-edits`). TUI: `/approval-mode`, `/always-approve`, `/dont-ask`, `/accept-edits` |
 | `context.status` | local-only native context engine status |
 | `context.doctor` | local-only context engine health probe |
 | `context.stats` | local-only compression counters |
@@ -241,6 +242,7 @@ not a `session.*` method.
 | `execution.start` | submit a prompt/task into a session |
 | `execution.cancel` | cancel a running task |
 | `execution.status` | query task state |
+| `execution.btw` | ephemeral aside on a live run; never written into the transcript. TUI: `/btw <question>` (answer-only; `--fork` refused) |
 | `governance.action.approve` / `governance.action.deny` | resolve pending approval requests |
 
 Task events are consumed through `session.events.stream` (with a `since`

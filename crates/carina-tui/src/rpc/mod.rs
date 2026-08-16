@@ -781,6 +781,29 @@ impl Client {
         )
     }
 
+    pub fn set_interactive_approval(
+        &mut self,
+        session_id: Option<&str>,
+        mode: &str,
+    ) -> Result<InteractiveApprovalState, RpcError> {
+        let mut params = json!({"mode": mode});
+        if let Some(session_id) = session_id.filter(|value| !value.is_empty()) {
+            params["session_id"] = json!(session_id);
+        }
+        self.call("daemon.set_interactive_approval", &params)
+    }
+
+    pub fn execution_btw(
+        &mut self,
+        run_id: &str,
+        question: &str,
+    ) -> Result<SideQueryResult, RpcError> {
+        self.call(
+            "execution.btw",
+            &json!({"run_id": run_id, "question": question}),
+        )
+    }
+
     pub fn approve_plan(
         &mut self,
         session_id: &str,
@@ -1597,6 +1620,85 @@ mod tests {
             .unwrap()
             .approve_plan("sess-1", Some(""))
             .unwrap();
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn interactive_approval_and_btw_send_typed_operator_params() {
+        let nonce = NEXT_MEDIA_UPLOAD_ID.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "carina-tui-hitl-btw-rpc-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let socket = root.join("daemon.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let request: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["method"], "daemon.set_interactive_approval");
+            assert_eq!(request["params"]["mode"], "accept-edits");
+            assert_eq!(request["params"]["session_id"], "sess-1");
+            writeln!(
+                stream,
+                "{}",
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": request["id"],
+                    "result": {
+                        "interactive_approval": false,
+                        "approval_mode": "accept-edits",
+                        "previous_mode": "ask",
+                        "disable_always_approve": false,
+                        "warning": "accept-edits auto-allows FileWrite/PatchApply"
+                    }
+                })
+            )
+            .unwrap();
+            stream.flush().unwrap();
+
+            let (mut stream, _) = listener.accept().unwrap();
+            line.clear();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let request: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["method"], "execution.btw");
+            assert_eq!(request["params"]["run_id"], "run-1");
+            assert_eq!(request["params"]["question"], "what is left?");
+            writeln!(
+                stream,
+                "{}",
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": request["id"],
+                    "result": { "answer": "the plan file", "ephemeral": true }
+                })
+            )
+            .unwrap();
+            stream.flush().unwrap();
+        });
+
+        let approval = Client::connect(&socket)
+            .unwrap()
+            .set_interactive_approval(Some("sess-1"), "accept-edits")
+            .unwrap();
+        assert_eq!(approval.approval_mode, "accept-edits");
+        assert!(!approval.interactive_approval);
+        assert!(approval.warning.contains("FileWrite"));
+
+        let aside = Client::connect(&socket)
+            .unwrap()
+            .execution_btw("run-1", "what is left?")
+            .unwrap();
+        assert_eq!(aside.answer, "the plan file");
+        assert!(aside.ephemeral);
 
         server.join().unwrap();
         std::fs::remove_dir_all(root).unwrap();

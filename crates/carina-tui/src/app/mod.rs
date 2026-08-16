@@ -65,7 +65,8 @@ use crate::native_scrollback::{
 use crate::overlay::{
     AgentDashboardOverlay, ApprovalScope, ChangesFocus, ChangesOverlay, HelpOverlay, Overlay,
     OverlayStack, PRODUCT_MENU_ITEMS, PlanReviewOverlay, ProductMenuOverlay, QueueOverlay,
-    RetainedLoad, SettingsOverlay, SettingsPage, StatusOverlay, ToolOutputOverlay,
+    RetainedLoad, SettingsOverlay, SettingsPage, SideQueryOverlay, StatusOverlay,
+    ToolOutputOverlay,
 };
 use crate::patch_review::{PatchReview, project_patch_reviews};
 use crate::prerequisite::ProviderPickerState;
@@ -5155,6 +5156,10 @@ impl App {
     }
 
     fn handle_slash_command(&mut self, prompt: &str) -> Option<bool> {
+        if let Some(reason) = command::withdrawn_operator(prompt) {
+            self.notice = Notice::localized(reason);
+            return Some(false);
+        }
         let (command, tail) = command::resolve_operator_input(prompt)?;
         if let Some(reason) = command::command_unavailable_reason(command, self.has_retained_run())
         {
@@ -5199,6 +5204,17 @@ impl App {
             CommandId::Plan => self.request_conversation_mode(true),
             CommandId::Build => self.request_conversation_mode(false),
             CommandId::ViewPlan => self.open_plan_review(),
+            CommandId::ApprovePlan => self.approve_plan(),
+            CommandId::AlwaysApprove => {
+                return Some(self.set_product_approval_mode("always-approve"));
+            }
+            CommandId::DontAsk => return Some(self.set_product_approval_mode("dont-ask")),
+            CommandId::AcceptEdits => {
+                return Some(self.set_product_approval_mode("accept-edits"));
+            }
+            CommandId::ApprovalMode => {
+                return Some(self.handle_approval_mode_command(tail.unwrap_or("")));
+            }
             CommandId::Sessions => self.open_session_browser(),
             CommandId::Import => {
                 self.open_session_browser();
@@ -5219,6 +5235,7 @@ impl App {
             CommandId::Fork => self.fork_current_conversation(),
             CommandId::Compact => self.compact_current_checkpoint(),
             CommandId::Goal => self.handle_goal_command(tail.unwrap_or("")),
+            CommandId::Btw => return Some(self.handle_btw_command(tail.unwrap_or(""))),
             CommandId::Cancel => {
                 if let Some(run_id) = self.retained_run_id().map(str::to_owned) {
                     self.cancel_execution(&run_id);
@@ -5406,6 +5423,99 @@ impl App {
         self.overlays.replace(Overlay::Context(
             self.context_summary.clone().unwrap_or_default(),
         ));
+    }
+
+    fn handle_approval_mode_command(&mut self, tail: &str) -> bool {
+        let tail = tail.trim();
+        if tail.is_empty() {
+            let mode = self
+                .security_context
+                .as_ref()
+                .map(|config| config.approval_mode.as_str())
+                .filter(|value| !value.is_empty())
+                .unwrap_or("unknown");
+            self.notice = Notice::localized_with(MessageId::ApprovalModeCurrent, [("mode", mode)]);
+            return true;
+        }
+        if tail.split_whitespace().nth(1).is_some() {
+            self.notice = Notice::localized(MessageId::CommandArgumentsNotAccepted);
+            return false;
+        }
+        self.set_product_approval_mode(tail)
+    }
+
+    fn set_product_approval_mode(&mut self, mode: &str) -> bool {
+        let session_id = self
+            .active_session
+            .as_ref()
+            .map(|session| session.session_id.clone());
+        match self
+            .rpc
+            .set_interactive_approval(session_id.as_deref(), mode)
+        {
+            Ok(result) => {
+                match self.security_context.as_mut() {
+                    Some(config) => {
+                        config.approval_mode = result.approval_mode.clone();
+                        config.disable_always_approve = result.disable_always_approve;
+                    }
+                    None => {
+                        self.security_context = Some(EffectiveConfig {
+                            approval_mode: result.approval_mode.clone(),
+                            disable_always_approve: result.disable_always_approve,
+                            ..Default::default()
+                        });
+                    }
+                }
+                self.notice = Notice::localized(match result.approval_mode.as_str() {
+                    "always-approve" => MessageId::ApprovalNowAlwaysApprove,
+                    "dont-ask" => MessageId::ApprovalNowDontAsk,
+                    "accept-edits" => MessageId::ApprovalNowAcceptEdits,
+                    _ => MessageId::ApprovalNowAsk,
+                });
+                true
+            }
+            Err(error) => {
+                self.notice = Notice::localized_with(
+                    MessageId::ApprovalModeUnavailable,
+                    [("error", error.to_string())],
+                );
+                false
+            }
+        }
+    }
+
+    fn handle_btw_command(&mut self, tail: &str) -> bool {
+        let tail = tail.trim();
+        if tail.is_empty() {
+            self.notice = Notice::localized(MessageId::BtwNeedsQuestion);
+            return false;
+        }
+        if command::is_btw_fork_request(tail) {
+            self.notice = Notice::localized(MessageId::BtwForkWithdrawn);
+            return false;
+        }
+        let Some(run_id) = self.retained_run_id().map(str::to_owned) else {
+            self.notice = Notice::localized(MessageId::CommandRequiresActiveExecution);
+            return false;
+        };
+        match self.rpc.execution_btw(&run_id, tail) {
+            Ok(result) => {
+                self.notice.clear();
+                self.overlays.replace(Overlay::SideQuery(SideQueryOverlay {
+                    question: tail.to_owned(),
+                    answer: result.answer,
+                }));
+                true
+            }
+            Err(error) => {
+                self.notice = Notice::localized_with(
+                    MessageId::BtwUnavailable,
+                    [("error", error.to_string())],
+                );
+                false
+            }
+        }
     }
 
     fn handle_goal_command(&mut self, tail: &str) {
@@ -5973,7 +6083,7 @@ impl App {
                 }
                 _ => {}
             },
-            Some(Overlay::Goal(_)) => match key.code {
+            Some(Overlay::Goal(_)) | Some(Overlay::SideQuery(_)) => match key.code {
                 KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => {
                     deferred = Some(Action::CloseOverlay)
                 }

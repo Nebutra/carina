@@ -106,11 +106,13 @@ sdk-ts:
 # Post-0.8 residual iron gate: durable steer/interrupt + screen-mode units.
 # PTY matrix is host-gated separately via carina-tui terminal_microinteractions.
 residual-ux-gate:
-	go test ./go/daemon -run 'Steer|Interrupt|Cancel|LongTool|ExecutionQueueList|TruncateSteer' -count=1
+	go test ./go/daemon -run 'Steer|Interrupt|Cancel|LongTool|ExecutionQueueList|TruncateSteer|CarinaToolCatalogAdvertisesEdit|CompactionCascade|KeyFilesTopK' -count=1
 	go test ./go/toolchain -run 'Cancellation|ProcessGroup' -count=1
 	cargo test -p carina-tui --lib screen_mode -- --nocapture
 	cargo test -p carina-tui --lib keybinding -- --nocapture
 	cargo test -p carina-tui --lib i18n -- --nocapture
+	cargo test -p carina-tui --lib lifecycle_transition_matrix_is_exhaustive -- --nocapture
+	cargo test -p carina-tui --lib edit_tool_shares -- --nocapture
 
 # Production-renderer visual contract: typed transcript matrix plus terminal,
 # palette, and source-boundary checks. This target never updates snapshots.

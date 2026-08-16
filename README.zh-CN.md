@@ -195,8 +195,8 @@ carina run "fix the failing tests and show the patch"
     `approval_mode` 设为 `never`（会被拒绝，以免与 session `never` 混淆）
 - `/plan` 在 `.carina/plans/` 脚手架；**`/view-plan`** 打开计划审阅浮层
   （`a` 批准、`s` 请求修改、`q` 退出 plan、`esc` 关闭）。`/approve-plan` 仍可用。
-- `/btw <问题>` 在当前会话仅回答；`/btw --fork` / `/side` 会 `session.fork`
-  并切换到子会话（尚无双栏并排 UI）
+- `/btw <问题>` 只回答当前运行（不写入 transcript）。`/btw --fork` 与 `/side`
+  未交付；要分支请用 `/fork`。
 - 上下文压力约在 80%/90% 提示；仅当存在可 `session.checkpoint.compact` 的
   暂停 checkpoint 时才会 auto-compact
 - Agent 可用 `ask_user`：**带 2–6 选项** 的结构化选择题，或**省略 options**

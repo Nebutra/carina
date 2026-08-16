@@ -13,7 +13,12 @@ pub enum CommandId {
     Model,
     Plan,
     ViewPlan,
+    ApprovePlan,
     Build,
+    AlwaysApprove,
+    DontAsk,
+    AcceptEdits,
+    ApprovalMode,
     Sessions,
     Import,
     Resume,
@@ -21,6 +26,7 @@ pub enum CommandId {
     Fork,
     Compact,
     Goal,
+    Btw,
     Cancel,
     Minimal,
     Fullscreen,
@@ -108,9 +114,39 @@ pub const COMMANDS: &[CommandSpec] = &[
         AvailabilityRule::Always,
     ),
     command(
+        CommandId::ApprovePlan,
+        "/approve-plan",
+        MessageId::CommandApprovePlan,
+        AvailabilityRule::Always,
+    ),
+    command(
         CommandId::Build,
         "/build",
         MessageId::CommandBuild,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::AlwaysApprove,
+        "/always-approve",
+        MessageId::CommandAlwaysApprove,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::DontAsk,
+        "/dont-ask",
+        MessageId::CommandDontAsk,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::AcceptEdits,
+        "/accept-edits",
+        MessageId::CommandAcceptEdits,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::ApprovalMode,
+        "/approval-mode",
+        MessageId::CommandApprovalMode,
         AvailabilityRule::Always,
     ),
     command(
@@ -154,6 +190,12 @@ pub const COMMANDS: &[CommandSpec] = &[
         "/goal",
         MessageId::CommandGoal,
         AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::Btw,
+        "/btw",
+        MessageId::CommandBtw,
+        AvailabilityRule::ActiveExecution,
     ),
     command(
         CommandId::Cancel,
@@ -261,7 +303,27 @@ pub fn resolve_operator_input(input: &str) -> Option<(&'static CommandSpec, Opti
 }
 
 pub fn accepts_arguments(id: CommandId) -> bool {
-    matches!(id, CommandId::Goal)
+    matches!(
+        id,
+        CommandId::Goal | CommandId::ApprovalMode | CommandId::Btw
+    )
+}
+
+/// Names that docs once advertised and that we now refuse in place.
+/// They stay out of `COMMANDS` so `/help` does not list a dead surface.
+pub fn withdrawn_operator(input: &str) -> Option<MessageId> {
+    let (head, _) = split_prompt_command(input);
+    match head {
+        "/side" | "/side-close" => Some(MessageId::SideWithdrawn),
+        _ => None,
+    }
+}
+
+pub fn is_btw_fork_request(tail: &str) -> bool {
+    matches!(
+        tail.split_whitespace().next().unwrap_or(""),
+        "--fork" | "-fork"
+    )
 }
 
 pub fn command_unavailable_reason(
@@ -547,17 +609,13 @@ mod tests {
 
     #[test]
     fn discovery_and_execution_share_capability_gates() {
-        assert!(
-            !matching("/c", false)
-                .iter()
-                .any(|item| item.id == CommandId::Cancel)
-        );
+        assert!(!matching("/c", false)
+            .iter()
+            .any(|item| item.id == CommandId::Cancel));
         assert!(resolve("/cancel", false).is_none());
-        assert!(
-            matching("/c", true)
-                .iter()
-                .any(|item| item.id == CommandId::Cancel)
-        );
+        assert!(matching("/c", true)
+            .iter()
+            .any(|item| item.id == CommandId::Cancel));
         assert_eq!(
             resolve("/cancel", true).map(|item| item.id),
             Some(CommandId::Cancel)
@@ -566,11 +624,9 @@ mod tests {
 
     #[test]
     fn status_is_discoverable_and_resolves_while_idle() {
-        assert!(
-            matching("/st", false)
-                .iter()
-                .any(|item| item.id == CommandId::Status)
-        );
+        assert!(matching("/st", false)
+            .iter()
+            .any(|item| item.id == CommandId::Status));
         assert_eq!(
             resolve("/status", false).map(|item| item.id),
             Some(CommandId::Status)
@@ -579,11 +635,9 @@ mod tests {
 
     #[test]
     fn density_is_discoverable_and_resolves_while_idle() {
-        assert!(
-            matching("/den", false)
-                .iter()
-                .any(|item| item.id == CommandId::Density)
-        );
+        assert!(matching("/den", false)
+            .iter()
+            .any(|item| item.id == CommandId::Density));
         assert_eq!(
             resolve("/density", false).map(|item| item.id),
             Some(CommandId::Density)
@@ -593,11 +647,9 @@ mod tests {
     #[test]
     fn symbols_is_a_builtin_command_available_in_every_execution_state() {
         for has_active_execution in [false, true] {
-            assert!(
-                matching("/sym", has_active_execution)
-                    .iter()
-                    .any(|item| item.id == CommandId::Symbols)
-            );
+            assert!(matching("/sym", has_active_execution)
+                .iter()
+                .any(|item| item.id == CommandId::Symbols));
             assert_eq!(
                 resolve("/symbols", has_active_execution).map(|item| item.id),
                 Some(CommandId::Symbols)
@@ -611,11 +663,9 @@ mod tests {
 
     #[test]
     fn view_plan_is_a_builtin_command_available_while_idle() {
-        assert!(
-            matching("/view", false)
-                .iter()
-                .any(|item| item.id == CommandId::ViewPlan)
-        );
+        assert!(matching("/view", false)
+            .iter()
+            .any(|item| item.id == CommandId::ViewPlan));
         assert_eq!(
             resolve("/view-plan", false).map(|item| item.id),
             Some(CommandId::ViewPlan)
@@ -646,11 +696,9 @@ mod tests {
 
     #[test]
     fn internal_checkpoints_are_not_a_user_command() {
-        assert!(
-            COMMANDS
-                .iter()
-                .all(|command| command.name != "/checkpoints")
-        );
+        assert!(COMMANDS
+            .iter()
+            .all(|command| command.name != "/checkpoints"));
         assert!(resolve("/checkpoints", false).is_none());
         assert!(resolve("/checkpoint", false).is_none());
     }
@@ -858,5 +906,83 @@ mod tests {
         assert!(!accepts_arguments(CommandId::Compact));
         assert!(!accepts_arguments(CommandId::New));
         assert!(!accepts_arguments(CommandId::Fork));
+    }
+
+    #[test]
+    fn hitl_and_btw_verbs_are_discoverable_and_resolve() {
+        for name in [
+            "/approve-plan",
+            "/always-approve",
+            "/dont-ask",
+            "/accept-edits",
+            "/approval-mode",
+        ] {
+            assert!(
+                COMMANDS.iter().any(|command| command.name == name),
+                "{name} must be a typed operator"
+            );
+            assert_eq!(resolve(name, false).map(|command| command.name), Some(name));
+        }
+        assert!(resolve("/btw", false).is_none());
+        assert_eq!(
+            resolve("/btw", true).map(|command| command.id),
+            Some(CommandId::Btw)
+        );
+        let idle = palette_matching("/", false, &[], "", &[]);
+        for name in [
+            "/approve-plan",
+            "/always-approve",
+            "/dont-ask",
+            "/accept-edits",
+            "/approval-mode",
+        ] {
+            assert!(
+                idle.iter().any(|command| command.name == name),
+                "{name} must appear in /help discovery"
+            );
+        }
+        let live = palette_matching("/bt", true, &[], "", &[]);
+        assert!(live.iter().any(|command| command.name == "/btw"));
+        let idle_btw = palette_matching("/bt", false, &[], "", &[])
+            .into_iter()
+            .find(|command| command.name == "/btw")
+            .unwrap();
+        assert_eq!(
+            idle_btw.unavailable_reason,
+            Some(MessageId::CommandRequiresActiveExecution)
+        );
+    }
+
+    #[test]
+    fn approval_mode_and_btw_accept_tails() {
+        let (command, tail) = resolve_operator_input("/approval-mode dont-ask").unwrap();
+        assert_eq!(command.id, CommandId::ApprovalMode);
+        assert_eq!(tail, Some("dont-ask"));
+        assert!(accepts_arguments(CommandId::ApprovalMode));
+        let (command, tail) = resolve_operator_input("/btw what is the plan").unwrap();
+        assert_eq!(command.id, CommandId::Btw);
+        assert_eq!(tail, Some("what is the plan"));
+        assert!(accepts_arguments(CommandId::Btw));
+        assert!(!accepts_arguments(CommandId::AlwaysApprove));
+        assert!(!accepts_arguments(CommandId::ApprovePlan));
+        assert!(is_btw_fork_request("--fork later"));
+        assert!(is_btw_fork_request("-fork"));
+        assert!(!is_btw_fork_request("what is the plan"));
+    }
+
+    #[test]
+    fn side_dual_pane_is_withdrawn_not_registered() {
+        assert!(COMMANDS.iter().all(|command| command.name != "/side"));
+        assert!(COMMANDS.iter().all(|command| command.name != "/side-close"));
+        assert!(resolve("/side", false).is_none());
+        assert_eq!(
+            withdrawn_operator("/side now"),
+            Some(MessageId::SideWithdrawn)
+        );
+        assert_eq!(
+            withdrawn_operator("/side-close"),
+            Some(MessageId::SideWithdrawn)
+        );
+        assert!(withdrawn_operator("/btw --fork later").is_none());
     }
 }

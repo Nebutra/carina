@@ -47,6 +47,12 @@ var carinaToolCatalog = []mcpserver.Tool{
 			"path":    strProp("workspace-relative file path"),
 			"content": strProp("FULL new file content"),
 		}, []string{"path", "content"})},
+	{Name: "edit", Description: "Replace one unique span in a file (transactional, capability-gated).",
+		InputSchema: objSchema(map[string]any{
+			"path": strProp("workspace-relative file path"),
+			"old":  strProp("exact unique span to replace"),
+			"new":  strProp("replacement text"),
+		}, []string{"path", "old", "new"})},
 }
 
 // actionFromMCP maps an MCP tool call onto an agent action. Returns nil for an

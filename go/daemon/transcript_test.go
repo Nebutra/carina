@@ -213,6 +213,75 @@ func TestCompactionCollapseOnlySkipsSummarizerAndDisclosesTransforms(t *testing.
 	}
 }
 
+func TestCompactionCascadeEscalatesWhenCollapseStaysOver(t *testing.T) {
+	tr := newTranscript("fix the bug")
+	tr.Summary = strings.Repeat("prior work ", 160)
+	tr.policy = CompactionPolicy{
+		KeepRecent: 1, ToolOutputMax: 10_000, SummarizeAfter: 1,
+		VerbatimUserMaxChars: 4_000,
+	}
+	tr.addTurn(Turn{Tool: "user", ActionBrief: "steer", Obs: Observation{Content: "USER STEERING: keep this", Pinned: true}})
+	for i := 0; i < 3; i++ {
+		tr.addTurn(Turn{
+			Tool:        "edit",
+			ActionBrief: fmt.Sprintf("edit %s%d.go", strings.Repeat("segment/", 18), i),
+			Obs:         Observation{Content: strings.Repeat("RAW OUTPUT ", 40)},
+		})
+	}
+	tr.addTurn(Turn{Tool: "read", ActionBrief: "read tail.go", Obs: Observation{Content: "tail"}})
+
+	keep := tr.policy.KeepRecent
+	elided := append([]Turn(nil), tr.Turns...)
+	for i := 0; i < len(elided)-keep; i++ {
+		if !elided[i].Obs.Pinned {
+			elided[i].Obs.Elided = true
+		}
+	}
+	var folded, kept []Turn
+	for _, turn := range elided[:len(elided)-keep] {
+		if turn.Tool == "user" {
+			kept = append(kept, turn)
+		} else {
+			folded = append(folded, turn)
+		}
+	}
+	projectedTurns := append(append([]Turn{}, kept...), elided[len(elided)-keep:]...)
+	skeleton := collapseActionSkeleton(tr.Summary, folded)
+	postElision := len(renderTranscript(tr.Summary, elided))
+	tr.policy.MaxChars = postElision - 1
+	probe := &Transcript{policy: tr.policy}
+	if !tr.shouldCompact() {
+		t.Fatalf("live transcript must start over budget: live=%d max=%d", tr.size(), tr.policy.MaxChars)
+	}
+	if probe.compactionMode(probe.projectedPressure(tr.Summary, elided)) != compactionModeCollapseOnly {
+		t.Fatalf("post-elision must stay in the local tier: size=%d max=%d pressure=%.3f", postElision, tr.policy.MaxChars, probe.projectedPressure(tr.Summary, elided))
+	}
+	if probe.compactionMode(probe.projectedPressure(skeleton, projectedTurns)) != compactionModeSummary {
+		t.Fatalf("collapse projection must leave the local tier: skeleton=%d max=%d pressure=%.3f", len(renderTranscript(skeleton, projectedTurns)), tr.policy.MaxChars, probe.projectedPressure(skeleton, projectedTurns))
+	}
+
+	summarizeCalls := 0
+	receipt := tr.compact(func(string) (string, error) {
+		summarizeCalls++
+		return "MODEL SUMMARY of the folded edits", nil
+	})
+	if summarizeCalls != 1 {
+		t.Fatalf("collapse that stays over budget must escalate, calls=%d receipt=%+v", summarizeCalls, receipt)
+	}
+	if receipt == nil || receipt.Mode != compactionModeSummary || receipt.Version != 2 {
+		t.Fatalf("cascaded receipt = %+v", receipt)
+	}
+	if !reflect.DeepEqual(receipt.Transforms, []string{"elide_tool_output", "collapse_action_skeleton", "model_summary"}) {
+		t.Fatalf("cascade transforms = %v", receipt.Transforms)
+	}
+	if tr.Summary != "MODEL SUMMARY of the folded edits" {
+		t.Fatalf("summary = %q", tr.Summary)
+	}
+	if len(receipt.KeyFiles) == 0 || !strings.HasSuffix(receipt.KeyFiles[0], "0.go") {
+		t.Fatalf("edit turns must count as key files: %v", receipt.KeyFiles)
+	}
+}
+
 func TestCompactionSelectorUsesModelPressureWhenConfigured(t *testing.T) {
 	tr := newTranscript("task")
 	tr.policy = CompactionPolicy{MaxChars: 1, MaxTokens: 10_000, CollapseOnlyMaxPressure: 1.10}
@@ -417,9 +486,9 @@ func TestCompactionAllUserHeadSkipsSummarize(t *testing.T) {
 }
 
 // TestKeyFilesTopKFrequencyOrdering proves keyFiles is a pure, deterministic
-// selector: patch-turn paths counted, ordered by edit count descending with
-// first-seen order breaking ties, deduplicated, capped at k, and blind to
-// non-patch tools.
+// selector: patch/edit-turn paths counted, ordered by edit count descending
+// with first-seen order breaking ties, deduplicated, capped at k, and blind
+// to non-write tools.
 func TestKeyFilesTopKFrequencyOrdering(t *testing.T) {
 	turns := []Turn{
 		{Tool: "patch", ActionBrief: "patch b.go"},
@@ -429,12 +498,13 @@ func TestKeyFilesTopKFrequencyOrdering(t *testing.T) {
 		{Tool: "patch", ActionBrief: "patch c.go"},
 		{Tool: "patch", ActionBrief: "patch c.go"},
 		{Tool: "patch", ActionBrief: "patch a.go"},
+		{Tool: "edit", ActionBrief: "edit a.go"},
 		{Tool: "patch", ActionBrief: "patch d.go"},
 		{Tool: "patch", ActionBrief: "patch e.go"},
 		{Tool: "patch", ActionBrief: "patch f.go"},
 	}
 	got := keyFiles(turns, 5)
-	// a.go edited 3x, c.go 2x; b/d/e/f tie at 1 and rank by first-seen.
+	// a.go edited 4x (3 patch + 1 edit), c.go 2x; b/d/e/f tie at 1 and rank by first-seen.
 	want := []string{"a.go", "c.go", "b.go", "d.go", "e.go"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("keyFiles = %v, want %v", got, want)

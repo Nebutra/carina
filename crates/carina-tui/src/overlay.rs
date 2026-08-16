@@ -20,6 +20,7 @@ pub enum Overlay {
     Status(StatusOverlay),
     Context(ContextSummary),
     Goal(GoalOverlay),
+    SideQuery(SideQueryOverlay),
     Help(HelpOverlay),
     Doctor(crate::doctor::DoctorScreen),
     Agents(Box<AgentDashboardOverlay>),
@@ -131,6 +132,7 @@ impl Overlay {
             | Self::Status(_)
             | Self::Context(_)
             | Self::Goal(_)
+            | Self::SideQuery(_)
             | Self::Help(_)
             | Self::Doctor(_)
             | Self::Agents(_)
@@ -227,6 +229,12 @@ pub struct ApprovalOverlay {
 #[derive(Debug, Clone, Default)]
 pub struct GoalOverlay {
     pub goal: Option<SessionGoal>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SideQueryOverlay {
+    pub question: String,
+    pub answer: String,
 }
 
 #[derive(Debug, Clone)]

@@ -650,7 +650,7 @@ impl TranscriptReducer {
             && self
                 .tools
                 .get(&tool_id)
-                .is_some_and(|record| record.tool == "patch")
+                .is_some_and(|record| is_patch_apply_tool(&record.tool))
         {
             let record = self.tools.get_mut(&tool_id).expect("active tool exists");
             merge_details(&mut record.details, &event.payload);
@@ -1012,7 +1012,7 @@ impl TranscriptReducer {
                     && self
                         .tools
                         .get(&tool_id)
-                        .is_some_and(|record| record.tool == "patch")
+                        .is_some_and(|record| is_patch_apply_tool(&record.tool))
                 {
                     let record = self.tools.get_mut(&tool_id).expect("patch tool exists");
                     record.status = patch_item_status(&item.status).into();
@@ -1496,6 +1496,10 @@ fn todo_items(details: &BTreeMap<String, Value>) -> Vec<TodoItem> {
             Some(TodoItem { content, status })
         })
         .collect()
+}
+
+fn is_patch_apply_tool(name: &str) -> bool {
+    matches!(name.trim().to_ascii_lowercase().as_str(), "edit" | "patch")
 }
 
 fn unified_diff_stats(diff: &str) -> (usize, usize) {
@@ -4476,6 +4480,69 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
             !blocks[0].expanded,
             "hydrated successful edits stay collapsed"
         );
+    }
+
+    #[test]
+    fn edit_tool_shares_live_hydrate_identity() {
+        let details = json!({
+            "tool":"edit",
+            "arguments":{"path":"src/lib.rs","old":"old","new":"new"},
+            "diff":"--- a/src/lib.rs\n+++ b/src/lib.rs\n-old\n+new"
+        });
+        let mut hydrated_item = item_with_id("edit-1", "tool_call", "completed", details.clone());
+        hydrated_item.run_id = "run-edit".into();
+        hydrated_item.turn_id = "run-edit".into();
+        hydrated_item.item.as_mut().expect("item exists").run_id = "run-edit".into();
+        let hydrated = TranscriptReducer::default().hydrate(vec![hydrated_item]);
+
+        let mut reducer = TranscriptReducer::default();
+        let mut live = Vec::new();
+        reducer.reduce_event(
+            &mut live,
+            wire_for_run(
+                "ToolCallRequested",
+                "run-edit",
+                json!({
+                    "call_id":"edit-1",
+                    "tool":"edit",
+                    "arguments":{"path":"src/lib.rs","old":"old","new":"new"},
+                    "diff":"--- a/src/lib.rs\n+++ b/src/lib.rs\n-old\n+new"
+                }),
+            ),
+        );
+        reducer.reduce_event(
+            &mut live,
+            wire_for_run(
+                "PatchApplied",
+                "run-edit",
+                json!({"patch_id":"patch-edit-1","affected_files":["src/lib.rs"]}),
+            ),
+        );
+        reducer.reduce_event(
+            &mut live,
+            wire_for_run(
+                "ToolCallCompleted",
+                "run-edit",
+                json!({"call_id":"edit-1","tool":"edit","status":"completed"}),
+            ),
+        );
+
+        assert_eq!(hydrated.len(), 1);
+        assert_eq!(live.len(), 1, "patch apply must fold into the edit tool");
+        for block in [&hydrated[0], &live[0]] {
+            assert_eq!(block.id, "tool:edit-1");
+            assert_eq!(block.run_id, "run-edit");
+            assert_eq!(block.kind, BlockKind::Tool);
+            assert_eq!(block.tool_kind, Some(ToolKind::Patch));
+            assert_eq!(block.body_kind, BlockBodyKind::Diff);
+            assert!(block.title.contains("src/lib.rs"));
+            assert!(block.body.contains("-old\n+new"));
+            assert!(!block.expanded, "successful edits start collapsed");
+            assert_eq!((block.additions, block.deletions), (1, 1));
+        }
+        assert_eq!(hydrated[0].id, live[0].id);
+        assert_eq!(hydrated[0].tool_kind, live[0].tool_kind);
+        assert_eq!(hydrated[0].expanded, live[0].expanded);
     }
 
     #[test]

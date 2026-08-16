@@ -237,8 +237,9 @@ The default interaction loop is:
 - `/plan` scaffolds `.carina/plans/`; **`/view-plan`** opens a plan review
   overlay (`a` approve, `s` request changes, `q` quit plan, `esc` close).
   `/approve-plan` still works from the command line / settings.
-- `/btw <q>` is answer-only on the current session; `/btw --fork` / `/side`
-  forks a session and switches to it (no dual-pane).
+- `/btw <q>` is answer-only on the current run (not written into the
+  transcript). `/btw --fork` and `/side` are not shipped; use `/fork` to
+  branch the conversation.
 - Context pressure notices appear around 80%/90%; auto-compact runs only when
   a paused checkpoint makes `session.checkpoint.compact` available.
 - Agent `ask_user`: **structured** (2–6 options) or **free-text** (omit

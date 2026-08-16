@@ -231,11 +231,15 @@ func (t *Transcript) supersedeStaleReads(path string) int {
 
 // render projects the transcript into the prompt body the model sees.
 func (t *Transcript) render() string {
+	return renderTranscript(t.Summary, t.Turns)
+}
+
+func renderTranscript(summary string, turns []Turn) string {
 	var b strings.Builder
-	if t.Summary != "" {
-		fmt.Fprintf(&b, "SUMMARY OF EARLIER WORK:\n%s\n\n", t.Summary)
+	if summary != "" {
+		fmt.Fprintf(&b, "SUMMARY OF EARLIER WORK:\n%s\n\n", summary)
 	}
-	for _, turn := range t.Turns {
+	for _, turn := range turns {
 		obs := turn.Obs.Content
 		if turn.Obs.Elided {
 			// Elision covers the whole observation, media placeholders
@@ -250,6 +254,17 @@ func (t *Transcript) render() string {
 		fmt.Fprintf(&b, "turn %d: %s\nobservation: %s\n\n", turn.Index, turn.ActionBrief, obs)
 	}
 	return b.String()
+}
+
+func (t *Transcript) projectedPressure(summary string, turns []Turn) float64 {
+	view := renderTranscript(summary, turns)
+	if t.policy.MaxTokens > 0 {
+		return float64(estimateTokens(view)) / float64(t.policy.MaxTokens)
+	}
+	if trigger := t.triggerChars(); trigger > 0 {
+		return float64(len(view)) / float64(trigger)
+	}
+	return 0
 }
 
 // size is the current rendered char count.
@@ -328,16 +343,18 @@ func (t *Transcript) compactionMode(pressure float64) CompactionMode {
 	return compactionModeSummary
 }
 
-// compact enforces the char budget. Step 1: elide old, non-pinned
-// observations (keeping the most recent KeepRecent turns verbatim). Step 2:
-// if still over budget, partition the head (all but the recent tail) into
-// user-authored turns (Tool=="user": steering drains, fork-task notices —
-// kept verbatim, bounded by VerbatimUserMaxChars) and everything else, and
-// fold only the latter into the rolling Summary via the provided summarizer
-// (a cheap model call). User turns are preserved structurally rather than
-// trusted to survive a model-written summary: a compaction that folds
-// "don't use X" into prose loses the correction and the model cannot know
-// what it forgot. The audit log is untouched.
+// compact enforces the char budget as a cheap-first cascade. Step 1: elide
+// old, non-pinned observations (keeping the most recent KeepRecent turns
+// verbatim). Step 2: if still over budget, partition the head (all but the
+// recent tail) into user-authored turns (Tool=="user": steering drains,
+// fork-task notices — kept verbatim, bounded by VerbatimUserMaxChars) and
+// everything else. Fold only the latter into the rolling Summary: first a
+// local action skeleton when post-elision pressure is modest; if that
+// projection is still over budget, escalate to the provided summarizer in
+// the same call. User turns are preserved structurally rather than trusted
+// to survive a model-written summary: a compaction that folds "don't use X"
+// into prose loses the correction and the model cannot know what it forgot.
+// The audit log is untouched. MiniLM / semantic compact stays off.
 func (t *Transcript) compact(summarize func(head string) (string, error)) *CompactionReceipt {
 	if !t.shouldCompact() {
 		return nil
@@ -402,6 +419,17 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 		summary = collapseActionSkeleton(preCompactionSummary, folded)
 		transforms = []string{"elide_tool_output", "collapse_action_skeleton"}
 		receiptVersion = 3
+		projectedKept := applyVerbatimUserBudget(append([]Turn(nil), kept...), t.policy.VerbatimUserMaxChars)
+		projected := append(projectedKept, t.Turns[headEnd:]...)
+		if t.compactionMode(t.projectedPressure(summary, projected)) == compactionModeSummary && summarize != nil {
+			modelSummary, err := summarize(head.String())
+			if err == nil && strings.TrimSpace(modelSummary) != "" {
+				summary = modelSummary
+				transforms = append(transforms, "model_summary")
+				receiptVersion = 2
+				mode = compactionModeSummary
+			}
+		}
 	} else if summarize != nil {
 		var err error
 		summary, err = summarize(head.String())
@@ -500,7 +528,8 @@ func applyVerbatimUserBudget(kept []Turn, maxChars int) []Turn {
 
 // keyFiles is the deterministic key-file selector recorded on v2 compaction
 // receipts: the top-k most-edited paths among turns, counting Tool=="patch"
-// ActionBriefs via the same "<tool> <path>" parsing filesTouched ships,
+// and Tool=="edit" ActionBriefs via the same "<tool> <path>" parsing
+// filesTouched ships,
 // ordered by edit count descending with first-seen order breaking ties. It is
 // a pure function of the folded turns — a factual record of what actually ran
 // through the kernel, not model recall — and the substrate a later
@@ -512,10 +541,10 @@ func keyFiles(turns []Turn, k int) []string {
 	counts := map[string]int{}
 	var order []string // first-seen path order
 	for _, turn := range turns {
-		if turn.Tool != "patch" {
+		if turn.Tool != "patch" && turn.Tool != "edit" {
 			continue
 		}
-		path := strings.TrimSpace(strings.TrimPrefix(turn.ActionBrief, "patch "))
+		path := strings.TrimSpace(strings.TrimPrefix(turn.ActionBrief, turn.Tool+" "))
 		if path == "" {
 			continue
 		}

@@ -48,6 +48,7 @@ States:
 | Model-aware failure recovery cells | **wired** | current/original `execution.retry` routing; immutable linked audit evidence; stable retry-chain projection; visible pointer/Tab actions | ISSUE-014 / 08-11 failure recovery UX |
 | Installed skill slash discovery | **wired** | daemon skill prompt registry; trusted-root marketplace policy; slash command tests | ISSUE-016 |
 | Operator `/new` `/fork` `/compact` `/goal` | **wired** | typed `CommandId` verbs over `session.create` / `session.fork` / `session.checkpoint.compact` / `goal.*`; `/help` lists the registry | operator command truth |
+| Operator HITL + `/btw` | **wired** | `/always-approve` `/dont-ask` `/accept-edits` `/approval-mode` `/approve-plan` over `daemon.set_interactive_approval` / `session.approve_plan`; `/btw` answer-only via `execution.btw`; `/side` and `/btw --fork` withdrawn | operator command truth residual |
 | Subagent observation surface | **wired** | `agent.view` / `agent.recap`; retained Agents overlay; permission attenuation tests | ISSUE-012 |
 | Governed plan-mode exit | **wired** | daemon plan tool mask; `session.approve_plan`; child plan inheritance and tool-matrix tests | ISSUE-009 |
 | Dense Plan Review | **wired** | retained numbered line/range comments; expected-run approval fence; `/view-plan`; shared footer/`/keymap` A/S/C/M/Q matrix; seven-locale outcomes and revision seed | V006 visual density |
@@ -72,7 +73,7 @@ States:
 | Assistant content-type channel | **wired** | action JSON suppressed (`tool=done`→summary); whole-body JSON → pretty `json` markdown fence; else prose/markdown | transcript projection |
 | Managed-proxy context window alias | **wired** | `ccswitch-*/model` resolves via openai/azure catalog; footer uses real window not 32k guess | daemon compaction_budget |
 | Operator-facing reasoner failures | **wired** | degrade/ExecutionFailed reasons VOICE-ized; stacks stay on RoutingOutcome | daemon agent/reasoner |
-| Edit dialogue-first density | **wired** | successful edits start collapsed; create-only card with path/stats/preview (no green + dump) | transcript + render |
+| Edit dialogue-first density | **wired** | `edit` and `patch` share `ToolKind::Patch`; successful edits start collapsed; create-only card with path/stats/preview (no green + dump) | transcript + render |
 | Session status labels | **wired** | `degraded`→partial; bare `unknown`→ready (not StatusUnknown spam) | conversation localization |
 | Interactive final-turn prose contract | **wired** | `done.summary` must be plain language; no JSON completion payloads as user answer | daemon toolsHelp |
 | Assistant phase duplicate sealing | **wired** | adjacent identical commentary is replaced by the authoritative final answer; transcript regressions | conversation projection |

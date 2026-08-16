@@ -32,7 +32,7 @@ impl ToolKind {
             "search" => Self::Search,
             "web.fetch" => Self::WebFetch,
             "run" => Self::Run,
-            "patch" => Self::Patch,
+            "edit" | "patch" => Self::Patch,
             "diff" => Self::Diff,
             "code.search" => Self::CodeSearch,
             "code.symbols" => Self::CodeSymbols,
@@ -491,6 +491,27 @@ mod tests {
         assert_eq!(presentation.target, "wttr.in");
         assert!(presentation.collapsible);
         assert!(!ToolKind::WebFetch.is_exploration());
+    }
+
+    #[test]
+    fn edit_tool_shares_patch_presentation() {
+        assert_eq!(ToolKind::from_name("edit"), ToolKind::Patch);
+        assert_eq!(ToolKind::from_name("patch"), ToolKind::Patch);
+        let presentation = present(
+            &ToolFacts {
+                name: "edit".into(),
+                path: "src/lib.rs".into(),
+                diff: "--- a/src/lib.rs\n+++ b/src/lib.rs\n-old\n+new".into(),
+                status: "completed".into(),
+                ..ToolFacts::default()
+            },
+            false,
+        );
+        assert_eq!(presentation.label, "Edit");
+        assert_eq!(presentation.target, "src/lib.rs");
+        assert!(presentation.body.contains("-old\n+new"));
+        assert!(presentation.collapsible);
+        assert!(!ToolKind::from_name("edit").is_exploration());
     }
 
     #[test]
