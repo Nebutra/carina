@@ -24,14 +24,10 @@ func (d *Daemon) captureWorkspaceAnchor(sess *sessionstore.Session) (*continuity
 	if err != nil {
 		return nil, err
 	}
-	d.readProvMu.Lock()
-	dependencies := make([]string, 0, len(d.readProv[sess.SessionID]))
-	readHashes := make(map[string]string, len(d.readProv[sess.SessionID]))
-	for path, hash := range d.readProv[sess.SessionID] {
-		dependencies = append(dependencies, path)
-		readHashes[path] = hash
+	dependencies, readHashes, err := d.workspaceReadDependencies(sess)
+	if err != nil {
+		return nil, err
 	}
-	d.readProvMu.Unlock()
 	mutations := []string{}
 	patches, patchErr := d.kern.PatchList(sess.SessionID)
 	if patchErr != nil {
@@ -77,6 +73,107 @@ func (d *Daemon) captureWorkspaceAnchor(sess *sessionstore.Session) (*continuity
 
 const maxAnchorFileBytes = 16 << 20
 const maxAnchorTotalBytes = 64 << 20
+
+// workspaceRelPath returns the workspace-relative path for a model-supplied
+// path (relative or absolute). false means the path is not a file inside the
+// workspace tree after symlink resolution.
+func workspaceRelPath(root, path string) (string, bool) {
+	if strings.TrimSpace(path) == "" {
+		return "", false
+	}
+	realRoot, ok := canonicalExistingDir(root)
+	if !ok {
+		return "", false
+	}
+	abs := resolveIn(root, path)
+	abs, err := filepath.Abs(abs)
+	if err != nil {
+		return "", false
+	}
+	resolved := abs
+	if followed, err := filepath.EvalSymlinks(abs); err == nil {
+		resolved = filepath.Clean(followed)
+	} else if mapped, ok := workspaceLexicalAbs(root, path); ok {
+		resolved = mapped
+	}
+	if !pathWithin(realRoot, resolved) {
+		return "", false
+	}
+	rel, err := filepath.Rel(realRoot, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", false
+	}
+	return filepath.Clean(rel), true
+}
+
+func workspaceLexicalAbs(root, path string) (string, bool) {
+	realRoot, ok := canonicalExistingDir(root)
+	if !ok {
+		return "", false
+	}
+	abs := resolveIn(root, path)
+	abs, err := filepath.Abs(abs)
+	if err != nil {
+		return "", false
+	}
+	candidates := []string{realRoot, filepath.Clean(root)}
+	if rootAbs, err := filepath.Abs(root); err == nil {
+		candidates = append(candidates, rootAbs)
+	}
+	for _, base := range candidates {
+		baseAbs, err := filepath.Abs(base)
+		if err != nil {
+			continue
+		}
+		if !pathWithin(baseAbs, abs) {
+			continue
+		}
+		rel, err := filepath.Rel(baseAbs, abs)
+		if err != nil {
+			continue
+		}
+		return filepath.Join(realRoot, rel), true
+	}
+	return "", false
+}
+
+func lexicalWorkspaceEscape(root, path string) bool {
+	realRoot, ok := canonicalExistingDir(root)
+	if !ok {
+		return false
+	}
+	mapped, ok := workspaceLexicalAbs(root, path)
+	if !ok {
+		return false
+	}
+	followed, err := filepath.EvalSymlinks(mapped)
+	if err != nil {
+		return false
+	}
+	return !pathWithin(realRoot, filepath.Clean(followed))
+}
+
+func (d *Daemon) workspaceReadDependencies(sess *sessionstore.Session) ([]string, map[string]string, error) {
+	d.readProvMu.Lock()
+	defer d.readProvMu.Unlock()
+	paths := make([]string, 0, len(d.readProv[sess.SessionID]))
+	hashes := make(map[string]string, len(d.readProv[sess.SessionID]))
+	for path, hash := range d.readProv[sess.SessionID] {
+		if rel, ok := workspaceRelPath(sess.WorkspaceRoot, path); ok {
+			paths = append(paths, rel)
+			hashes[rel] = hash
+			continue
+		}
+		// Absolute paths that are not inside the workspace are extra-root
+		// reads, not replay dependencies. Relative paths that fail to
+		// resolve inside the tree are still fail-closed (symlink escape).
+		if filepath.IsAbs(filepath.Clean(path)) && !lexicalWorkspaceEscape(sess.WorkspaceRoot, path) {
+			continue
+		}
+		return nil, nil, fmt.Errorf("workspace anchor path is inaccessible or escapes through symlink: %s", path)
+	}
+	return paths, hashes, nil
+}
 
 func digestWorkspaceFiles(root string, paths []string) ([]continuity.FileDigest, error) {
 	out := make([]continuity.FileDigest, 0, len(paths))

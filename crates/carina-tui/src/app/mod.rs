@@ -676,6 +676,11 @@ pub struct App {
     screen_handoff_failed: bool,
 }
 
+fn session_needs_picker_model_write(session: &Session, model: &str) -> bool {
+    let model = model.trim();
+    !model.is_empty() && session.next_model.trim() != model
+}
+
 impl App {
     fn ui_locale(&self) -> Locale {
         self.options
@@ -1870,23 +1875,70 @@ impl App {
     }
 
     fn apply_model_preference(&mut self, preference: crate::rpc::SessionModelSelection) -> bool {
-        let Some(mut session) = self
+        let Some(session) = self
             .active_session
             .as_ref()
             .filter(|session| session.session_id == preference.session_id)
-            .cloned()
         else {
             return false;
         };
         if preference.model_preference_revision <= session.model_preference_revision {
             return false;
         }
+        self.adopt_session_model_selection(preference);
+        true
+    }
+
+    fn adopt_session_model_selection(&mut self, preference: crate::rpc::SessionModelSelection) {
+        let Some(mut session) = self
+            .active_session
+            .as_ref()
+            .filter(|session| session.session_id == preference.session_id)
+            .cloned()
+        else {
+            return;
+        };
         session.next_model = preference.next_model;
         session.next_reasoning_effort = preference.next_reasoning_effort;
         session.model_preference_revision = preference.model_preference_revision;
         self.sync_selection_from_session(&session);
         self.remember_session(session);
-        true
+    }
+
+    fn write_picker_model_to_session(&mut self) -> bool {
+        for _ in 0..2 {
+            let Some(session) = self.active_session.as_ref() else {
+                return true;
+            };
+            if !session_needs_picker_model_write(session, &self.selected_model) {
+                return true;
+            }
+            let session_id = session.session_id.clone();
+            let expected = session.model_preference_revision;
+            let model = self.selected_model.clone();
+            let effort = self.selected_reasoning_effort.clone();
+            match self
+                .rpc
+                .set_session_model(&session_id, &model, &effort, expected)
+            {
+                Ok(selection) => {
+                    self.adopt_session_model_selection(selection);
+                    return true;
+                }
+                Err(error) => {
+                    if !self.reconcile_model_preference_conflict(&error) {
+                        self.notice = Notice::localized_with(
+                            MessageId::SubmitFailedDraftKept,
+                            [("error", error.to_string())],
+                        );
+                        return false;
+                    }
+                }
+            }
+        }
+        self.active_session.as_ref().is_none_or(|session| {
+            !session_needs_picker_model_write(session, &self.selected_model)
+        })
     }
 
     fn reconcile_model_preference_conflict(&mut self, error: &RpcError) -> bool {
@@ -4837,10 +4889,10 @@ impl App {
             .as_ref()
             .map(|session| session.session_id.clone())
             .ok_or_else(|| anyhow!("conversation has no active session"))?;
-        let locale = agent_locale(self.options.locale.as_deref().unwrap_or("en"));
+        let locale = agent_locale(self.options.locale.as_deref().unwrap_or("en")).to_owned();
         match self
             .rpc
-            .model_inventory_for(&session_id, &self.selected_model, locale)
+            .model_inventory_for(&session_id, &self.selected_model, &locale)
         {
             Ok(inventory) => self.inventory = inventory,
             Err(error) => {
@@ -4869,7 +4921,41 @@ impl App {
             self.notice = Notice::localized(MessageId::ImageModelIncompatibleDraftKept);
             return Ok(false);
         }
-        let envelope = PendingSubmission {
+        if !self.write_picker_model_to_session() {
+            return Ok(false);
+        }
+        let envelope = self.new_prompt_envelope(session_id, prompt, &locale, media_refs);
+        match self.dispatch_new_prompt(envelope.clone()) {
+            Ok(true) => Ok(true),
+            Ok(false) => {
+                if self
+                    .notice
+                    .is_localized(MessageId::ModelPreferenceChangedDraftKept)
+                    && self.write_picker_model_to_session()
+                {
+                    let retry = self.new_prompt_envelope(
+                        envelope.session_id.clone(),
+                        envelope.prompt.clone(),
+                        &locale,
+                        envelope.media_refs.clone(),
+                    );
+                    self.dispatch_new_prompt(retry)
+                } else {
+                    Ok(false)
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn new_prompt_envelope(
+        &self,
+        session_id: String,
+        prompt: String,
+        locale: &str,
+        media_refs: Vec<crate::rpc::MediaRef>,
+    ) -> PendingSubmission {
+        PendingSubmission {
             session_id,
             prompt,
             model: self.selected_model.clone(),
@@ -4892,7 +4978,10 @@ impl App {
             submission_id: operation_id("tui"),
             media_refs,
             local_id: operation_id("local"),
-        };
+        }
+    }
+
+    fn dispatch_new_prompt(&mut self, envelope: PendingSubmission) -> Result<bool> {
         match self.rpc.submit(
             &envelope.session_id,
             &envelope.prompt,
@@ -10009,6 +10098,196 @@ mod tests {
         app.phase = Phase::Model;
         app.focus = Focus::Scene;
         (app, root, server)
+    }
+
+    #[test]
+    fn empty_or_divergent_session_model_needs_a_picker_write() {
+        let empty: Session = serde_json::from_value(serde_json::json!({
+            "session_id": "sess-empty",
+            "next_model": "",
+            "model_preference_revision": 0
+        }))
+        .unwrap();
+        let matching: Session = serde_json::from_value(serde_json::json!({
+            "session_id": "sess-match",
+            "next_model": "grok-build/grok-4.6",
+            "model_preference_revision": 1
+        }))
+        .unwrap();
+        assert!(session_needs_picker_model_write(
+            &empty,
+            "grok-build/grok-4.6"
+        ));
+        assert!(!session_needs_picker_model_write(&empty, ""));
+        assert!(!session_needs_picker_model_write(
+            &matching,
+            "grok-build/grok-4.6"
+        ));
+        assert!(session_needs_picker_model_write(
+            &matching,
+            "xai/grok-4.6"
+        ));
+    }
+
+    #[test]
+    fn submit_writes_picker_model_before_start_when_session_has_none() {
+        use std::io::{BufRead, BufReader, Write};
+
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("daemon.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let inventory = serde_json::json!({
+                "default_model": "grok-build/grok-4.6",
+                "reasoner": {"available": true},
+                "providers": [{
+                    "id": "grok-build",
+                    "registered": true,
+                    "available": true,
+                    "models": [{"id": "grok-build/grok-4.6", "available": true}]
+                }]
+            });
+            for method in ["runtime.initialize", "model.list", "session.list"] {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["method"], method);
+                let result = match method {
+                    "runtime.initialize" => serde_json::json!({
+                        "runtime_version": "test",
+                        "protocol_version": "1.3.0",
+                        "projection_version": "1.0.0",
+                        "capabilities": {"rpc_methods": [
+                            "execution.start", "execution.retry", "model.list", "session.create",
+                            "session.model.set", "session.events.stream", "session.list"
+                        ]}
+                    }),
+                    "model.list" => inventory.clone(),
+                    _ => serde_json::json!([]),
+                };
+                writeln!(
+                    stream,
+                    "{}",
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "result": result
+                    })
+                )
+                .unwrap();
+                stream.flush().unwrap();
+            }
+
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["method"], "model.list");
+            writeln!(
+                stream,
+                "{}",
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": request["id"],
+                    "result": inventory
+                })
+            )
+            .unwrap();
+            stream.flush().unwrap();
+
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["method"], "session.model.set");
+            assert_eq!(request["params"]["session_id"], "sess-empty-model");
+            assert_eq!(request["params"]["model"], "grok-build/grok-4.6");
+            assert_eq!(request["params"]["expected_model_preference_revision"], 0);
+            writeln!(
+                stream,
+                "{}",
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": request["id"],
+                    "result": {
+                        "session_id": "sess-empty-model",
+                        "next_model": "grok-build/grok-4.6",
+                        "next_reasoning_effort": "high",
+                        "model_preference_revision": 1
+                    }
+                })
+            )
+            .unwrap();
+            stream.flush().unwrap();
+
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["method"], "execution.start");
+            assert_eq!(request["params"]["model"], "grok-build/grok-4.6");
+            assert_eq!(request["params"]["model_preference_revision"], 1);
+            assert_eq!(request["params"]["prompt"], "你好");
+            writeln!(
+                stream,
+                "{}",
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": request["id"],
+                    "result": {
+                        "run_id": "run-1",
+                        "session_id": "sess-empty-model",
+                        "status": "queued"
+                    }
+                })
+            )
+            .unwrap();
+            stream.flush().unwrap();
+        });
+
+        let mut app = App::bootstrap(Options {
+            socket,
+            workspace: root.path().to_path_buf(),
+            runtime_expectation: None,
+            session_id: None,
+            locale: Some(Locale::ZhHans.product_id().into()),
+            locale_path: None,
+            density: DensityMode::Compact,
+            density_path: None,
+            glyph_preference: GlyphPreference::Auto,
+            glyphs_path: None,
+            carina_bin: None,
+            no_alt_screen: true,
+            screen_mode: None,
+            screen_handoff: None,
+            alt_screen: AltScreenPolicy::Never,
+            scrollback_wrap: ScrollbackWrap::PreWrap,
+        })
+        .unwrap();
+        app.active_session = Some(
+            serde_json::from_value(serde_json::json!({
+                "session_id": "sess-empty-model",
+                "next_model": "",
+                "model_preference_revision": 0
+            }))
+            .unwrap(),
+        );
+        app.selected_model = "grok-build/grok-4.6".into();
+        app.selected_reasoning_effort = "high".into();
+        app.phase = Phase::Conversation;
+        app.focus = Focus::Composer;
+        app.composer.set_text("你好");
+
+        assert!(app.submit_new_prompt("你好".into(), Vec::new()).unwrap());
+        assert_eq!(app.composer.text(), "");
+        assert_eq!(app.active_run_id.as_deref(), Some("run-1"));
+        assert_eq!(
+            app.active_session
+                .as_ref()
+                .map(|session| session.model_preference_revision),
+            Some(1)
+        );
+
+        server.join().unwrap();
     }
 
     #[test]

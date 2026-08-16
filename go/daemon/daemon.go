@@ -3669,16 +3669,37 @@ func (d *Daemon) persistTask(taskID string) {
 	}
 }
 
+func (d *Daemon) workspaceProvenanceKey(sessionID, path string) (string, bool) {
+	sess, ok := d.store.Get(sessionID)
+	if !ok {
+		clean := filepath.Clean(path)
+		if filepath.IsAbs(clean) {
+			return "", false
+		}
+		return clean, true
+	}
+	return workspaceRelPath(sess.WorkspaceRoot, path)
+}
+
 // recordRead notes the hash of content the agent read for a path, so a later
 // blind or stale full-file overwrite (a dirty write) can be caught.
+// Workspace-relative keys are stored so an in-workspace absolute read cannot
+// poison the checkpoint digest. Paths outside the workspace are not replay
+// dependencies and are not recorded.
 func (d *Daemon) recordRead(sessionID, path, content string) {
+	key := path
+	if rel, ok := d.workspaceProvenanceKey(sessionID, path); ok {
+		key = rel
+	} else if filepath.IsAbs(filepath.Clean(path)) {
+		return
+	}
 	h := sha256.Sum256([]byte(content))
 	d.readProvMu.Lock()
 	defer d.readProvMu.Unlock()
 	if d.readProv[sessionID] == nil {
 		d.readProv[sessionID] = map[string]string{}
 	}
-	d.readProv[sessionID][path] = hex.EncodeToString(h[:])
+	d.readProv[sessionID][key] = hex.EncodeToString(h[:])
 }
 
 // lastReadHash returns the sha256 (hex) this session last recorded for path
@@ -3686,11 +3707,17 @@ func (d *Daemon) recordRead(sessionID, path, content string) {
 // transfer real read-provenance between sessions (see bestofn.go) instead of
 // re-stamping current disk content, which would make drift undetectable.
 func (d *Daemon) lastReadHash(sessionID, path string) (string, bool) {
+	key, _ := d.workspaceProvenanceKey(sessionID, path)
 	d.readProvMu.Lock()
 	defer d.readProvMu.Unlock()
 	m := d.readProv[sessionID]
 	if m == nil {
 		return "", false
+	}
+	if key != "" {
+		if h, ok := m[key]; ok {
+			return h, true
+		}
 	}
 	h, ok := m[path]
 	return h, ok
@@ -3706,10 +3733,16 @@ func (d *Daemon) checkWriteProvenance(sessionID, relpath, abspath string) error 
 	}
 	sum := sha256.Sum256(cur)
 	curHash := hex.EncodeToString(sum[:])
+	key, _ := d.workspaceProvenanceKey(sessionID, relpath)
 	d.readProvMu.Lock()
 	seen := ""
 	if m := d.readProv[sessionID]; m != nil {
-		seen = m[relpath]
+		if key != "" {
+			seen = m[key]
+		}
+		if seen == "" {
+			seen = m[relpath]
+		}
 	}
 	d.readProvMu.Unlock()
 	if seen == "" {
