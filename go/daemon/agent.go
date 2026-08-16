@@ -538,14 +538,14 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 				"tool_protocol":          toolProtocol,
 			}
 			if err != nil {
-				if toolsUnsupported(err) && requery < maxRequeries {
+				if (toolsUnsupported(err) || grokNativeToolRejected(err)) && requery < maxRequeries {
 					outcome["status"] = "tools_unsupported"
 					outcome["tool_protocol"] = "json_fallback"
 					info := classifyProviderError(err)
 					outcome["error"] = runtimecontract.ErrorEnvelope{Code: info.Code, Category: runtimecontract.ErrorCategory(info.Category), Message: "provider rejected native tools", UserAction: info.UserAction, CorrelationID: info.CorrelationID, Retry: runtimecontract.NoRetry(), Metadata: map[string]any{"provider": info.Provider, "http_status": info.HTTPStatus}}
 					d.record(sess.SessionID, "RoutingOutcome", task.RunID, "go", outcome, "")
-					lastNativeFallback = "Native tool calling was rejected. " +
-						"Reply with ONE JSON object like {\"tool\":\"read\",\"path\":\"...\"}."
+					lastNativeFallback = "Do not call tools. Reply with ONE JSON object like {\"tool\":\"read\",\"path\":\"...\"}."
+					prompt = fmt.Sprintf("%s\n\n%s", prompt, lastNativeFallback)
 					continue
 				}
 				outcome["status"] = "failed"

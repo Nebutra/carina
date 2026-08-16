@@ -2200,6 +2200,23 @@ fn strip_json_fence(text: &str) -> &str {
         .unwrap_or(trimmed)
 }
 
+fn split_prose_and_action_envelope(text: &str) -> Option<(&str, &str)> {
+    let mut offset = 0;
+    let bytes = text.as_bytes();
+    while offset < bytes.len() {
+        let Some(rel) = text[offset..].find('{') else {
+            return None;
+        };
+        let start = offset + rel;
+        let rest = &text[start..];
+        if is_action_json(rest) {
+            return Some((text[..start].trim(), rest));
+        }
+        offset = start + 1;
+    }
+    None
+}
+
 fn is_action_json(text: &str) -> bool {
     let candidate = strip_json_fence(text);
     serde_json::from_str::<Value>(candidate)
@@ -2234,6 +2251,11 @@ fn visible_assistant_text_with_mode(text: &str, project_report: bool) -> Option<
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return None;
+    }
+    if let Some((prose, envelope)) = split_prose_and_action_envelope(trimmed) {
+        if !prose.is_empty() && envelope != trimmed {
+            return Some(prose.to_owned());
+        }
     }
     if is_action_json(trimmed) {
         let candidate = strip_json_fence(trimmed);
@@ -4240,6 +4262,12 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         assert_eq!(
             visible_assistant_text(r#"{"tool":"done","summary":"All set."}"#).as_deref(),
             Some("All set.")
+        );
+
+        let prefixed = "先读仓库说明和清单。\n\n{\"actions\":[{\"tool\":\"read\",\"path\":\"README.md\"}]}";
+        assert_eq!(
+            visible_assistant_text(prefixed).as_deref(),
+            Some("先读仓库说明和清单。")
         );
     }
 

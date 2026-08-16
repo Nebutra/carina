@@ -933,12 +933,32 @@ func TestGrokACPQueueUpdateOnlyTracksCurrentPlainPrompt(t *testing.T) {
 	}
 }
 
+func TestSalvageGrokJSONFallbackKeepsStreamedText(t *testing.T) {
+	if _, ok := salvageGrokJSONFallback(grokCLIError{message: "Grok Build attempted a disabled capability", kind: "json_fallback"}); ok {
+		t.Fatal("empty salvage must not succeed")
+	}
+	got, ok := salvageGrokJSONFallback(grokCLIError{
+		message: "Grok Build attempted a disabled capability",
+		kind:    "json_fallback",
+		salvage: `{"tool":"done","summary":"kept"}`,
+	})
+	if !ok || got.Text != `{"tool":"done","summary":"kept"}` {
+		t.Fatalf("salvage=%q ok=%v", got.Text, ok)
+	}
+	if !grokNativeToolRejected(grokCLIError{message: "Grok Build attempted a disabled capability", kind: "json_fallback"}) {
+		t.Fatal("json_fallback must requery")
+	}
+	if grokNativeToolRejected(grokCLIError{message: "Grok Build attempted a disabled capability", kind: "safety"}) {
+		t.Fatal("real safety errors must not look like json_fallback")
+	}
+}
+
 func TestGrokACPRejectsToolEventAndClassifiesAuthErrors(t *testing.T) {
 	requireUnixShell(t)
 	for _, test := range []struct {
 		mode, code string
 	}{
-		{"tool-event", "reasoner_safety_violation"},
+		{"tool-event", "provider_native_tools_rejected"},
 		{"auth-error", "provider_authentication_failed"},
 	} {
 		t.Run(test.mode, func(t *testing.T) {

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -128,5 +129,45 @@ func TestSalvageConversationalDoneGuards(t *testing.T) {
 	task.SuccessCriteria = []scheduler.SuccessCheck{{Kind: "file_exists", Path: "never.txt"}}
 	if _, ok := salvageConversationalDone("still prose", task); ok {
 		t.Fatal("success criteria must block salvage")
+	}
+}
+
+type firstErrorReasoner struct {
+	err  error
+	then string
+	n    int
+}
+
+func (r *firstErrorReasoner) Name() string { return "first-error" }
+func (r *firstErrorReasoner) Think(_ context.Context, _ string) (string, error) {
+	r.n++
+	if r.n == 1 {
+		return "", r.err
+	}
+	return r.then, nil
+}
+
+func TestGrokNativeToolCallRequeriesInsteadOfFailing(t *testing.T) {
+	old := retryBaseDelay
+	retryBaseDelay = 5 * time.Millisecond
+	defer func() { retryBaseDelay = old }()
+
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "这个repo是什么")
+	d.SetReasoner(&firstErrorReasoner{
+		err:  grokCLIError{message: "Grok Build attempted a disabled capability", kind: "json_fallback"},
+		then: `{"tool":"done","summary":"Carina is a local-first agent runtime."}`,
+	})
+	d.runTask(sess, task)
+
+	tk, _ := d.sched.Get(task.RunID)
+	if tk.Status != "completed" {
+		t.Fatalf("Grok native tool leak must requery, got %s reason=%q", tk.Status, tk.Summary)
+	}
+	if !strings.Contains(tk.Summary, "local-first") {
+		t.Fatalf("requery answer missing, got %q", tk.Summary)
 	}
 }

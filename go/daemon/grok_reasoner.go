@@ -46,6 +46,7 @@ type grokCLIError struct {
 	message      string
 	kind         string
 	upstreamKind string
+	salvage      string
 }
 
 func (e grokCLIError) Error() string {
@@ -55,12 +56,35 @@ func (e grokCLIError) Error() string {
 	return "grok build reasoner failed"
 }
 
+func salvageGrokJSONFallback(err error) (ReasonerResult, bool) {
+	var ge grokCLIError
+	if err == nil || !errors.As(err, &ge) || ge.kind != "json_fallback" {
+		return ReasonerResult{}, false
+	}
+	text := strings.TrimSpace(ge.salvage)
+	if text == "" {
+		return ReasonerResult{}, false
+	}
+	return ReasonerResult{Text: text}, true
+}
+
+func grokNativeToolRejected(err error) bool {
+	info := classifyProviderError(err)
+	if info.Code == "provider_native_tools_rejected" {
+		return true
+	}
+	var ge grokCLIError
+	return errors.As(err, &ge) && ge.kind == "json_fallback"
+}
+
 func (e grokCLIError) ProviderError() providerErrorInfo {
 	switch e.kind {
 	case "safety":
 		return providerErrorInfo{Code: "reasoner_safety_violation", Category: "internal", Provider: provider.GrokBuildProviderID, UserAction: "update Grok Build or choose another provider"}
 	case "protocol":
 		return providerErrorInfo{Code: "reasoner_protocol_error", Category: "internal", Provider: provider.GrokBuildProviderID, UserAction: "update Grok Build or choose another provider"}
+	case "json_fallback":
+		return providerErrorInfo{Code: "provider_native_tools_rejected", Category: "compatibility", Provider: provider.GrokBuildProviderID, UserAction: "retry; the model must reply with JSON instead of calling tools"}
 	}
 	message := strings.ToLower(e.message)
 	switch {
@@ -170,6 +194,13 @@ func (r *grokCLIReasoner) ThinkRoutedModel(ctx context.Context, model, prompt st
 	if callCtx.Err() != nil {
 		resetReasonerStream(publicStream)
 		return ReasonerResult{}, callCtx.Err()
+	}
+	if salvaged, ok := salvageGrokJSONFallback(runErr); ok {
+		salvaged.Usage.EffectiveReasoningEffort = client.effectiveEffort
+		if salvaged.Usage.EffectiveReasoningEffort == "" {
+			salvaged.Usage.EffectiveReasoningEffort = requestedEffort
+		}
+		return salvaged, nil
 	}
 	if runErr != nil {
 		resetReasonerStream(publicStream)
@@ -2494,7 +2525,15 @@ func (c *grokACPClient) sessionUpdate(params json.RawMessage, phase grokACPPhase
 		}
 		return nil
 	case "tool_call", "tool_call_update", "plan":
-		return grokCLIError{message: "Grok Build attempted a disabled capability", kind: "safety"}
+		// Isolation still refuses to execute Grok-native tools. If the model
+		// already streamed JSON/prose, keep that text so Carina can parse or
+		// salvage it. An empty body stays a json_fallback so the agent requeries
+		// instead of killing a run that already did useful work.
+		return grokCLIError{
+			message: "Grok Build attempted a disabled capability",
+			kind:    "json_fallback",
+			salvage: strings.TrimSpace(c.text.String()),
+		}
 	default:
 		return grokCLIError{message: "Grok Build emitted an unsupported session update", kind: "safety"}
 	}

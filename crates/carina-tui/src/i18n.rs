@@ -775,6 +775,9 @@ pub enum MessageId {
     FailureReasonCircuitOpen,
     FailureReasonEffortUnsupported,
     FailureReasonGenericTurn,
+    FailureReasonGrokSignIn,
+    FailureReasonGrokNativeTool,
+    FailureReasonGrokDoctor,
     FailureReasonPolicyProfile,
     FailureReasonOutputSchema,
     FailureReasonInvalidActions,
@@ -1438,6 +1441,9 @@ impl MessageId {
         Self::FailureReasonCircuitOpen,
         Self::FailureReasonEffortUnsupported,
         Self::FailureReasonGenericTurn,
+        Self::FailureReasonGrokSignIn,
+        Self::FailureReasonGrokNativeTool,
+        Self::FailureReasonGrokDoctor,
         Self::FailureReasonPolicyProfile,
         Self::FailureReasonOutputSchema,
         Self::FailureReasonInvalidActions,
@@ -1766,6 +1772,15 @@ pub fn model_health_reason_label(locale: Locale, status: &str) -> Option<&'stati
     Some(text(locale, id))
 }
 
+fn trailing_operator_clause(reason: &str, lead: &str) -> Option<String> {
+    let rest = reason.trim().strip_prefix(lead)?;
+    let rest = rest.trim().trim_start_matches('.').trim();
+    if rest.is_empty() {
+        return None;
+    }
+    Some(rest.to_owned())
+}
+
 /// Map daemon/operator English failure copy (and residual stacks) to locale text.
 pub fn localize_operator_failure_reason(locale: Locale, reason: &str) -> String {
     let trimmed = reason.trim();
@@ -1791,11 +1806,34 @@ pub fn localize_operator_failure_reason(locale: Locale, reason: &str) -> String 
         MessageId::FailureReasonCircuitOpen
     } else if lower.contains("reasoning effort") {
         MessageId::FailureReasonEffortUnsupported
+    } else if lower.contains("not signed in")
+        || lower.contains("not logged in")
+        || lower.contains("grok login")
+    {
+        MessageId::FailureReasonGrokSignIn
+    } else if lower.contains("disabled capability")
+        || lower.contains("tried to call a tool")
+        || (lower.contains("reply with json") && lower.contains("calling tools"))
+    {
+        MessageId::FailureReasonGrokNativeTool
+    } else if lower.contains("grok doctor") || lower.contains("update grok") {
+        MessageId::FailureReasonGrokDoctor
     } else if lower.contains("modelrouter")
         || lower.starts_with("reasoner error:")
         || lower.starts_with("reasoner failed:")
         || lower.contains("could not complete this turn")
     {
+        if let Some(rest) = trailing_operator_clause(trimmed, "The model could not complete this turn")
+        {
+            let rest_l = rest.to_ascii_lowercase();
+            if !rest_l.contains("check the provider and network") {
+                return format!(
+                    "{} {}",
+                    text(locale, MessageId::FailureReasonGenericTurn),
+                    rest
+                );
+            }
+        }
         MessageId::FailureReasonGenericTurn
     } else if lower.contains("requires an explicit profile")
         || lower.contains("exceeds profile ceiling")
@@ -7207,6 +7245,33 @@ fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
             "El modelo no pudo completar este turno. Revisa el proveedor y la red y reintenta si hace falta.",
             "Le modèle n’a pas pu terminer ce tour. Vérifiez le fournisseur et le réseau, puis réessayez si besoin.",
         ],
+        FailureReasonGrokSignIn => [
+            "Grok Build is not signed in. Run `grok login`, then refresh Providers.",
+            "Grok Build 未登录。请运行 `grok login`，然后刷新服务商。",
+            "Grok Build 未登入。請執行 `grok login`，然後重新整理服務商。",
+            "Grok Build にサインインしていません。`grok login` のあと、プロバイダーを更新してください。",
+            "Grok Build에 로그인되어 있지 않습니다. `grok login` 후 제공자를 새로고침하세요.",
+            "Grok Build no tiene sesión. Ejecuta `grok login` y actualiza Proveedores.",
+            "Grok Build n’est pas connecté. Lancez `grok login`, puis actualisez les fournisseurs.",
+        ],
+        FailureReasonGrokNativeTool => [
+            "The model tried to call a tool instead of finishing the turn. Retry the same question.",
+            "模型没有用 JSON 收尾，而是直接去调工具。请用同一问题重试。",
+            "模型沒有用 JSON 收尾，而是直接去呼叫工具。請用同一問題重試。",
+            "モデルがターンを終えずツールを呼び出そうとしました。同じ質問でもう一度試してください。",
+            "모델이 턴을 끝내지 않고 도구를 호출하려 했습니다. 같은 질문으로 다시 시도하세요.",
+            "El modelo intentó llamar a una herramienta en vez de terminar el turno. Reintenta la misma pregunta.",
+            "Le modèle a essayé d’appeler un outil au lieu de terminer le tour. Réessayez la même question.",
+        ],
+        FailureReasonGrokDoctor => [
+            "Grok Build could not finish this turn. Run `grok doctor`, then refresh Providers.",
+            "Grok Build 无法完成本轮。请运行 `grok doctor`，然后刷新服务商。",
+            "Grok Build 無法完成本輪。請執行 `grok doctor`，然後重新整理服務商。",
+            "Grok Build がこのターンを完了できませんでした。`grok doctor` のあと、プロバイダーを更新してください。",
+            "Grok Build가 이 턴을 끝내지 못했습니다. `grok doctor` 후 제공자를 새로고침하세요.",
+            "Grok Build no pudo terminar este turno. Ejecuta `grok doctor` y actualiza Proveedores.",
+            "Grok Build n’a pas pu terminer ce tour. Lancez `grok doctor`, puis actualisez les fournisseurs.",
+        ],
         FailureReasonOutputSchema => [
             "The final answer was not valid JSON for this run. Retry, or ask again without a required output schema.",
             "最终回答不符合这次运行要求的 JSON。请重试，或在不要求输出 schema 的情况下再问一次。",
@@ -7688,6 +7753,21 @@ mod tests {
         );
         assert!(invalid.contains("探索") || invalid.contains("回答"), "invalid={invalid}");
         assert!(!invalid.contains("invalid actions"), "invalid={invalid}");
+        let grok_tool = localize_operator_failure_reason(
+            Locale::ZhHans,
+            "The model tried to call a tool instead of finishing the turn. Retry the same question.",
+        );
+        assert!(grok_tool.contains("工具") || grok_tool.contains("JSON"), "grok_tool={grok_tool}");
+        assert!(!grok_tool.contains("could not complete"), "grok_tool={grok_tool}");
+        let grok_doctor = localize_operator_failure_reason(
+            Locale::ZhHans,
+            "The model could not complete this turn. run `grok doctor`, then refresh Providers.",
+        );
+        assert!(grok_doctor.contains("grok doctor"), "grok_doctor={grok_doctor}");
+        assert_ne!(
+            grok_doctor,
+            text(Locale::ZhHans, MessageId::FailureReasonGenericTurn)
+        );
     }
 
     #[test]

@@ -424,6 +424,8 @@ func operatorFacingReasonerError(err error) string {
 		return joinOperatorSentence("Reasoning effort is not supported for this model route", info.UserAction)
 	case "provider_reasoning_effort_invalid":
 		return joinOperatorSentence("The selected reasoning effort is not valid for this model", info.UserAction)
+	case "provider_native_tools_rejected":
+		return "The model tried to call a tool instead of finishing the turn. Retry the same question."
 	}
 	if info.UserAction != "" {
 		return joinOperatorSentence("The model could not complete this turn", info.UserAction)
