@@ -95,10 +95,7 @@ func mergeLocalProviderDiscoveries(cat provider.Catalog, discoverGrokBuild, grok
 	if grokBuildDisabled {
 		cat = mergeDisabledGrokBuildProvider(cat)
 	} else if discoverGrokBuild {
-		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-		discovery := provider.DetectGrokBuild(ctx)
-		cancel()
-		cat = provider.MergeGrokBuildProvider(cat, discovery)
+		cat = provider.MergeGrokBuildProvider(cat, provider.DetectGrokBuildCached(context.Background()))
 	}
 	profiles, err := provider.DetectCCSwitchProviders("")
 	if err != nil || len(profiles) == 0 {

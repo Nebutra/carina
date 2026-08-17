@@ -221,6 +221,9 @@ func TestMergeGrokBuildProviderActionsMatchDiscoveryState(t *testing.T) {
 	if _, exists := MergeGrokBuildProvider(nil, GrokBuildDiscovery{State: GrokBuildStateAbsent})[GrokBuildProviderID]; exists {
 		t.Fatal("absent Grok Build must not create a synthetic provider")
 	}
+	if _, exists := MergeGrokBuildProvider(nil, GrokBuildDiscovery{State: GrokBuildStateProbing})[GrokBuildProviderID]; exists {
+		t.Fatal("probing Grok Build must not create a synthetic provider")
+	}
 }
 
 func TestGrokBuildDiscoveryCacheSingleFlightWaiterCancellation(t *testing.T) {
@@ -285,6 +288,61 @@ func TestGrokBuildDiscoveryCacheDoesNotCacheCanceledProbe(t *testing.T) {
 	if got := calls.Load(); got != 2 {
 		t.Fatalf("probe calls=%d, want canceled plus fresh probe", got)
 	}
+}
+
+func TestGrokBuildDiscoveryCacheServesStaleWithoutWaiting(t *testing.T) {
+	var cache grokBuildDiscoveryCacheState
+	var calls atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	discover := func(context.Context) GrokBuildDiscovery {
+		n := calls.Add(1)
+		if n == 1 {
+			return GrokBuildDiscovery{State: GrokBuildStateReady, Models: []string{"grok-4.6"}}
+		}
+		if n == 2 {
+			close(started)
+			<-release
+		}
+		return GrokBuildDiscovery{State: GrokBuildStateReady, Models: []string{"grok-4.5"}}
+	}
+	if got := cache.detect(context.Background(), discover); got.Models[0] != "grok-4.6" {
+		t.Fatalf("seed = %#v", got)
+	}
+	cache.Lock()
+	cache.at = time.Now().Add(-time.Minute)
+	cache.Unlock()
+	startedWait := time.Now()
+	got := cache.lookup(context.Background(), discover, false)
+	if time.Since(startedWait) > 200*time.Millisecond {
+		t.Fatalf("cached lookup blocked for %v", time.Since(startedWait))
+	}
+	if got.State != GrokBuildStateReady || got.Models[0] != "grok-4.6" {
+		t.Fatalf("stale lookup = %#v", got)
+	}
+	<-started
+	close(release)
+}
+
+func TestGrokBuildCachedLookupDoesNotWaitForColdProbe(t *testing.T) {
+	var cache grokBuildDiscoveryCacheState
+	started := make(chan struct{})
+	release := make(chan struct{})
+	discover := func(context.Context) GrokBuildDiscovery {
+		close(started)
+		<-release
+		return GrokBuildDiscovery{State: GrokBuildStateReady, Models: []string{"grok-4.6"}}
+	}
+	start := time.Now()
+	got := cache.lookup(context.Background(), discover, false)
+	if time.Since(start) > 200*time.Millisecond {
+		t.Fatalf("cold cached lookup blocked for %v", time.Since(start))
+	}
+	if got.State != GrokBuildStateProbing {
+		t.Fatalf("cold cached state=%q", got.State)
+	}
+	<-started
+	close(release)
 }
 
 func TestGrokBuildDiscoveryCacheReturnsDefensiveModelSlices(t *testing.T) {

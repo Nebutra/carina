@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Nebutra/carina/go/auth"
 	modelrouter "github.com/Nebutra/carina/go/model-router"
@@ -142,7 +143,7 @@ esac
 	d.reasoner = routerReasoner
 	d.reasonerBackend = reasonerBackendRouter
 	t.Cleanup(routerReasoner.Close)
-	result, err := d.handleModelList(nil)
+	result, err := d.handleModelList(json.RawMessage(`{"refresh":true}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,6 +189,35 @@ esac
 				t.Fatalf("Grok Build model must not be runnable under %s: %+v", backend, model)
 			}
 		}
+	}
+}
+
+func TestModelListCachedDoesNotWaitForSlowGrokProbe(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	home := t.TempDir()
+	binDir := filepath.Join(home, "bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "grok"), []byte("#!/bin/sh\nsleep 3\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	t.Setenv("HOME", home)
+	t.Setenv("GROK_HOME", home)
+	t.Setenv("CARINA_GROK_BUILD_CACHE", filepath.Join(home, "grok-cache.json"))
+	provider.InvalidateGrokBuildDiscovery()
+	t.Cleanup(provider.InvalidateGrokBuildDiscovery)
+
+	d := &Daemon{router: modelrouter.New(), providerCatalog: provider.Catalog{}}
+	start := time.Now()
+	if _, err := d.handleModelList(nil); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("cached model.list waited %v for a slow Grok probe", elapsed)
 	}
 }
 

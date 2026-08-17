@@ -91,12 +91,15 @@ func (d *Daemon) handleModelList(params json.RawMessage) (any, error) {
 	if grokBuildDisabled {
 		catalog = mergeDisabledGrokBuildProvider(catalog)
 	} else if !d.offline {
+		var discovery provider.GrokBuildDiscovery
 		if request.Refresh {
 			provider.InvalidateGrokBuildDiscovery()
+			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+			discovery = provider.DetectGrokBuild(ctx)
+			cancel()
+		} else {
+			discovery = provider.DetectGrokBuildCached(context.Background())
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-		discovery := provider.DetectGrokBuild(ctx)
-		cancel()
 		catalog = provider.MergeGrokBuildProvider(catalog, discovery)
 	}
 	providers := make([]modelInventoryProvider, 0, len(catalog))

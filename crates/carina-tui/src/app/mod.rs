@@ -485,6 +485,9 @@ enum AsyncMessage {
         run_id: String,
         result: Result<PausedResumeOutcome, String>,
     },
+    StartupInventory {
+        result: Result<ModelInventory, String>,
+    },
 }
 
 impl AsyncMessage {
@@ -1103,7 +1106,42 @@ impl App {
         if matches!(app.phase, Phase::Model | Phase::Diagnostic) {
             app.route_after_locale();
         }
+        app.queue_startup_inventory_refresh();
         Ok(app)
+    }
+
+    fn queue_startup_inventory_refresh(&mut self) {
+        let grok_ready = self.inventory.providers.iter().any(|provider| {
+            provider.source_kind == "grok-build" && self.inventory.is_provider_runnable(provider)
+        });
+        if grok_ready {
+            return;
+        }
+        let socket = self.options.socket.clone();
+        let tx = self.async_tx.clone();
+        std::thread::spawn(move || {
+            let mut last = Err("startup inventory unavailable".into());
+            for attempt in 0..20 {
+                if attempt > 0 {
+                    std::thread::sleep(Duration::from_millis(250));
+                }
+                last = Client::connect(&socket)
+                    .and_then(|mut rpc| rpc.model_inventory())
+                    .map_err(|error| error.to_string());
+                match &last {
+                    Ok(inventory)
+                        if inventory.providers.iter().any(|provider| {
+                            provider.source_kind == "grok-build" && provider.available
+                        }) =>
+                    {
+                        break;
+                    }
+                    Err(_) => break,
+                    Ok(_) => {}
+                }
+            }
+            let _ = tx.send(AsyncMessage::StartupInventory { result: last });
+        });
     }
 
     fn resume_requested_session(&mut self) {
@@ -3165,6 +3203,35 @@ impl App {
                         .conversation_import_mut()
                         .apply_results(generation, Err(error)),
                 },
+                AsyncMessage::StartupInventory { result } => {
+                    if let Ok(inventory) = result {
+                        self.inventory = inventory;
+                        self.models = self.inventory.available_models();
+                        if !self.models.is_empty() {
+                            self.model_index = self
+                                .models
+                                .iter()
+                                .position(|model| model.id == self.selected_model)
+                                .or_else(|| {
+                                    self.models.iter().position(|model| {
+                                        model.id == self.inventory.default_model
+                                    })
+                                })
+                                .unwrap_or(0);
+                            self.selected_model = self
+                                .models
+                                .get(self.model_index)
+                                .map(|model| model.id.clone())
+                                .unwrap_or_default();
+                        }
+                        if matches!(
+                            self.phase,
+                            Phase::Provider | Phase::Model | Phase::Diagnostic
+                        ) {
+                            self.route_after_locale();
+                        }
+                    }
+                }
                 AsyncMessage::SessionPreviewLoaded {
                     generation,
                     session_id,
@@ -8813,8 +8880,12 @@ fn refresh_session_projection(rpc: &mut Client, session_id: &str) -> Result<Sess
 }
 
 pub fn run(options: Options) -> Result<Outcome> {
-    let background = crate::terminal_probe::background(Duration::from_millis(80));
+    let probe = std::thread::Builder::new()
+        .name("terminal-probe".into())
+        .spawn(|| crate::terminal_probe::background(Duration::from_millis(80)))
+        .ok();
     let mut app = App::bootstrap(options)?;
+    let background = probe.and_then(|handle| handle.join().ok()).flatten();
     app.theme = Theme::detected(background);
     app.theme.glyphs = app.theme.glyphs.with_mode(app.glyph_resolution.mode);
     let graphics = TerminalGraphics::detect();

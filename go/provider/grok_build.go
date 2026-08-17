@@ -3,6 +3,7 @@ package provider
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
@@ -36,10 +37,12 @@ const (
 	GrokBuildStateReady               = "ready"
 	GrokBuildStateIncompatibleVersion = "incompatible_version"
 	GrokBuildStateProbeFailed         = "probe_failed"
+	GrokBuildStateProbing             = "probing"
 
 	grokBuildMinimumVersion = "1.0.3"
 	grokBuildProbeLimit     = 64 << 10
 	grokBuildCacheTTL       = 15 * time.Second
+	grokBuildStaleTTL       = 24 * time.Hour
 )
 
 var (
@@ -449,7 +452,7 @@ func MergeGrokBuildProvider(base Catalog, discovery GrokBuildDiscovery) Catalog 
 		}
 		merged[id] = info
 	}
-	if discovery.State == GrokBuildStateAbsent {
+	if discovery.State == GrokBuildStateAbsent || discovery.State == GrokBuildStateProbing {
 		return merged
 	}
 	models := map[string]Model{}
@@ -491,17 +494,35 @@ type grokBuildDiscoveryCacheState struct {
 	result   GrokBuildDiscovery
 	inFlight chan struct{}
 	epoch    uint64
+	skipDisk bool
+}
+
+type grokBuildDiskRecord struct {
+	At     time.Time          `json:"at"`
+	Result GrokBuildDiscovery `json:"result"`
 }
 
 var grokBuildDiscoveryCache grokBuildDiscoveryCacheState
 
+func detectGrokBuildFn(ctx context.Context) GrokBuildDiscovery {
+	return (GrokBuildDiscoverer{}).Discover(ctx)
+}
+
 func DetectGrokBuild(ctx context.Context) GrokBuildDiscovery {
-	return grokBuildDiscoveryCache.detect(ctx, func(ctx context.Context) GrokBuildDiscovery {
-		return (GrokBuildDiscoverer{}).Discover(ctx)
-	})
+	return grokBuildDiscoveryCache.detect(ctx, detectGrokBuildFn)
+}
+
+// DetectGrokBuildCached never waits on `grok models`. It returns a memory or
+// disk snapshot, or a probing placeholder, and refreshes in the background.
+func DetectGrokBuildCached(ctx context.Context) GrokBuildDiscovery {
+	return grokBuildDiscoveryCache.lookup(ctx, detectGrokBuildFn, false)
 }
 
 func (c *grokBuildDiscoveryCacheState) detect(ctx context.Context, discover func(context.Context) GrokBuildDiscovery) GrokBuildDiscovery {
+	return c.lookup(ctx, discover, true)
+}
+
+func (c *grokBuildDiscoveryCacheState) lookup(ctx context.Context, discover func(context.Context) GrokBuildDiscovery, wait bool) GrokBuildDiscovery {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -510,12 +531,29 @@ func (c *grokBuildDiscoveryCacheState) detect(ctx context.Context, discover func
 			return grokBuildCanceledDiscovery()
 		}
 		c.Lock()
+		c.hydrateDiskUnlocked()
 		now := time.Now()
-		age := now.Sub(c.at)
-		if !c.at.IsZero() && age >= 0 && age < grokBuildCacheTTL {
-			result := cloneGrokBuildDiscovery(c.result)
+		if !c.at.IsZero() {
+			age := now.Sub(c.at)
+			if age >= 0 && age < grokBuildCacheTTL {
+				result := cloneGrokBuildDiscovery(c.result)
+				c.Unlock()
+				return result
+			}
+			if age >= 0 && (age < grokBuildStaleTTL || !wait) {
+				result := cloneGrokBuildDiscovery(c.result)
+				c.ensureBackgroundUnlocked(discover)
+				c.Unlock()
+				return result
+			}
+		}
+		if !wait {
+			c.ensureBackgroundUnlocked(discover)
 			c.Unlock()
-			return result
+			return GrokBuildDiscovery{
+				State:  GrokBuildStateProbing,
+				Reason: "Checking Grok Build session.",
+			}
 		}
 		if c.inFlight != nil {
 			done := c.inFlight
@@ -536,15 +574,58 @@ func (c *grokBuildDiscoveryCacheState) detect(ctx context.Context, discover func
 		result := cloneGrokBuildDiscovery(discover(ctx))
 		canceled := ctx.Err() != nil
 		c.Lock()
-		c.inFlight = nil
+		if c.inFlight == done {
+			c.inFlight = nil
+		}
 		if !canceled && c.epoch == epoch {
-			c.at = time.Now()
-			c.result = cloneGrokBuildDiscovery(result)
+			c.storeUnlocked(result)
 		}
 		close(done)
 		c.Unlock()
 		return cloneGrokBuildDiscovery(result)
 	}
+}
+
+func (c *grokBuildDiscoveryCacheState) ensureBackgroundUnlocked(discover func(context.Context) GrokBuildDiscovery) {
+	if c.inFlight != nil {
+		return
+	}
+	done := make(chan struct{})
+	c.inFlight = done
+	epoch := c.epoch
+	go func() {
+		result := cloneGrokBuildDiscovery(discover(context.Background()))
+		c.Lock()
+		if c.inFlight == done {
+			c.inFlight = nil
+		}
+		if c.epoch == epoch && !grokBuildDiscoveryCanceled(result) {
+			c.storeUnlocked(result)
+		}
+		close(done)
+		c.Unlock()
+	}()
+}
+
+func (c *grokBuildDiscoveryCacheState) storeUnlocked(result GrokBuildDiscovery) {
+	c.at = time.Now()
+	c.result = cloneGrokBuildDiscovery(result)
+	c.skipDisk = false
+	if c == &grokBuildDiscoveryCache {
+		writeGrokBuildCacheFile(c.at, c.result)
+	}
+}
+
+func (c *grokBuildDiscoveryCacheState) hydrateDiskUnlocked() {
+	if c != &grokBuildDiscoveryCache || c.skipDisk || !c.at.IsZero() {
+		return
+	}
+	rec, ok := readGrokBuildCacheFile()
+	if !ok {
+		return
+	}
+	c.at = rec.At
+	c.result = cloneGrokBuildDiscovery(rec.Result)
 }
 
 func grokBuildCanceledDiscovery() GrokBuildDiscovery {
@@ -564,5 +645,68 @@ func InvalidateGrokBuildDiscovery() {
 	grokBuildDiscoveryCache.epoch++
 	grokBuildDiscoveryCache.at = time.Time{}
 	grokBuildDiscoveryCache.result = GrokBuildDiscovery{}
+	grokBuildDiscoveryCache.skipDisk = true
 	grokBuildDiscoveryCache.Unlock()
+}
+
+func grokBuildDiscoveryCanceled(discovery GrokBuildDiscovery) bool {
+	return discovery.State == GrokBuildStateProbeFailed && strings.Contains(discovery.Reason, "canceled")
+}
+
+func grokBuildCachePath() string {
+	if path := strings.TrimSpace(os.Getenv("CARINA_GROK_BUILD_CACHE")); path != "" {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".carina", "cache", "grok-build-discovery.json")
+}
+
+func readGrokBuildCacheFile() (grokBuildDiskRecord, bool) {
+	path := grokBuildCachePath()
+	if path == "" {
+		return grokBuildDiskRecord{}, false
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return grokBuildDiskRecord{}, false
+	}
+	var rec grokBuildDiskRecord
+	if json.Unmarshal(raw, &rec) != nil || rec.At.IsZero() || rec.Result.State == "" || rec.Result.State == GrokBuildStateProbing {
+		return grokBuildDiskRecord{}, false
+	}
+	return rec, true
+}
+
+func writeGrokBuildCacheFile(at time.Time, result GrokBuildDiscovery) {
+	path := grokBuildCachePath()
+	if path == "" || result.State == "" || result.State == GrokBuildStateProbing || grokBuildDiscoveryCanceled(result) {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return
+	}
+	raw, err := json.Marshal(grokBuildDiskRecord{At: at, Result: cloneGrokBuildDiscovery(result)})
+	if err != nil {
+		return
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".grok-build-*")
+	if err != nil {
+		return
+	}
+	name := tmp.Name()
+	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(name)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(name)
+		return
+	}
+	if err := os.Rename(name, path); err != nil {
+		_ = os.Remove(name)
+	}
 }

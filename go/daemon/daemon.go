@@ -705,11 +705,6 @@ func New(opts Options) (*Daemon, error) {
 		d.startBackgroundLoop(d.runMemoryProjectionLoop)
 	}
 	d.mcp = mcp.NewManager()
-	if !opts.SafeMode {
-		if home, err := os.UserHomeDir(); err == nil {
-			d.mcp.LoadAndConnect(filepath.Join(home, ".carina", "mcp.json"))
-		}
-	}
 	if opts.EnableEgressProxy {
 		allow := append([]string{}, opts.EgressAllow...)
 		var inj *egress.Injector
@@ -887,7 +882,37 @@ func (d *Daemon) Run(socketPath string) error {
 	if err := d.publishRuntimeDescriptor(localruntime.LifecycleRunning, socketPath); err != nil {
 		return fmt.Errorf("daemon: publish running runtime descriptor: %w", err)
 	}
+	d.startDeferredStartup()
 	return d.server.ListenUnix(socketPath)
+}
+
+func (d *Daemon) startDeferredStartup() {
+	if d == nil {
+		return
+	}
+	offline := d.offline
+	safeMode := d.safeMode
+	grokDisabled := d.disabledProviders[provider.GrokBuildProviderID]
+	d.loopWG.Add(1)
+	go func() {
+		defer d.loopWG.Done()
+		if !offline && !grokDisabled {
+			provider.DetectGrokBuild(context.Background())
+		}
+		if safeMode {
+			return
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return
+		}
+		d.mcp.LoadAndConnect(filepath.Join(home, ".carina", "mcp.json"))
+		select {
+		case <-d.stopCh:
+			d.mcp.Close()
+		default:
+		}
+	}()
 }
 
 // RunTCP additionally serves on a TCP address (remote workers/clients).

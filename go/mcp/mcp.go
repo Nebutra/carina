@@ -378,6 +378,7 @@ type Manager struct {
 	clients map[string]*Client
 	hidden  map[string]bool
 	failed  map[string]bool
+	closed  bool
 }
 
 func NewManager() *Manager {
@@ -403,15 +404,28 @@ func (m *Manager) connect(name string, srv Server, hidden bool) error {
 	if name == "" {
 		return fmt.Errorf("mcp: server name is required")
 	}
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return fmt.Errorf("mcp: manager closed")
+	}
+	m.mu.Unlock()
 	c := newClient(name, srv)
 	if err := c.connect(); err != nil {
 		m.mu.Lock()
-		m.failed[name] = true
-		m.hidden[name] = hidden
+		if !m.closed {
+			m.failed[name] = true
+			m.hidden[name] = hidden
+		}
 		m.mu.Unlock()
 		return err
 	}
 	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		c.close()
+		return fmt.Errorf("mcp: manager closed")
+	}
 	if old := m.clients[name]; old != nil {
 		old.close()
 	}
@@ -650,6 +664,7 @@ func (m *Manager) Inventory(verbose bool) []InventoryServer {
 func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.closed = true
 	for _, c := range m.clients {
 		c.close()
 	}

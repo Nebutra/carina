@@ -188,18 +188,19 @@ func TestEnsureDaemonReachableGivesUpAfterDeadline(t *testing.T) {
 }
 
 // TestDaemonStartupBackoffIsShortLinearAndBounded pins
-// daemonStartupBackoff's documented shape directly: short, linear, capped
-// at 1s -- the retry cadence ensureDaemonReachable relies on to stay well
-// under its 10s deadline against a freshly spawned daemon.
+// daemonStartupBackoff: first poll is immediate, then a short exponential
+// cadence capped at 200ms.
 func TestDaemonStartupBackoffIsShortLinearAndBounded(t *testing.T) {
 	cases := []struct {
 		attempt int
 		want    time.Duration
 	}{
-		{0, 100 * time.Millisecond},
-		{1, 200 * time.Millisecond},
-		{9, time.Second},  // 1000ms, right at the cap
-		{20, time.Second}, // would be 2100ms uncapped; must clamp to 1s
+		{0, 0},
+		{1, 20 * time.Millisecond},
+		{2, 40 * time.Millisecond},
+		{4, 160 * time.Millisecond},
+		{5, 200 * time.Millisecond},
+		{20, 200 * time.Millisecond},
 	}
 	for _, tc := range cases {
 		got := daemonStartupBackoff(tc.attempt)

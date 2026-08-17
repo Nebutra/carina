@@ -411,9 +411,12 @@ func ensureDaemonReachable(socket string) (*rpcClient, error) {
 
 // daemonStartupBackoff mirrors go/localdaemon retry cadence (kept for CLI unit tests).
 func daemonStartupBackoff(attempt int) time.Duration {
-	d := 100 * time.Millisecond * time.Duration(attempt+1)
-	if d > time.Second {
-		d = time.Second
+	if attempt <= 0 {
+		return 0
+	}
+	d := 20 * time.Millisecond * time.Duration(1<<(attempt-1))
+	if d > 200*time.Millisecond {
+		d = 200 * time.Millisecond
 	}
 	return d
 }
