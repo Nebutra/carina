@@ -5,9 +5,15 @@
 
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
-use xai_ratatui_textarea::{ElementId, TextArea};
+use xai_ratatui_textarea::{ElementId, ElementKind, TextArea};
 
+use crate::clipboard_image::PASTE_ELEMENT_KIND;
+use crate::context_completion::FILE_ELEMENT_KIND;
 use crate::media::IMAGE_ELEMENT_KIND;
+
+fn is_chip_kind(kind: ElementKind) -> bool {
+    kind == IMAGE_ELEMENT_KIND || kind == PASTE_ELEMENT_KIND || kind == FILE_ELEMENT_KIND
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DocumentNodeKind {
@@ -42,16 +48,25 @@ impl DocumentLayoutMap {
         let mut media: Vec<_> = textarea
             .elements()
             .iter()
-            .filter(|element| element.kind == IMAGE_ELEMENT_KIND)
-            .map(|element| (element.range.start, element.range.end, element.id))
+            .filter(|element| is_chip_kind(element.kind))
+            .map(|element| {
+                let start = element.range.start.min(text.len());
+                let end = element.range.end.min(text.len()).max(start);
+                let backing = text.get(start..end).unwrap_or("");
+                let width = element
+                    .display
+                    .as_ref()
+                    .map(ratatui::text::Line::width)
+                    .unwrap_or_else(|| UnicodeWidthStr::width(backing))
+                    .max(1);
+                (start, end, element.id, width)
+            })
             .collect();
-        media.sort_by_key(|(start, _, _)| *start);
+        media.sort_by_key(|(start, _, _, _)| *start);
 
         let mut nodes = Vec::new();
         let mut cursor = 0usize;
-        for (start, end, id) in media {
-            let start = start.min(text.len());
-            let end = end.min(text.len()).max(start);
+        for (start, end, id, width) in media {
             if cursor < start {
                 push_text_node(&mut nodes, text, cursor, start);
             }
@@ -62,7 +77,7 @@ impl DocumentLayoutMap {
                 element_id: Some(id),
                 start,
                 end,
-                width: UnicodeWidthStr::width(chip).max(1),
+                width,
             });
             cursor = end;
         }
@@ -177,7 +192,7 @@ pub fn degraded_chip_width(terminal_width: u16) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::media::{IMAGE_ELEMENT_KIND, MediaChipLabels, MediaComposer, MediaSourceLabel};
+    use crate::media::{MediaChipLabels, MediaComposer, MediaSourceLabel, IMAGE_ELEMENT_KIND};
     use std::path::PathBuf;
     use xai_ratatui_textarea::{ElementKind, TextArea};
 
@@ -251,5 +266,27 @@ mod tests {
     #[test]
     fn image_element_kind_matches_media_module() {
         assert_eq!(IMAGE_ELEMENT_KIND, ElementKind(3));
+    }
+
+    #[test]
+    fn paste_chip_layout_uses_display_width_not_backing_text() {
+        let mut area = TextArea::new();
+        area.insert_str("see ");
+        let payload = format!("{}\n{}", "alpha ".repeat(80), "omega");
+        area.insert_element(
+            &payload,
+            crate::clipboard_image::PASTE_ELEMENT_KIND,
+            Some(ratatui::text::Line::from(" paste  8 lines ")),
+        );
+        let map = DocumentLayoutMap::from_textarea(&area);
+        let paste = map
+            .nodes
+            .iter()
+            .find(|node| node.kind == DocumentNodeKind::Media)
+            .expect("paste chip");
+        assert_eq!(paste.width, " paste  8 lines ".chars().count());
+        assert!(paste.width < payload.len());
+        assert_eq!(map.step_right(paste.start), paste.end);
+        assert_eq!(map.step_left(paste.end), paste.start);
     }
 }

@@ -32,6 +32,9 @@ use xai_ratatui_inline::{
 };
 use xai_ratatui_textarea::{ElementId, TextArea, TextAreaState, TextElementEventKind};
 
+use crate::clipboard_image::{
+    PASTE_ELEMENT_KIND, paste_chip_line, paste_line_count, should_chip_paste,
+};
 use crate::command::{self, CommandId, CommandSuggestion, SuggestionExecution};
 use crate::component::{Action, InteractionMap};
 use crate::context_completion::ContextCompletion;
@@ -610,6 +613,7 @@ pub struct App {
     command_registry_session: String,
     command_generation: u64,
     command_mru: Vec<String>,
+    last_submitted_draft: Option<String>,
     command_registry_stale: bool,
     persisted_prompt_history: Vec<String>,
     persisted_prompt_history_unavailable: bool,
@@ -1026,7 +1030,8 @@ impl App {
             command_registry: crate::rpc::CommandRegistry::default(),
             command_registry_session: String::new(),
             command_generation: 0,
-            command_mru: Vec::new(),
+            command_mru: command::load_command_mru(),
+            last_submitted_draft: None,
             command_registry_stale: false,
             persisted_prompt_history: Vec::new(),
             persisted_prompt_history_unavailable: false,
@@ -1908,7 +1913,8 @@ impl App {
         }
         self.active_session = Some(session);
         if session_changed {
-            self.command_mru.clear();
+            command::retain_operator_mru(&mut self.command_mru);
+            self.last_submitted_draft = None;
             self.command_registry = crate::rpc::CommandRegistry::default();
             self.command_registry_stale = false;
         }
@@ -2871,7 +2877,7 @@ impl App {
                             self.resolve_clipboard_image(&request, image)
                         }
                         Ok(crate::clipboard_image::ClipboardContent::Text(text)) => {
-                            let resolved = request.resolve_text(&mut self.composer, &text);
+                            let resolved = self.resolve_clipboard_text(&request, &text);
                             self.media.reconcile(&self.composer);
                             self.context_completion.update_context(&self.composer);
                             resolved
@@ -3474,9 +3480,7 @@ impl App {
                 } else if let Some(path) = pasted_image_path(&value) {
                     self.attach_image(path, false);
                 } else {
-                    self.composer.insert_str(&value.replace('\r', ""));
-                    self.media.reconcile(&self.composer);
-                    self.sync_context_completion();
+                    self.insert_composer_paste(&value.replace('\r', ""));
                 }
                 if !plan_review_active {
                     self.focus = Focus::Composer;
@@ -4202,6 +4206,9 @@ impl App {
             }
             KeyCode::Esc => match self.active_run_id.clone() {
                 Some(run_id) => self.interrupt_execution(&run_id),
+                None if self.restore_submitted_draft_if_pristine() => {
+                    self.notice = Notice::localized(MessageId::RestoredLastPrompt);
+                }
                 None => self.handle_rewind_escape(),
             },
             KeyCode::Char('?') if self.composer.text().is_empty() => {
@@ -4678,6 +4685,86 @@ impl App {
         self.submit_after_paste = false;
     }
 
+    fn insert_composer_paste(&mut self, text: &str) {
+        if should_chip_paste(text) {
+            self.insert_paste_chip(text);
+        } else {
+            self.composer.insert_str(text);
+        }
+        self.media.reconcile(&self.composer);
+        self.sync_context_completion();
+    }
+
+    fn insert_paste_chip(&mut self, text: &str) {
+        let display = self.paste_chip_display(text);
+        self.composer.begin_undo_group();
+        self.composer
+            .insert_element(text, PASTE_ELEMENT_KIND, Some(display));
+        self.composer.insert_str(" ");
+        self.composer.end_undo_group();
+    }
+
+    fn resolve_clipboard_text(
+        &mut self,
+        request: &crate::clipboard_image::PendingPaste,
+        text: &str,
+    ) -> bool {
+        if should_chip_paste(text) {
+            let display = self.paste_chip_display(text);
+            request.resolve_chip(&mut self.composer, text, display)
+        } else {
+            request.resolve_text(&mut self.composer, text)
+        }
+    }
+
+    fn paste_chip_display(&self, text: &str) -> Line<'static> {
+        let locale = self.ui_locale();
+        let lines = paste_line_count(text);
+        let size = if lines >= crate::clipboard_image::PASTE_CHIP_MIN_LINES {
+            tr_format(
+                locale,
+                MessageId::PasteChipLines,
+                &[("count", &lines.to_string())],
+            )
+        } else {
+            tr_format(
+                locale,
+                MessageId::PasteChipChars,
+                &[("count", &text.chars().count().to_string())],
+            )
+        };
+        paste_chip_line(tr(locale, MessageId::ClipboardPasteLabel), &size)
+    }
+
+    fn remember_submitted_draft(&mut self, prompt: &str) {
+        let trimmed = prompt.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        self.last_submitted_draft = Some(trimmed.to_owned());
+    }
+
+    fn restore_submitted_draft_if_pristine(&mut self) -> bool {
+        if !self.composer_is_pristine() {
+            return false;
+        }
+        let Some(draft) = self.last_submitted_draft.take() else {
+            return false;
+        };
+        self.composer.set_text(&draft);
+        self.composer.set_cursor(self.composer.text().len());
+        self.composer_state = TextAreaState::default();
+        self.media.reconcile(&self.composer);
+        self.context_completion.update_context(&self.composer);
+        true
+    }
+
+    fn composer_is_pristine(&self) -> bool {
+        self.composer.text().trim().is_empty()
+            && self.media.is_empty()
+            && self.pending_pastes.is_empty()
+    }
+
     fn slash_suggestions(&self) -> Vec<CommandSuggestion> {
         let input = self.composer.text().trim();
         if self.slash_dismissed_input.as_deref() == Some(input) {
@@ -4707,7 +4794,8 @@ impl App {
     fn remember_command_use(&mut self, id: String) {
         self.command_mru.retain(|candidate| candidate != &id);
         self.command_mru.insert(0, id);
-        self.command_mru.truncate(20);
+        self.command_mru.truncate(command::COMMAND_MRU_LIMIT);
+        command::persist_command_mru(&self.command_mru);
     }
 
     fn execute_slash_suggestion(
@@ -5166,6 +5254,7 @@ impl App {
         {
             self.remember_command_use(command_id);
         }
+        self.remember_submitted_draft(&envelope.prompt);
         let mut block = TranscriptBlock::local_user(envelope.local_id, envelope.prompt);
         block.id = format!("user:{}", execution.run_id);
         block.run_id = execution.run_id.clone();
@@ -5226,6 +5315,7 @@ impl App {
         }
         let steer_id = operation_id("steer");
         self.rpc.steer(&run_id, &prompt, &steer_id)?;
+        self.remember_submitted_draft(&prompt);
         self.blocks.push(TranscriptBlock::local_steer(
             format!("steer:{steer_id}"),
             run_id,
@@ -5696,6 +5786,7 @@ impl App {
                     Some(&execution.result_kind),
                 );
                 self.notice = Notice::localized(MessageId::CancellationRequested);
+                self.restore_submitted_draft_if_pristine();
             }
             Err(error) => {
                 self.notice =
@@ -5715,6 +5806,7 @@ impl App {
                     },
                     [("queue", result.queue_depth.to_string())],
                 );
+                self.restore_submitted_draft_if_pristine();
             }
             Err(error) => {
                 self.notice = Notice::localized_with(

@@ -1,5 +1,10 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
 use crate::i18n::MessageId;
 use crate::rpc::{PromptCommand, PromptCommandArgument};
+
+pub const COMMAND_MRU_LIMIT: usize = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandId {
@@ -293,7 +298,10 @@ pub fn lookup(input: &str) -> Option<&'static CommandSpec> {
         "/exit" => "/quit",
         other => other,
     };
-    COMMANDS.iter().find(|command| command.name == input)
+    if let Some(exact) = COMMANDS.iter().find(|command| command.name == input) {
+        return Some(exact);
+    }
+    unique_typo_operator(input)
 }
 
 pub fn resolve_operator_input(input: &str) -> Option<(&'static CommandSpec, Option<&str>)> {
@@ -483,10 +491,196 @@ fn mru_score(id: &str, mru: &[String]) -> usize {
 pub fn prompt_command_id(input: &str, prompt_commands: &[PromptCommand]) -> Option<String> {
     let (head, _) = split_prompt_command(input);
     let name = head.strip_prefix('/')?;
-    prompt_commands
+    if let Some(exact) = prompt_commands.iter().find(|command| command.name == name) {
+        return Some(exact.id.clone());
+    }
+    unique_typo_prompt(name, prompt_commands)
+}
+
+/// Persisted operator MRU lives in `~/.carina/slash-mru.json`. Tests only
+/// touch the file when `CARINA_SLASH_MRU` is set so `cargo test` cannot
+/// rewrite the operator's real list.
+pub fn command_mru_file() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("CARINA_SLASH_MRU") {
+        let path = PathBuf::from(path);
+        if !path.as_os_str().is_empty() {
+            return Some(path);
+        }
+    }
+    #[cfg(test)]
+    {
+        None
+    }
+    #[cfg(not(test))]
+    {
+        std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".carina/slash-mru.json"))
+    }
+}
+
+pub fn load_command_mru() -> Vec<String> {
+    command_mru_file()
+        .map(|path| load_command_mru_from(&path))
+        .unwrap_or_default()
+}
+
+pub fn load_command_mru_from(path: &Path) -> Vec<String> {
+    let Ok(data) = fs::read(path) else {
+        return Vec::new();
+    };
+    let Ok(ids) = serde_json::from_slice::<Vec<String>>(&data) else {
+        return Vec::new();
+    };
+    sanitize_command_mru(ids)
+}
+
+pub fn persist_command_mru(ids: &[String]) {
+    let Some(path) = command_mru_file() else {
+        return;
+    };
+    let _ = persist_command_mru_to(&path, ids);
+}
+
+pub fn persist_command_mru_to(path: &Path, ids: &[String]) -> std::io::Result<()> {
+    let ids = sanitize_command_mru(ids.to_vec());
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let payload = serde_json::to_vec_pretty(&ids)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, payload)?;
+    fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+pub fn retain_operator_mru(mru: &mut Vec<String>) {
+    mru.retain(|id| id.starts_with("operator:"));
+}
+
+fn sanitize_command_mru(ids: Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for id in ids {
+        let id = id.trim();
+        if id.is_empty() || id.chars().any(char::is_control) {
+            continue;
+        }
+        if out.iter().any(|existing| existing == id) {
+            continue;
+        }
+        out.push(id.to_owned());
+        if out.len() == COMMAND_MRU_LIMIT {
+            break;
+        }
+    }
+    out
+}
+
+fn unique_typo_operator(input: &str) -> Option<&'static CommandSpec> {
+    let query = input.trim().trim_start_matches('/').to_ascii_lowercase();
+    if query.is_empty() {
+        return None;
+    }
+    let mut best: Option<&'static CommandSpec> = None;
+    let mut best_distance = usize::MAX;
+    let mut ties = 0usize;
+    for command in COMMANDS {
+        let distance = operator_name_candidates(command.id)
+            .chain(std::iter::once(
+                command.name.trim_start_matches('/').to_ascii_lowercase(),
+            ))
+            .filter_map(|candidate| {
+                let distance = damerau_levenshtein(&candidate, &query);
+                (distance > 0 && distance <= typo_allowance(&query, &candidate)).then_some(distance)
+            })
+            .min()
+            .unwrap_or(usize::MAX);
+        if distance == usize::MAX {
+            continue;
+        }
+        if distance < best_distance {
+            best_distance = distance;
+            best = Some(command);
+            ties = 1;
+        } else if distance == best_distance && best.is_some_and(|current| current.id != command.id)
+        {
+            ties += 1;
+        }
+    }
+    (ties == 1).then_some(best).flatten()
+}
+
+fn unique_typo_prompt(name: &str, prompt_commands: &[PromptCommand]) -> Option<String> {
+    let query = name.to_ascii_lowercase();
+    if query.is_empty() {
+        return None;
+    }
+    let mut best: Option<String> = None;
+    let mut best_distance = usize::MAX;
+    let mut ties = 0usize;
+    for command in prompt_commands {
+        let candidate = command.name.to_ascii_lowercase();
+        let distance = damerau_levenshtein(&candidate, &query);
+        if distance == 0 || distance > typo_allowance(&query, &candidate) {
+            continue;
+        }
+        if distance < best_distance {
+            best_distance = distance;
+            best = Some(command.id.clone());
+            ties = 1;
+        } else if distance == best_distance {
+            ties += 1;
+        }
+    }
+    (ties == 1).then_some(best).flatten()
+}
+
+fn operator_name_candidates(id: CommandId) -> impl Iterator<Item = String> {
+    operator_aliases(id)
         .iter()
-        .find(|command| command.name == name)
-        .map(|command| command.id.clone())
+        .map(|alias| alias.trim_start_matches('/').to_ascii_lowercase())
+}
+
+fn typo_allowance(query: &str, candidate: &str) -> usize {
+    if query.chars().count() >= 5 && candidate.chars().count() >= 5 {
+        2
+    } else {
+        1
+    }
+}
+
+fn damerau_levenshtein(left: &str, right: &str) -> usize {
+    let left: Vec<char> = left.chars().collect();
+    let right: Vec<char> = right.chars().collect();
+    let n = left.len();
+    let m = right.len();
+    if n.abs_diff(m) > 2 {
+        return n.abs_diff(m);
+    }
+    if n == 0 {
+        return m;
+    }
+    if m == 0 {
+        return n;
+    }
+    let mut dp = vec![vec![0usize; m + 1]; n + 1];
+    for (i, row) in dp.iter_mut().enumerate().take(n + 1) {
+        row[0] = i;
+    }
+    for (j, cell) in dp[0].iter_mut().enumerate().take(m + 1) {
+        *cell = j;
+    }
+    for i in 1..=n {
+        for j in 1..=m {
+            let cost = usize::from(left[i - 1] != right[j - 1]);
+            dp[i][j] = (dp[i - 1][j] + 1)
+                .min(dp[i][j - 1] + 1)
+                .min(dp[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && left[i - 1] == right[j - 2] && left[i - 2] == right[j - 1] {
+                dp[i][j] = dp[i][j].min(dp[i - 2][j - 2] + 1);
+            }
+        }
+    }
+    dp[n][m]
 }
 
 pub fn split_prompt_command(input: &str) -> (&str, Option<&str>) {
@@ -581,6 +775,16 @@ fn command_match_score(candidate: &str, query: &str) -> Option<i64> {
     if candidate.starts_with(query) {
         return Some(10_000 - candidate.len() as i64);
     }
+    let subsequence = subsequence_score(candidate, query);
+    let typo = typo_score(candidate, query);
+    match (subsequence, typo) {
+        (Some(left), Some(right)) => Some(left.max(right)),
+        (Some(score), None) | (None, Some(score)) => Some(score),
+        (None, None) => None,
+    }
+}
+
+fn subsequence_score(candidate: &str, query: &str) -> Option<i64> {
     let mut score = 0i64;
     let mut offset = 0usize;
     for needle in query.chars() {
@@ -589,6 +793,14 @@ fn command_match_score(candidate: &str, query: &str) -> Option<i64> {
         offset += found + needle.len_utf8();
     }
     Some(score - candidate.len() as i64)
+}
+
+fn typo_score(candidate: &str, query: &str) -> Option<i64> {
+    let distance = damerau_levenshtein(candidate, query);
+    if distance == 0 || distance > typo_allowance(query, candidate) {
+        return None;
+    }
+    Some(5_000 - (distance as i64 * 1_000) - candidate.len() as i64)
 }
 
 #[cfg(test)]
@@ -984,5 +1196,110 @@ mod tests {
             Some(MessageId::SideWithdrawn)
         );
         assert!(withdrawn_operator("/btw --fork later").is_none());
+    }
+
+    #[test]
+    fn unique_damerau_typo_resolves_and_ambiguous_distance_does_not() {
+        assert_eq!(
+            lookup("/stauts").map(|command| command.id),
+            Some(CommandId::Status)
+        );
+        assert_eq!(
+            resolve("/helpp", false).map(|command| command.id),
+            Some(CommandId::Help)
+        );
+        assert_eq!(
+            resolve("/quti", false).map(|command| command.id),
+            Some(CommandId::Quit)
+        );
+        assert_eq!(
+            lookup("/exitt").map(|command| command.id),
+            Some(CommandId::Quit)
+        );
+        assert!(lookup("/xyz").is_none());
+        assert!(lookup("/n").is_none());
+    }
+
+    #[test]
+    fn longer_names_allow_distance_two_short_names_do_not() {
+        assert_eq!(
+            lookup("/statuuss").map(|command| command.id),
+            Some(CommandId::Status)
+        );
+        assert!(lookup("/neeww").is_none());
+    }
+
+    #[test]
+    fn palette_ranks_a_transposition_typo_above_unrelated_commands() {
+        let matches = palette_matching("/stauts", false, &[], "", &[]);
+        assert_eq!(matches[0].name, "/status");
+        let matches = palette_matching(
+            "/revieew",
+            false,
+            &[PromptCommand {
+                id: "prompt:project:review".into(),
+                name: "review".into(),
+                source: "project".into(),
+                ..PromptCommand::default()
+            }],
+            "revision",
+            &[],
+        );
+        assert_eq!(matches[0].id, "prompt:project:review");
+    }
+
+    #[test]
+    fn prompt_command_typo_resolves_only_when_unique() {
+        let commands = vec![
+            PromptCommand {
+                id: "prompt:project:review".into(),
+                name: "review".into(),
+                source: "project".into(),
+                ..PromptCommand::default()
+            },
+            PromptCommand {
+                id: "prompt:project:revise".into(),
+                name: "revise".into(),
+                source: "project".into(),
+                ..PromptCommand::default()
+            },
+        ];
+        assert_eq!(
+            prompt_command_id("/revieew", &commands).as_deref(),
+            Some("prompt:project:review")
+        );
+        assert_eq!(
+            prompt_command_id("/revie", &commands),
+            None,
+            "review and revise are both one edit from /revie"
+        );
+    }
+
+    #[test]
+    fn command_mru_round_trips_and_sanitizes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("slash-mru.json");
+        persist_command_mru_to(
+            &path,
+            &[
+                "operator:status".into(),
+                String::new(),
+                "operator:status".into(),
+                "prompt:project:review".into(),
+                "bad\u{0007}id".into(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            load_command_mru_from(&path),
+            vec![
+                "operator:status".to_owned(),
+                "prompt:project:review".to_owned()
+            ]
+        );
+        let mut mru = load_command_mru_from(&path);
+        retain_operator_mru(&mut mru);
+        assert_eq!(mru, vec!["operator:status".to_owned()]);
+        assert!(load_command_mru_from(&directory.path().join("missing.json")).is_empty());
     }
 }

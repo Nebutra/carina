@@ -10,6 +10,8 @@ use xai_ratatui_textarea::{ElementId, ElementKind, TextArea};
 use crate::media::MAX_IMAGE_BYTES;
 
 pub const PASTE_ELEMENT_KIND: ElementKind = ElementKind(4);
+pub const PASTE_CHIP_MIN_CHARS: usize = 400;
+pub const PASTE_CHIP_MIN_LINES: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PasteMode {
@@ -97,12 +99,44 @@ impl PendingPaste {
         true
     }
 
+    pub fn resolve_chip(
+        &self,
+        textarea: &mut TextArea,
+        text: &str,
+        display: Line<'static>,
+    ) -> bool {
+        let Some(range) = self.range(textarea) else {
+            return false;
+        };
+        textarea.replace_range_with_element(range, text, PASTE_ELEMENT_KIND, Some(display));
+        true
+    }
+
     pub fn remove(&self, textarea: &mut TextArea) -> Option<(usize, usize)> {
         let range = self.range(textarea)?;
         let start = range.start;
         textarea.replace_range(range, "");
         Some((start, textarea.cursor()))
     }
+}
+
+pub fn should_chip_paste(text: &str) -> bool {
+    paste_line_count(text) >= PASTE_CHIP_MIN_LINES || text.chars().count() >= PASTE_CHIP_MIN_CHARS
+}
+
+pub fn paste_line_count(text: &str) -> usize {
+    if text.is_empty() {
+        return 0;
+    }
+    text.chars().filter(|character| *character == '\n').count() + 1
+}
+
+pub fn paste_chip_line(label: &str, size: &str) -> Line<'static> {
+    let theme = crate::theme::Theme::detected(None);
+    Line::from(vec![
+        Span::styled(format!(" {label} "), theme.action()),
+        Span::styled(format!(" {size} "), theme.dim()),
+    ])
 }
 
 pub fn paste_mode(key: KeyEvent) -> Option<PasteMode> {
@@ -396,5 +430,36 @@ mod tests {
 
         assert!(!pending.resolve_text(&mut textarea, "late"));
         assert!(textarea.text().is_empty());
+    }
+
+    #[test]
+    fn paste_chip_threshold_uses_lines_or_character_count() {
+        assert!(!should_chip_paste("short"));
+        assert!(!should_chip_paste("1\n2\n3\n4\n5\n6\n7"));
+        assert!(should_chip_paste("1\n2\n3\n4\n5\n6\n7\n8"));
+        assert!(should_chip_paste(&"x".repeat(PASTE_CHIP_MIN_CHARS)));
+        assert!(!should_chip_paste(&"x".repeat(PASTE_CHIP_MIN_CHARS - 1)));
+    }
+
+    #[test]
+    fn pending_paste_can_settle_as_a_chip_instead_of_inline_text() {
+        let mut textarea = TextArea::new();
+        textarea.insert_str("before ");
+        let pending = PendingPaste::insert(&mut textarea, 1, None, "paste", "reading clipboard");
+        textarea.insert_str("after");
+        let payload = "1\n2\n3\n4\n5\n6\n7\n8";
+        assert!(pending.resolve_chip(&mut textarea, payload, paste_chip_line("paste", "8 lines"),));
+        assert_eq!(textarea.text(), format!("before {payload}after"));
+        assert_eq!(textarea.elements()[0].kind, PASTE_ELEMENT_KIND);
+        let rendered = textarea.elements()[0]
+            .display
+            .as_ref()
+            .unwrap()
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(rendered.contains("8 lines"));
+        assert!(!textarea.text().contains("reading clipboard"));
     }
 }

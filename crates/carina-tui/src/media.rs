@@ -427,6 +427,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn prompt_text_expands_paste_chips_and_strips_images() {
+        let mut textarea = TextArea::new();
+        textarea.insert_str("see ");
+        textarea.insert_element(
+            "1\n2\n3\n4\n5\n6\n7\n8",
+            crate::clipboard_image::PASTE_ELEMENT_KIND,
+            Some(ratatui::text::Line::from("paste")),
+        );
+        let media = MediaComposer::default();
+        assert_eq!(media.prompt_text(&textarea), "see 1\n2\n3\n4\n5\n6\n7\n8");
+    }
+
+    #[test]
     fn prompt_text_strips_elements_by_identity() {
         let mut textarea = TextArea::new();
         textarea.insert_str("explain ");
@@ -692,11 +705,9 @@ mod tests {
         assert!(!temporary);
         assert!(media.has_pending());
         assert_eq!(textarea.elements().len(), 1);
-        assert!(
-            media
-                .begin_retry(&mut textarea, element_id, MediaChipLabels::default())
-                .is_none()
-        );
+        assert!(media
+            .begin_retry(&mut textarea, element_id, MediaChipLabels::default())
+            .is_none());
     }
 
     #[test]

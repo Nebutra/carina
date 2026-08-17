@@ -13839,6 +13839,60 @@ mod transcript_tests {
     }
 
     #[test]
+    fn conversation_paste_chips_large_text_and_keeps_small_text_inline() {
+        let (mut app, root, server) = production_render_app();
+        app.phase = Phase::Conversation;
+        app.handle_event(Event::Paste("short note".into())).unwrap();
+        assert_eq!(app.composer.text(), "short note");
+        assert!(app.composer.elements().is_empty());
+
+        app.composer.set_text("");
+        let large = "1\n2\n3\n4\n5\n6\n7\n8";
+        app.handle_event(Event::Paste(large.into())).unwrap();
+        assert_eq!(app.composer.elements().len(), 1);
+        assert_eq!(
+            app.composer.elements()[0].kind,
+            crate::clipboard_image::PASTE_ELEMENT_KIND
+        );
+        assert!(app.composer.text().contains(large));
+        assert_eq!(app.media.prompt_text(&app.composer), large);
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn idle_escape_restores_pristine_draft_instead_of_priming_history() {
+        let (mut app, root, server) = production_render_app();
+        app.phase = Phase::Conversation;
+        app.last_submitted_draft = Some("ship the review".into());
+        app.composer.set_text("");
+        app.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Esc,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        assert_eq!(app.composer.text(), "ship the review");
+        assert!(app.notice.is_localized(MessageId::RestoredLastPrompt));
+        assert!(app.rewind_primed_at.is_none());
+        assert!(app.last_submitted_draft.is_none());
+
+        app.composer.set_text("");
+        app.handle_event(Event::Key(KeyEvent::new(
+            KeyCode::Esc,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+        assert!(
+            !app.notice.is_localized(MessageId::RestoredLastPrompt),
+            "second Esc falls through to history rewind, not a second restore"
+        );
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn view_plan_reopens_only_the_idle_latest_typed_plan() {
         let (mut app, root, server) = production_render_app();
         let plan = crate::rpc::Session {
