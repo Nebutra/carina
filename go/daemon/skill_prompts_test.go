@@ -250,6 +250,25 @@ func TestReadSkillURILoadsBodyOnDemand(t *testing.T) {
 	}
 }
 
+func TestReadSkillURIAliasesSlashCommand(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "probe")
+
+	out := d.readSkillURI(sess, task, "skill://review")
+	if out.status != "completed" {
+		t.Fatalf("slash command alias must complete, got %+v", out)
+	}
+	if !strings.Contains(out.display, "slash command") || !strings.Contains(out.display, "Do not retry skill://review") {
+		t.Fatalf("alias must tell the model /review is not a skill:\n%s", out.display)
+	}
+	if !strings.Contains(out.display, "Review the current workspace") {
+		t.Fatalf("alias must include the /review stance:\n%s", out.display)
+	}
+}
+
 func TestReadSkillURIFailsClosed(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()

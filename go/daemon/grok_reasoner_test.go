@@ -41,6 +41,18 @@ func TestGrokCLIArgsUseACPAndNeverExposePrompt(t *testing.T) {
 	}
 }
 
+func TestGrokThinkTimeoutExtendsHighEffortOnDefaultBudget(t *testing.T) {
+	if got := grokThinkTimeout(grokCLIReasonerTimeout, "high"); got != grokCLIReasonerHighTimeout {
+		t.Fatalf("high = %v, want %v", got, grokCLIReasonerHighTimeout)
+	}
+	if got := grokThinkTimeout(grokCLIReasonerTimeout, "medium"); got != grokCLIReasonerTimeout {
+		t.Fatalf("medium = %v, want default", got)
+	}
+	if got := grokThinkTimeout(5*time.Second, "high"); got != 5*time.Second {
+		t.Fatalf("test-shortened timeout must stay 5s, got %v", got)
+	}
+}
+
 func TestGrokCLIEnvironmentIsOAuthOnlyAllowlist(t *testing.T) {
 	env := grokCLIEnvironment([]string{
 		"HOME=/real/home", "PATH=/usr/bin", "LANG=en_US.UTF-8",

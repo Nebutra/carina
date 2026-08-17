@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -45,6 +46,19 @@ func TestClassifyPromptTooLongFromHTTPBodyAndString(t *testing.T) {
 	info = classifyProviderError(errors.New("reasoner failed: context_length_exceeded"))
 	if info.Code != recoverPromptTooLong {
 		t.Fatalf("string prompt-too-long = %+v", info)
+	}
+}
+
+func TestReasonerProgressShouldDegradeDeadlineAfterTools(t *testing.T) {
+	tr := &Transcript{Turns: []Turn{{Tool: "run"}}}
+	if !reasonerProgressShouldDegrade(context.DeadlineExceeded, tr) {
+		t.Fatal("deadline after tools must degrade")
+	}
+	if reasonerProgressShouldDegrade(context.DeadlineExceeded, &Transcript{}) {
+		t.Fatal("deadline with no tools must stay failed")
+	}
+	if reasonerProgressShouldDegrade(errors.New("provider boom"), tr) {
+		t.Fatal("non-deadline errors must not degrade just because tools ran")
 	}
 }
 

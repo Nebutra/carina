@@ -15,6 +15,16 @@ import (
 	"github.com/Nebutra/carina/go/artifact"
 )
 
+func TestOperatorFacingToolErrorKeepsSkillCause(t *testing.T) {
+	got := operatorFacingToolError("error: unknown or disabled skill://review")
+	if !strings.Contains(got, "skill://review") || strings.Contains(got, "did not complete successfully") {
+		t.Fatalf("operator copy = %q", got)
+	}
+	if got := operatorFacingToolError(""); got != "tool did not complete successfully" {
+		t.Fatalf("empty copy = %q", got)
+	}
+}
+
 func TestApprovalLifecycleUsesSameCallIDBeforeStarted(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()

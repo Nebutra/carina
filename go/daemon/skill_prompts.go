@@ -441,6 +441,7 @@ func buildDynamicSkillPrompt(workspaceRoot, userPrompt string, commands map[stri
 		if info.Description != "" {
 			line += ": " + boundedMetadata(info.Description, maxSkillFieldBytes)
 		}
+		line += " (slash command; not skill://)"
 		catalogLines = append(catalogLines, line)
 	}
 	omitted := 0
@@ -548,16 +549,22 @@ func (d *Daemon) readSkillURI(sess *sessionstore.Session, task *scheduler.Execut
 	if !ok {
 		return toolFailed("error: invalid skill URI", "invalid_arguments")
 	}
-	if d != nil && d.safeMode {
-		return toolFailed("error: skills are disabled in safe mode", "skill_unavailable")
-	}
 	workspace := ""
 	if sess != nil {
 		workspace = sess.WorkspaceRoot
 	}
 	spec := loadSkillSpecs(workspace)[name]
 	if spec == nil || !spec.Enabled {
+		if cmd := loadCommandSpecs(workspace)[name]; cmd != nil && cmd.Source != "skill" && cmd.Source != "mcp" {
+			return d.readCommandAsSkillAlias(sess, task, name, cmd)
+		}
+		if d != nil && d.safeMode {
+			return toolFailed("error: skills are disabled in safe mode", "skill_unavailable")
+		}
 		return toolFailed("error: unknown or disabled skill://"+name, "skill_unavailable")
+	}
+	if d != nil && d.safeMode {
+		return toolFailed("error: skills are disabled in safe mode", "skill_unavailable")
 	}
 	if !spec.UserInvocable {
 		return toolFailed("error: skill://"+name+" is not user-invocable", "skill_unavailable")
@@ -567,6 +574,20 @@ func (d *Daemon) readSkillURI(sess *sessionstore.Session, task *scheduler.Execut
 	if sess != nil && task != nil {
 		d.record(sess.SessionID, "FileRead", task.RunID, "go", map[string]any{
 			"path": skillURIScheme + name, "bytes": len(framed), "kind": "skill", "source": spec.Source,
+		}, "")
+	}
+	return toolCompleted(framed)
+}
+
+func (d *Daemon) readCommandAsSkillAlias(sess *sessionstore.Session, task *scheduler.ExecutionRun, name string, cmd *CommandSpec) toolExecutionOutcome {
+	body := sanitizeSkillBody(expandCommandTemplate(cmd.Template, ""))
+	framed := fmt.Sprintf(
+		"<carina_command name=%q invocation=%q>\n/%s is a slash command, not a skill. Follow this stance and continue with list/read/search. Do not retry skill://%s.\n\n%s\n</carina_command>",
+		name, "skill_uri_alias", name, name, body,
+	)
+	if sess != nil && task != nil {
+		d.record(sess.SessionID, "FileRead", task.RunID, "go", map[string]any{
+			"path": skillURIScheme + name, "bytes": len(framed), "kind": "command_alias", "command": name,
 		}, "")
 	}
 	return toolCompleted(framed)

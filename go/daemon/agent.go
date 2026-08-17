@@ -1011,10 +1011,14 @@ func (d *Daemon) degradeCoded(sess *sessionstore.Session, task *scheduler.Execut
 func (d *Daemon) degradeReasoner(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, err error) {
 	info := classifyProviderError(err)
 	status := "failed"
-	if d.runHasAppliedPatch(sess, task.RunID) {
+	if d.runHasAppliedPatch(sess, task.RunID) || reasonerProgressShouldDegrade(err, tr) {
 		status = "degraded"
 	}
 	d.finishFailedExecution(sess, task, tr, status, operatorFacingReasonerError(err), &info, "")
+}
+
+func reasonerProgressShouldDegrade(err error, tr *Transcript) bool {
+	return errors.Is(err, context.DeadlineExceeded) && transcriptHasToolObservation(tr)
 }
 
 func (d *Daemon) finishFailedExecution(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, status, reason string, providerFailure *providerErrorInfo, reasonCode string) {

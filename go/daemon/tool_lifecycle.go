@@ -381,7 +381,7 @@ func (d *Daemon) finishToolCall(sess *sessionstore.Session, task *scheduler.Exec
 		if outcome.status == "denied" {
 			category = runtimecontract.ErrorPermission
 		}
-		env.Error = &runtimecontract.ErrorEnvelope{Code: "tool_" + outcome.status, Category: category, Message: "tool did not complete successfully", Retry: runtimecontract.NoRetry(), Metadata: safeErrorMetadata(outcome.display, outcome.errorCategory)}
+		env.Error = &runtimecontract.ErrorEnvelope{Code: "tool_" + outcome.status, Category: category, Message: operatorFacingToolError(outcome.display), Retry: runtimecontract.NoRetry(), Metadata: safeErrorMetadata(outcome.display, outcome.errorCategory)}
 		payload["error"] = env.Error
 	}
 	if err := env.Validate(); err != nil {
@@ -436,6 +436,20 @@ func safeErrorMetadata(display, category string) map[string]any {
 	}
 	sum := sha256.Sum256([]byte(display))
 	return map[string]any{"category": category, "sha256": hex.EncodeToString(sum[:]), "redacted": true}
+}
+
+func operatorFacingToolError(display string) string {
+	msg := strings.TrimSpace(display)
+	for _, prefix := range []string{"error:", "ERROR:", "DENIED:"} {
+		if strings.HasPrefix(msg, prefix) {
+			msg = strings.TrimSpace(msg[len(prefix):])
+			break
+		}
+	}
+	if msg == "" {
+		return "tool did not complete successfully"
+	}
+	return truncateUTF8Bytes(msg, 240)
 }
 
 func toolKind(tool string) string {
