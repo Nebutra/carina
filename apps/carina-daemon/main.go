@@ -71,6 +71,7 @@ func main() {
 	gatewayWSOrigins := flag.String("gateway-ws-origins", strings.Join(cfg.GatewayWSOrigins, ","), "comma-separated allowed browser Origin values for -gateway-ws")
 	gatewayTokenSigningKeyFile := flag.String("gateway-token-signing-key-file", cfg.GatewayTokenSigningKeyFile, "optional 0600 file containing Gateway token signing material")
 	gatewayTokenMaxTTL := flag.Int("gateway-token-max-ttl", cfg.GatewayTokenMaxTTLSeconds, "max scoped Gateway token TTL in seconds")
+	gatewayWorkspace := flag.String("gateway-workspace", cfg.GatewayWorkspace, "optional Gateway workspace pin; HTTP/WS work cannot leave this directory")
 	kernelBin := flag.String("kernel", cfg.KernelBin, "carina-kernel-service path (default: auto-discover)")
 	toolsDir := flag.String("tools", cfg.ToolsDir, "zig native tools directory (default: auto-discover)")
 	policyDir := flag.String("policy", cfg.PolicyDir, "enterprise org-policy directory")
@@ -166,6 +167,7 @@ func main() {
 		NebutraSyncMode:            *nebutraSyncMode,
 		GatewayTokenSigningKeyFile: *gatewayTokenSigningKeyFile,
 		GatewayTokenMaxTTLSeconds:  *gatewayTokenMaxTTL,
+		GatewayWorkspace:           *gatewayWorkspace,
 		ContextEngine:              *contextEngine,
 		MemoryProvider:             *memoryProvider,
 		MemoryHMSEndpoint:          *memoryHMSEndpoint,
@@ -399,6 +401,7 @@ var flagConfigKeys = map[string]string{
 	"gateway-ws-origins":             "gateway_ws_origins",
 	"gateway-token-signing-key-file": "gateway_token_signing_key_file",
 	"gateway-token-max-ttl":          "gateway_token_max_ttl_seconds",
+	"gateway-workspace":              "gateway_workspace",
 	"kernel":                         "kernel_bin",
 	"tools":                          "tools_dir",
 	"policy":                         "policy_dir",

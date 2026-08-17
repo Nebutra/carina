@@ -647,6 +647,8 @@ pub struct App {
     credential_pending: bool,
     credential_child: Arc<Mutex<Option<Child>>>,
     notice: Notice,
+    notice_seen_key: String,
+    notice_seen: bool,
     interactions: InteractionMap,
     overlays: OverlayStack,
     active_run_id: Option<String>,
@@ -1061,6 +1063,8 @@ impl App {
             credential_pending: false,
             credential_child: Arc::new(Mutex::new(None)),
             notice: Notice::default(),
+            notice_seen_key: String::new(),
+            notice_seen: false,
             interactions: InteractionMap::default(),
             overlays: OverlayStack::default(),
             active_run_id: None,
@@ -2910,7 +2914,10 @@ impl App {
                                 self.event_cursor = self.event_cursor.max(cursor);
                             }
                             let ReceivedEvent {
-                                event, received_at, ..
+                                event,
+                                received_at,
+                                replayed,
+                                ..
                             } = received;
                             if event.kind == "session.model.preference.changed" {
                                 if event.session_id
@@ -2939,6 +2946,15 @@ impl App {
                             let mut visual_changed = false;
                             let artifact_ref = event.tool_artifact_ref();
                             let terminal_summary = event_terminal_summary(&event);
+                            if let Some(lifecycle) = lifecycle {
+                                crate::desktop_notify::consider_desktop_notify(
+                                    self.terminal_focused,
+                                    replayed,
+                                    self.ui_locale(),
+                                    lifecycle,
+                                    terminal_summary.as_deref(),
+                                );
+                            }
                             let event_agent = event_agent(&event)
                                 .or_else(|| {
                                     self.active_session

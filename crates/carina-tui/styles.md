@@ -70,6 +70,11 @@ An empty transcript names the workspace, then teaches the live operating
 grammar (type a request, or `/help` · `/model` · `/status`). The composer
 keeps the change-request placeholder. Do not invent a second empty-state skin.
 
+Composer chrome keeps persistent run/queue/HITL facts on their own row.
+Operator notices occupy a separate row above that chrome. An overlay that
+covers the notice must not count as the operator having seen it. Ambient
+tips yield when the run failed.
+
 Expanded tool detail uses the semantic two-cell tree gutter on every source and
 continuation row. Related operational rows (tool/tool and tool/thinking in either
 order) use the related-row gap; unrelated conversation objects use the normal

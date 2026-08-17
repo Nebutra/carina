@@ -44,7 +44,7 @@ Carina 驱动真实的 ReAct 编程 Agent。模型**只负责决定下一步**�
 
 | 后端 | 用途 |
 | --- | --- |
-| **model-router** | BYOK provider、模型路由、流式输出与 token 统计。目录声明 native tools 的模型先走 HTTP 工具，失败再回 JSON。`grok-build/*` 只走隔离 `grok` CLI 的 JSON ReAct。 |
+| **model-router** | BYOK provider、模型路由、流式输出与 token 统计。稳定前缀按 constitution / workspace / catalog 分段缓存。目录声明 native tools 的模型先走 HTTP 工具，失败再回 JSON。`grok-build/*` 只走隔离 `grok` CLI 的 JSON ReAct。 |
 | **claude-cli** | 显式兼容后端；调用本机 `claude -p`，禁用工具并使用空 cwd |
 | **codex-cli** | 显式兼容后端；调用 `codex exec`，使用临时 JSONL、工具禁用、只读隔离与 fail-closed 事件解析 |
 | **scripted** | 测试中的固定决策与确定性回放 |

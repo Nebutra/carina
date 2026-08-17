@@ -64,11 +64,13 @@ carina gateway methods    # live method catalog
 - First text frame: JSON-RPC `gateway.hello` with signed scoped token bound to `transport: "ws"`
 - Browser `Origin` rejected unless allowlisted
 - Startup fails closed without token signing key
+- Optional `-gateway-workspace` binds session-bearing Gateway work to one existing directory; Unix socket stays unpinned. Not ACP, not multi-tenant SaaS.
 
 ### Optional HTTP Gateway
 
 - Enable: `carina-daemon -gateway-http 127.0.0.1:8787` + signing key
 - Every request: `Authorization: Bearer <gw1 token>` with `transport: "http"`, matching route grant, and scope
+- The same optional workspace pin applies; a foreign `workspace_root` is forbidden
 
 | Route | Purpose | Scope | Route grant |
 | --- | --- | --- | --- |

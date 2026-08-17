@@ -81,20 +81,24 @@ pub fn main() !void {
     } else if (sandbox and builtin.os.tag == .linux) {
         // Linux: wrap the child in bubblewrap (bwrap) — a mount+user namespace
         // sandbox that remounts the root read-only and rebinds only cwd + /tmp
-        // writable, mirroring the macOS confinement. If bwrap is not installed,
-        // fall through to unwrapped (the capability kernel policy still applies).
+        // writable, mirroring the macOS confinement. Missing bwrap is fail-closed.
         const cwd_raw = cwd orelse ".";
         const cwd_abs = std.fs.realpathAlloc(allocator, cwd_raw) catch cwd_raw;
-        if (hasExecutable(allocator, "bwrap")) {
-            const args_bwrap = [_][]const u8{
-                "bwrap",   "--ro-bind", "/",        "/",
-                "--bind",  cwd_abs,     cwd_abs,     "--bind",
-                "/tmp",    "/tmp",      "--dev",     "/dev",
-                "--proc",  "/proc",     "--unshare-user", "--unshare-pid",
-                "--die-with-parent",    "--",
-            };
-            for (args_bwrap) |a| try argv_list.append(allocator, a);
+        if (!hasExecutable(allocator, "bwrap")) {
+            try jsonl.writeLine("{\"error\":\"sandbox requested but bwrap is not available\"}");
+            std.process.exit(2);
         }
+        const args_bwrap = [_][]const u8{
+            "bwrap",   "--ro-bind", "/",        "/",
+            "--bind",  cwd_abs,     cwd_abs,     "--bind",
+            "/tmp",    "/tmp",      "--dev",     "/dev",
+            "--proc",  "/proc",     "--unshare-user", "--unshare-pid",
+            "--die-with-parent",    "--",
+        };
+        for (args_bwrap) |a| try argv_list.append(allocator, a);
+    } else if (sandbox) {
+        try jsonl.writeLine("{\"error\":\"sandbox requested but no helper is available on this OS\"}");
+        std.process.exit(2);
     }
     for (args[argv_start..]) |a| try argv_list.append(allocator, a);
     const child_argv = try argv_list.toOwnedSlice(allocator);

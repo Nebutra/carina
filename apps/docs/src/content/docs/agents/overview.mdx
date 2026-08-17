@@ -94,7 +94,7 @@ Destructive commands (`rm -rf`, `curl … | sh`) are **denied** before they run.
 
 | Backend | Role |
 | --- | --- |
-| **model-router** | BYOK provider adapters; prompt segments for caching; media parts when catalog allows. Catalog tool-calling models use HTTP tools then JSON fallback. `grok-build/*` stays JSON-only through an isolated `grok` CLI. |
+| **model-router** | BYOK provider adapters; constitution/workspace/catalog prefix sections for caching; media parts when catalog allows. Catalog tool-calling models use HTTP tools then JSON fallback. `grok-build/*` stays JSON-only through an isolated `grok` CLI. |
 | **claude-cli** | Explicit compatibility backend using the local `claude -p` headless mode with tools disabled and an empty cwd |
 | **codex-cli** | Explicit compatibility backend using `codex exec` with ephemeral JSONL output, tool features disabled, read-only isolation, and fail-closed event parsing |
 | **scripted** | Fixed decisions for deterministic tests |

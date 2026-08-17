@@ -211,6 +211,54 @@ func TestCompactionCollapseOnlySkipsSummarizerAndDisclosesTransforms(t *testing.
 	if len(tr.Turns) != 2 || tr.Turns[0].Tool != "user" || tr.Turns[0].Obs.Content != "USER STEERING: preserve this" {
 		t.Fatalf("collapse-only changed verbatim user retention: %+v", tr.Turns)
 	}
+	if receipt.CharsBefore <= receipt.CharsAfter || receipt.PressureAfter > 1.10 {
+		t.Fatalf("collapse must credit a return to the local band: %+v", receipt)
+	}
+}
+
+func TestCompactionCollapseReturningToBandDoesNotSummarize(t *testing.T) {
+	tr := newTranscript("summarize only if collapse stays over")
+	tr.policy = CompactionPolicy{
+		KeepRecent: 1, ToolOutputMax: 10_000, SummarizeAfter: 1,
+		VerbatimUserMaxChars: 4_000, CollapseOnlyMaxPressure: 1.10,
+	}
+	for i := 0; i < 6; i++ {
+		tr.addTurn(Turn{
+			Tool:        "read",
+			ActionBrief: fmt.Sprintf("read file%d.go", i),
+			Obs:         Observation{Content: "RAW OUTPUT " + strings.Repeat("payload ", 80)},
+		})
+	}
+	tr.addTurn(Turn{Tool: "read", ActionBrief: "read tail.go", Obs: Observation{Content: "tail"}})
+	cutoff := len(tr.Turns) - tr.policy.KeepRecent
+	for i := 0; i < cutoff; i++ {
+		tr.Turns[i].Obs.Elided = true
+	}
+	postElision := tr.size()
+	for i := range tr.Turns {
+		tr.Turns[i].Obs.Elided = false
+	}
+	tr.policy.MaxChars = postElision - 1
+	if !tr.shouldCompact() {
+		t.Fatal("fixture must start over budget")
+	}
+	calls := 0
+	receipt := tr.compact(func(string) (string, error) {
+		calls++
+		return "must not run", nil
+	})
+	if calls != 0 {
+		t.Fatalf("local collapse that returns to band called summarizer %d time(s)", calls)
+	}
+	if receipt == nil || receipt.Mode != compactionModeCollapseOnly {
+		t.Fatalf("receipt = %+v", receipt)
+	}
+	if receipt.CharsAfter >= receipt.CharsBefore || receipt.TokensAfter >= receipt.TokensBefore {
+		t.Fatalf("receipt must record freed volume: %+v", receipt)
+	}
+	if receipt.PressureAfter > receipt.PressureBefore || receipt.PressureAfter > 1.10 {
+		t.Fatalf("pressure must fall back into the local band: %+v", receipt)
+	}
 }
 
 func TestCompactionCascadeEscalatesWhenCollapseStaysOver(t *testing.T) {

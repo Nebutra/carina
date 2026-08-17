@@ -1,6 +1,11 @@
 package rpc
 
-import "testing"
+import (
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+)
 
 // TestRemoteOriginRestriction: local origin may call anything; a remote (TCP)
 // origin may only call allowlisted read/observe methods; the kill-switch cuts
@@ -32,4 +37,29 @@ func TestRemoteOriginRestriction(t *testing.T) {
 
 	s.SetRemoteDisabled(false)
 	check("daemon.status", OriginRemote, true)
+}
+
+func TestRemoteParamsGuardSkipsLocalOrigin(t *testing.T) {
+	s := NewServer()
+	var remoteHits int
+	s.SetRemoteParamsGuard(func(method string, _ json.RawMessage) error {
+		remoteHits++
+		if method == "session.get" {
+			return errors.New("gateway workspace is pinned")
+		}
+		return nil
+	})
+	if err := s.applyRemoteParamsGuard(OriginLocal, "session.get", json.RawMessage(`{"session_id":"s1"}`)); err != nil {
+		t.Fatalf("local origin must skip the remote guard: %v", err)
+	}
+	if remoteHits != 0 {
+		t.Fatalf("local origin invoked the remote guard %d times", remoteHits)
+	}
+	err := s.applyRemoteParamsGuard(OriginRemote, "session.get", json.RawMessage(`{"session_id":"s1"}`))
+	if err == nil || !strings.Contains(err.Error(), "pinned") {
+		t.Fatalf("remote origin must run the guard, got %v", err)
+	}
+	if remoteHits != 1 {
+		t.Fatalf("remote hits = %d", remoteHits)
+	}
 }

@@ -79,18 +79,7 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 	}
 	model, responseModel, override := a.resolveModel(req)
 	messages := any([]map[string]string{{"role": "user", "content": req.Prompt}})
-	if req.StablePrefix != "" || len(req.Media) > 0 {
-		blocks := make([]map[string]any, 0, 2+len(req.Media))
-		if req.StablePrefix != "" {
-			blocks = append(blocks,
-				map[string]any{"type": "text", "text": req.StablePrefix, "cache_control": map[string]string{"type": "ephemeral"}},
-				map[string]any{"type": "text", "text": req.VolatileSuffix})
-		} else {
-			blocks = append(blocks, map[string]any{"type": "text", "text": req.Prompt})
-		}
-		// Image blocks go after the text so the cache_control breakpoint on
-		// the stable prefix is unaffected; media is inherently volatile.
-		blocks = append(blocks, anthropicImageBlocks(req.Media)...)
+	if blocks, ok := anthropicUserBlocks(req); ok {
 		messages = []map[string]any{{"role": "user", "content": blocks}}
 	}
 	bodyMap := map[string]any{
@@ -167,6 +156,37 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 		EffectiveReasoningEffort: effectiveEffort,
 		ToolCalls:                calls,
 	}, nil
+}
+
+// anthropicUserBlocks splits the stuffed user prompt into cacheable text
+// sections plus a volatile suffix. Image blocks stay after text so they do
+// not move a cache breakpoint. Grok CLI never calls this helper.
+func anthropicUserBlocks(req modelrouter.Request) ([]map[string]any, bool) {
+	sections := append([]string(nil), req.StableSections...)
+	if len(sections) == 0 && req.StablePrefix != "" {
+		sections = []string{req.StablePrefix}
+	}
+	if len(sections) == 0 && len(req.Media) == 0 {
+		return nil, false
+	}
+	blocks := make([]map[string]any, 0, len(sections)+1+len(req.Media))
+	for _, section := range sections {
+		if strings.TrimSpace(section) == "" {
+			continue
+		}
+		blocks = append(blocks, map[string]any{
+			"type":          "text",
+			"text":          section,
+			"cache_control": map[string]string{"type": "ephemeral"},
+		})
+	}
+	if len(blocks) > 0 || req.VolatileSuffix != "" {
+		blocks = append(blocks, map[string]any{"type": "text", "text": req.VolatileSuffix})
+	} else if req.Prompt != "" {
+		blocks = append(blocks, map[string]any{"type": "text", "text": req.Prompt})
+	}
+	blocks = append(blocks, anthropicImageBlocks(req.Media)...)
+	return blocks, len(blocks) > 0
 }
 
 // anthropicImageBlocks encodes request media as Anthropic Messages API image

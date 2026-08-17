@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -98,6 +99,122 @@ func TestParseAgentSpecDeclarativeManifestFields(t *testing.T) {
 // read-only scout; the scout runs in its own restricted session and its
 // summary returns to the parent. The scout's session must be read-only
 // (attenuated) regardless of the parent.
+func TestSpawnUsesWorktreeOnlyForWritableProfiles(t *testing.T) {
+	if spawnUsesWorktree("read-only") || spawnUsesWorktree("sandboxed") || spawnUsesWorktree("") {
+		t.Fatal("read-only spawn must stay in the parent workspace")
+	}
+	if !spawnUsesWorktree("safe-edit") || !spawnUsesWorktree("full-workspace") {
+		t.Fatal("writable spawn must request worktree isolation")
+	}
+}
+
+func TestWritableSpawnUsesWorktreeAndDoesNotDirtyParent(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	if !d.tools.Available() {
+		t.Skip("zig tools not built")
+	}
+	initGitRepo(t, ws)
+	if err := os.WriteFile(filepath.Join(ws, "keep.txt"), []byte("parent\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, ws, "add", "keep.txt")
+	runGit(t, ws, "commit", "-qm", "keep")
+
+	agentsDir := filepath.Join(ws, ".carina", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "writer.md"), []byte("---\nname: writer\nprofile: safe-edit\nmax_turns: 3\n---\nYou write isolated files.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d.SetReasoner(&scriptedReasoner{steps: []string{
+		`{"tool":"patch","path":"child-only.txt","content":"from child\n","intent":"isolate write"}`,
+		`{"tool":"done","summary":"wrote child-only.txt"}`,
+	}})
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "delegate write")
+	summary := d.spawnSubagent(parent, parentTask, "writer", "write isolated")
+	if !strings.Contains(summary, "child-only") {
+		t.Fatalf("summary = %q", summary)
+	}
+	if _, err := os.Stat(filepath.Join(ws, "child-only.txt")); !os.IsNotExist(err) {
+		t.Fatal("writable spawn must not leave child writes in the parent workspace")
+	}
+	keep, err := os.ReadFile(filepath.Join(ws, "keep.txt"))
+	if err != nil || string(keep) != "parent\n" {
+		t.Fatalf("parent file mutated: %q %v", keep, err)
+	}
+	found := false
+	for _, ev := range readAuditEvents(t, d, parent.SessionID) {
+		if ev["type"] != "ToolApproved" {
+			continue
+		}
+		payload, _ := ev["payload"].(map[string]any)
+		if payload["isolation"] == "worktree" && payload["worktree_id"] != "" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("writable git spawn must audit isolation=worktree")
+	}
+}
+
+func TestReadOnlySpawnInGitRepoStaysShared(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	initGitRepo(t, ws)
+	if err := os.WriteFile(filepath.Join(ws, "visible.txt"), []byte("shared\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, ws, "add", "visible.txt")
+	runGit(t, ws, "commit", "-qm", "visible")
+	agentsDir := filepath.Join(ws, ".carina", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "scout.md"), []byte("---\nname: scout\nprofile: read-only\nmax_turns: 2\n---\nScout.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d.SetReasoner(&scriptedReasoner{steps: []string{`{"tool":"done","summary":"shared workspace"}`}})
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "delegate")
+	_ = d.spawnSubagent(parent, parentTask, "scout", "look")
+	for _, ev := range readAuditEvents(t, d, parent.SessionID) {
+		if ev["type"] != "ToolApproved" {
+			continue
+		}
+		payload, _ := ev["payload"].(map[string]any)
+		if payload["isolation"] == "worktree" {
+			t.Fatalf("read-only spawn must stay shared: %#v", payload)
+		}
+	}
+}
+
+func initGitRepo(t *testing.T, dir string) {
+	t.Helper()
+	runGit(t, dir, "init", "-q")
+	runGit(t, dir, "config", "user.email", "test@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("repo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "README.md")
+	runGit(t, dir, "commit", "-qm", "init")
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %s: %v", args, out, err)
+	}
+}
+
 func TestSubagentIsolatedAndAttenuated(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()

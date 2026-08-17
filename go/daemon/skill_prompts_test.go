@@ -28,17 +28,18 @@ func isolatedSkillWorkspace(t *testing.T) string {
 	return t.TempDir()
 }
 
-func TestDynamicSkillPromptExplicitMentionLoadsBody(t *testing.T) {
+func TestDynamicSkillPromptExplicitMentionRequestsURI(t *testing.T) {
 	ws := isolatedSkillWorkspace(t)
 	writeProjectSkill(t, ws, "pdf", "description: Work with PDF files\ndisable-model-invocation: true\n", "EXPLICIT PDF BODY")
 
 	got := buildDynamicSkillPrompt(ws, "Use $pdf to inspect the report", builtinCommandSpecs(), false)
-	for _, want := range []string{`name="pdf"`, `invocation="explicit"`, "EXPLICIT PDF BODY"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("explicit skill prompt missing %q:\n%s", want, got)
-		}
+	if !strings.Contains(got, "- skill://pdf (explicit)") {
+		t.Fatalf("explicit skill should request skill://, got:\n%s", got)
 	}
-	if strings.Contains(got, "- skill $pdf") {
+	if strings.Contains(got, "EXPLICIT PDF BODY") || strings.Contains(got, "SELECTED SKILL INSTRUCTIONS") {
+		t.Fatalf("explicit mention must not inline the skill body:\n%s", got)
+	}
+	if strings.Contains(got, "- skill://pdf:") {
 		t.Fatal("disable-model-invocation skill must not appear in the model-facing catalog")
 	}
 }
@@ -53,8 +54,11 @@ func TestDynamicSkillPromptImplicitInvocationIsStrictAndControllable(t *testing.
 	}
 	t.Setenv(implicitSkillsEnv, "true")
 	on := buildDynamicSkillPrompt(ws, "Please perform a security audit", nil, false)
-	if !strings.Contains(on, `invocation="implicit"`) || !strings.Contains(on, "SECURITY BODY") {
-		t.Fatalf("strict declared trigger should inject skill body:\n%s", on)
+	if !strings.Contains(on, "- skill://security (implicit)") {
+		t.Fatalf("strict declared trigger should request skill://:\n%s", on)
+	}
+	if strings.Contains(on, "SECURITY BODY") {
+		t.Fatalf("implicit trigger must not inline the skill body:\n%s", on)
 	}
 	noMatch := buildDynamicSkillPrompt(ws, "Please review authentication", nil, false)
 	if strings.Contains(noMatch, "SECURITY BODY") {
@@ -68,7 +72,7 @@ func TestDynamicSkillPromptDisabledAndSafeModeFailClosed(t *testing.T) {
 	t.Setenv(disabledSkillsEnv, "deploy")
 
 	disabled := buildDynamicSkillPrompt(ws, "Run $deploy now", nil, false)
-	if strings.Contains(disabled, "DEPLOY BODY") || strings.Contains(disabled, "- skill $deploy") {
+	if strings.Contains(disabled, "DEPLOY BODY") || strings.Contains(disabled, "skill://deploy") {
 		t.Fatalf("disabled skill leaked into prompt:\n%s", disabled)
 	}
 	if !strings.Contains(disabled, "SKILL WARNING") {
@@ -95,11 +99,14 @@ func TestDynamicSkillPromptBudgetAndOrderingAreDeterministic(t *testing.T) {
 	if len(one) > maxSkillPromptBytes {
 		t.Fatalf("skill prompt exceeded budget: got %d want <= %d", len(one), maxSkillPromptBytes)
 	}
-	if strings.Index(one, `name="alpha"`) < 0 || strings.Index(one, `name="zeta"`) < 0 {
+	if strings.Index(one, "skill://alpha") < 0 || strings.Index(one, "skill://zeta") < 0 {
 		t.Fatalf("explicit skills should be represented within the bounded prompt:\n%s", one)
 	}
-	if strings.Index(one, `name="alpha"`) > strings.Index(one, `name="zeta"`) {
+	if strings.Index(one, "skill://alpha") > strings.Index(one, "skill://zeta") {
 		t.Fatal("same-priority selected skills must sort by canonical name")
+	}
+	if strings.Contains(one, strings.Repeat("Z", 80)) || strings.Contains(one, strings.Repeat("A", 80)) {
+		t.Fatal("requested-skill list must not inline skill bodies")
 	}
 }
 
@@ -127,7 +134,7 @@ func TestDynamicSkillPromptNoMatchKeepsBodiesOut(t *testing.T) {
 	if strings.Contains(got, "RELEASE BODY") || strings.Contains(got, "SELECTED SKILL INSTRUCTIONS") {
 		t.Fatalf("unmatched skill body leaked into prompt:\n%s", got)
 	}
-	if !strings.Contains(got, "- skill $release") || !strings.Contains(got, "- command /review") {
+	if !strings.Contains(got, "- skill://release") || !strings.Contains(got, "- command /review") {
 		t.Fatalf("bounded metadata catalogs should remain discoverable:\n%s", got)
 	}
 }
@@ -143,8 +150,11 @@ func TestDynamicSkillPromptLivesInStablePrefix(t *testing.T) {
 	if a.StablePrefix != b.StablePrefix {
 		t.Fatal("skill prompt must remain byte-identical in the stable prefix across turns")
 	}
-	if !strings.Contains(a.StablePrefix, "TEST SKILL BODY") || strings.Contains(a.VolatileSuffix, "TEST SKILL BODY") {
-		t.Fatal("selected skill body must live only in the stable prompt segment")
+	if !strings.Contains(a.StablePrefix, "skill://test") || strings.Contains(a.StablePrefix, "TEST SKILL BODY") {
+		t.Fatal("catalog/request list must live in the stable prefix without inlining the body")
+	}
+	if strings.Contains(a.VolatileSuffix, "TEST SKILL BODY") || strings.Contains(a.VolatileSuffix, "skill://test") {
+		t.Fatal("skill catalog must not leak into the volatile suffix")
 	}
 }
 
@@ -179,5 +189,94 @@ func TestMalformedExplicitSkillWarnsInsteadOfPanicking(t *testing.T) {
 	got := buildDynamicSkillPrompt(ws, "Use $broken", nil, false)
 	if !strings.Contains(got, "SKILL WARNING") || strings.Contains(got, "BROKEN") {
 		t.Fatalf("malformed explicit skill must fail closed with warning:\n%s", got)
+	}
+}
+
+func TestParseSkillURIRejectsTraversalAndNoise(t *testing.T) {
+	if name, ok := parseSkillURI("skill://pdf"); !ok || name != "pdf" {
+		t.Fatalf("plain skill URI = %q %v", name, ok)
+	}
+	if name, ok := parseSkillURI("SKILL://Release"); !ok || name != "release" {
+		t.Fatalf("canonical skill URI = %q %v", name, ok)
+	}
+	for _, raw := range []string{
+		"pdf", "skill:", "skill://", "skill:///etc/passwd", "skill://../secret",
+		"skill://foo/bar", "skill://foo?x=1", "skill://foo#h", `skill://foo\bar`,
+	} {
+		if name, ok := parseSkillURI(raw); ok {
+			t.Fatalf("rejected URI %q parsed as %q", raw, name)
+		}
+	}
+}
+
+func TestCollectExplicitMentionsIncludeSkillURI(t *testing.T) {
+	got := collectExplicitSkillMentions("please follow skill://pdf and $deploy")
+	if !got["pdf"] || !got["deploy"] {
+		t.Fatalf("mentions = %v", got)
+	}
+}
+
+func TestReadSkillURILoadsBodyOnDemand(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeProjectSkill(t, ws, "pdf", "description: Work with PDF files\n", "ON_DEMAND PDF BODY")
+	d.SetReasoner(&scriptedReasoner{steps: []string{
+		`{"tool":"read","path":"skill://pdf"}`,
+		`{"tool":"done","summary":"loaded the pdf skill"}`,
+	}})
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "Use $pdf")
+	d.runTask(sess, task)
+	tk, _ := d.sched.Get(task.RunID)
+	if tk.Status != "completed" {
+		t.Fatalf("status=%s reason=%q", tk.Status, tk.Summary)
+	}
+	cp := d.runs.loadCheckpoint(task.RunID)
+	if cp == nil || cp.Transcript == nil {
+		t.Fatal("missing checkpoint")
+	}
+	found := false
+	for _, turn := range cp.Transcript.Turns {
+		if strings.Contains(turn.Obs.Content, "ON_DEMAND PDF BODY") && strings.Contains(turn.Obs.Content, `invocation="on_demand"`) {
+			found = true
+		}
+		if strings.Contains(turn.Obs.Content, "ON_DEMAND PDF BODY") && turn.Tool == "system" {
+			t.Fatal("skill body must not be injected as a system turn")
+		}
+	}
+	if !found {
+		t.Fatalf("on-demand skill body missing from read observation: %+v", cp.Transcript.Turns)
+	}
+}
+
+func TestReadSkillURIFailsClosed(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	writeProjectSkill(t, ws, "pdf", "description: Work with PDF files\n", "SECRET BODY")
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "probe")
+
+	out := d.readSkillURI(sess, task, "skill://../secret")
+	if out.status == "completed" || strings.Contains(out.display, "SECRET BODY") {
+		t.Fatalf("traversal must fail closed: %+v", out)
+	}
+	out = d.readSkillURI(sess, task, "skill://missing")
+	if out.status == "completed" || !strings.Contains(out.display, "unknown") {
+		t.Fatalf("unknown skill must fail closed: %+v", out)
+	}
+
+	t.Setenv(disabledSkillsEnv, "pdf")
+	out = d.readSkillURI(sess, task, "skill://pdf")
+	if out.status == "completed" || strings.Contains(out.display, "SECRET BODY") {
+		t.Fatalf("disabled skill must fail closed: %+v", out)
+	}
+	t.Setenv(disabledSkillsEnv, "")
+
+	d.safeMode = true
+	out = d.readSkillURI(sess, task, "skill://pdf")
+	if out.status == "completed" || strings.Contains(out.display, "SECRET BODY") {
+		t.Fatalf("safe mode must fail closed: %+v", out)
 	}
 }

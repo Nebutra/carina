@@ -76,7 +76,7 @@ complete, authoritative registry. Groups not summarized here include `agent.*`,
 | `gateway.token.issue` | local-only scoped Gateway token issuer, registered only when `gateway_token_signing_key_file` is configured |
 | `daemon.status` | daemon process/runtime status |
 | `daemon.metrics` | runtime metrics |
-| `daemon.doctor` | independent health probes |
+| `daemon.doctor` | independent health probes; `recover.recent` is the named recover journal; `resources.copies` splits checkpoint / heap / provider-cache and does not report PSS; `sandbox` reports requested/available/applied and fails closed if a helper is missing; `gateway.workspace_pin` is a local workspace bind, not multi-tenant SaaS |
 | `daemon.remote.disable` | remote kill-switch: disable remote-exposed method dispatch |
 | `daemon.reload` | reload daemon configuration |
 | `daemon.set_interactive_approval` | set product HITL mode (`ask` \| `always-approve` \| `dont-ask` \| `accept-edits`). TUI: `/approval-mode`, `/always-approve`, `/dont-ask`, `/accept-edits` |
@@ -126,7 +126,12 @@ Optional WebSocket Gateway:
   token bound to `transport: "ws"`;
 - later frames are JSON-RPC requests constrained by descriptor `remote`, the
   remote kill-switch, negotiated or token-bound scopes, and dynamic scope
-  resolution.
+  resolution;
+- optional `-gateway-workspace` / `gateway_workspace` / `CARINA_GATEWAY_WORKSPACE`
+  binds Gateway HTTP and remote (WebSocket/TCP) session-bearing work to one
+  existing directory. Foreign `session_id` / `workspace_root` / `run_id` fail
+  closed; unscoped `session.list` is refused. The local Unix-socket owner
+  contract is unchanged. This is a local bind, not ACP and not multi-tenant SaaS.
 
 Scoped Gateway token issuing:
 
@@ -159,7 +164,9 @@ Optional HTTP Gateway:
   is configured through `-gateway-http-origins`, `gateway_http_origins`, or
   `CARINA_GATEWAY_HTTP_ORIGINS`;
 - every request requires `Authorization: Bearer <gw1 token>` with
-  `transport: "http"`, a matching route grant, and the required scope.
+  `transport: "http"`, a matching route grant, and the required scope;
+- the same optional workspace pin applies: omitted `workspace_root` on a
+  pinned daemon uses the pin, and a foreign root is forbidden.
 
 Implemented HTTP routes:
 

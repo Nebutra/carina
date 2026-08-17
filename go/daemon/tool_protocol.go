@@ -112,6 +112,13 @@ func toolsUnsupported(err error) bool {
 	return errors.As(err, &status) && status.toolsUnsupported
 }
 
+func responsePromptTooLong(status int, raw []byte) bool {
+	if status != 400 && status != 413 && status != 422 {
+		return false
+	}
+	return looksLikePromptTooLongMessage(string(raw))
+}
+
 func responseToolsUnsupported(status int, raw []byte) bool {
 	if status < 400 || status >= 500 {
 		return false

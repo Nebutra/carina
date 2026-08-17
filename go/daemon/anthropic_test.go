@@ -68,6 +68,58 @@ func TestAnthropicProviderUsesStablePrefixCacheControlAndParsesUsage(t *testing.
 	}
 }
 
+func TestAnthropicProviderCachesEachPromptSection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct {
+				Content []struct {
+					Type         string            `json:"type"`
+					Text         string            `json:"text"`
+					CacheControl map[string]string `json:"cache_control"`
+				} `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		blocks := body.Messages[0].Content
+		if len(blocks) != 4 {
+			t.Fatalf("want 3 cached sections + volatile, got %+v", blocks)
+		}
+		for i, name := range []string{"CONSTITUTION", "WORKSPACE", "CATALOG\n\nTASK: x\n\nTRANSCRIPT:\n"} {
+			if blocks[i].Text != name || blocks[i].CacheControl["type"] != "ephemeral" {
+				t.Fatalf("section %d = %+v", i, blocks[i])
+			}
+		}
+		if blocks[3].Text != "turn\nGO" || len(blocks[3].CacheControl) != 0 {
+			t.Fatalf("volatile = %+v", blocks[3])
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer srv.Close()
+	store := testAuthStore(t)
+	if err := store.SetAPIKey("anthropic", "sk-ant", nil); err != nil {
+		t.Fatal(err)
+	}
+	p := &anthropicProvider{
+		id: "anthropic", baseURL: srv.URL, model: "claude-test",
+		auth: auth.ProviderChain("anthropic", nil, store, nil), client: srv.Client(),
+	}
+	seg := buildPromptSegmentsFromLayers(promptLayers{
+		Constitution: "CONSTITUTION",
+		Workspace:    "WORKSPACE",
+		Catalog:      "CATALOG",
+	}, "x", "turn", "GO")
+	_, err := p.Complete(context.Background(), modelrouter.Request{
+		Model: "default", Prompt: seg.full(), StablePrefix: seg.StablePrefix,
+		StableSections: seg.CacheSections(), VolatileSuffix: seg.VolatileSuffix,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAnthropicEndpointNormalizesVersionExactlyOnce(t *testing.T) {
 	tests := map[string]string{
 		"https://api.example":                    "https://api.example/v1/messages",

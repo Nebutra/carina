@@ -239,6 +239,7 @@ func thinkWithRetryModelResult(ctx context.Context, r Reasoner, model, prompt st
 }
 
 func thinkWithRetryModelSegments(ctx context.Context, r Reasoner, model string, segments promptSegments) (ReasonerResult, error) {
+	ctx = withStableSections(ctx, segments.CacheSections())
 	return thinkWithRetrySegments(ctx, r, model, segments.full(), segments.StablePrefix, segments.VolatileSuffix, segments.Media...)
 }
 
@@ -381,6 +382,12 @@ func classifyProviderError(err error) providerErrorInfo {
 	if errors.As(err, &netErr) {
 		return providerErrorInfo{Code: "provider_transport_error", Category: "unavailable", Retryable: true}
 	}
+	if looksLikePromptTooLongMessage(err.Error()) {
+		return providerErrorInfo{
+			Code: recoverPromptTooLong, Category: "invalid_input", Retryable: false,
+			UserAction: "compact the conversation or start a new session",
+		}
+	}
 	return providerErrorInfo{Code: "reasoner_internal_error", Category: "internal", Retryable: false}
 }
 
@@ -426,6 +433,8 @@ func operatorFacingReasonerError(err error) string {
 		return joinOperatorSentence("The selected reasoning effort is not valid for this model", info.UserAction)
 	case "provider_native_tools_rejected":
 		return "The model tried to call a tool instead of finishing the turn. Retry the same question."
+	case recoverPromptTooLong:
+		return "The prompt is too long for this model. Compact the conversation or start a new session."
 	}
 	if info.UserAction != "" {
 		return joinOperatorSentence("The model could not complete this turn", info.UserAction)
@@ -673,6 +682,9 @@ func (r *routerReasoner) complete(ctx context.Context, model string, req modelro
 	}
 	if tools := nativeToolsFrom(ctx); len(tools) > 0 {
 		req.Tools = tools
+	}
+	if sections := stableSectionsFrom(ctx); len(sections) > 0 {
+		req.StableSections = append([]string(nil), sections...)
 	}
 	if cliModel, discovery, targeted, routeErr := r.grokBuildRoute(ctx, model); targeted {
 		if routeErr != nil {

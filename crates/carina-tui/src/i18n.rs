@@ -11,6 +11,7 @@ pub enum Notice {
         id: MessageId,
         args: Vec<(String, String)>,
         run_owner: Option<String>,
+        ambient: bool,
     },
 }
 
@@ -20,6 +21,16 @@ impl Notice {
             id,
             args: Vec::new(),
             run_owner: None,
+            ambient: false,
+        }
+    }
+
+    pub fn ambient(id: MessageId) -> Self {
+        Self::Localized {
+            id,
+            args: Vec::new(),
+            run_owner: None,
+            ambient: true,
         }
     }
 
@@ -34,6 +45,7 @@ impl Notice {
                 .map(|(name, value)| (name.into(), value.into()))
                 .collect(),
             run_owner: None,
+            ambient: false,
         }
     }
 
@@ -49,6 +61,7 @@ impl Notice {
                 .map(|(name, value)| (name.into(), value.into()))
                 .collect(),
             run_owner: Some(run_id.into()),
+            ambient: false,
         }
     }
 
@@ -95,6 +108,10 @@ impl Notice {
 
     pub fn is_localized(&self, expected: MessageId) -> bool {
         matches!(self, Self::Localized { id, .. } if *id == expected)
+    }
+
+    pub fn is_ambient(&self) -> bool {
+        matches!(self, Self::Localized { ambient: true, .. })
     }
 }
 

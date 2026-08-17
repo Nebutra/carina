@@ -20,9 +20,9 @@ carina runs it and feeds back an observation:
 | Action | Goes through | Runs on |
 |--------|-------------|---------|
 | `{"tool":"list"}` | FileRead capability | Zig `carina-scan` |
-| `{"tool":"read","path":"…"}` | FileRead capability | kernel-gated read |
+| `{"tool":"read","path":"…"}` | FileRead capability | kernel-gated read. `path` may be `skill://name` to load a catalog skill body on demand (prompt-only; never grants tools; not a workspace file) |
 | `{"tool":"search","pattern":"…"}` | FileRead capability | Zig `carina-grep` |
-| `{"tool":"run","command":["…"]}` | CommandExec capability (risk-classified) | Zig `carina-run` |
+| `{"tool":"run","command":["…"]}` | CommandExec capability (risk-classified) | Zig `carina-run`. Optional OS sandbox (`-sandbox` / `CARINA_SANDBOX_COMMANDS`) is macOS `sandbox-exec` or Linux `bwrap`; if requested and the helper is missing, the command fails closed instead of running unwrapped |
 | `{"tool":"edit","path":"…","old":"…","new":"…"}` | PatchApply capability | exact unique span → same transactional patch as `patch` |
 | `{"tool":"patch","path":"…","content":"…"}` | PatchApply capability | Rust transaction → Zig `carina-patch-native` |
 | `{"tool":"web.fetch","url":"…"}` | NetworkAccess capability | public HTTPS only; host approval; no redirects |
@@ -30,7 +30,7 @@ carina runs it and feeds back an observation:
 | `{"tool":"ask_user","prompt":"…","options":[…]}` | — | pauses for a structured operator choice |
 | `{"tool":"code.search/symbols/map/def/refs/impact"}` | FileRead capability | code-intelligence index (+LSP when available) |
 | `{"tool":"mcp"}` / `{"tool":"mcp_find"}` | governed MCP manager | external MCP servers, policy-gated |
-| `{"tool":"spawn","agent":"…","task":"…"}` | SubagentSpawn capability | isolated subagent (declarative manifest, per-agent tool allow-list; `"tasks":[…]` runs them in parallel) |
+| `{"tool":"spawn","agent":"…","task":"…"}` | SubagentSpawn capability | isolated subagent (declarative manifest, per-agent tool allow-list; `"tasks":[…]` runs them in parallel). Built-in `explore` is a subtraction: cheaper same-provider model when the catalog has one, read-only tools only, no `AGENTS.md` / `CARINA.md` / git prefix. Writable children in a git repo run in a managed worktree so they do not dirty the parent tree; `edit`/`patch` stay the same tools |
 | `{"tool":"workflow","workflow":"…"}` | PluginLoad capability | named dependency DAG of subagents |
 | `{"tool":"best_of_n","task":"…","n":3}` | opt-in (advertised only when enabled) | N parallel candidate patches, judge + optional verify command; only the winner is applied |
 | `{"tool":"done","summary":"…"}` | — | ends the task |
@@ -45,10 +45,18 @@ failure streaks, and token-triggered **compaction** first collapses modest
 pressure locally into a deterministic action/key-file skeleton without a
 summary-model call; severe pressure uses the structured summary tier.
 User-authored turns keep a verbatim tier, and every fold records its mode and
-ordered transforms in an auditable `CompactionReceipt`. Operators can steer a
-running task through a
+ordered transforms in an auditable `CompactionReceipt`. Recover transitions
+that keep a run alive — native-tool reject requery, empty reply after tools,
+prompt-too-long compact — stamp a stable `reason_code` on `RoutingOutcome`
+(`native_tool_rejected`, `empty_after_tools`, `prompt_too_long`). The same
+code lands on `ExecutionFailed` if that recover is exhausted. `daemon.doctor`
+exposes the recent journal in JSON; it is not a new TUI surface. Operators
+can steer a running task through a
 two-tier (urgent/normal) mailbox drained at turn boundaries, and plan/act mode
-switches are injected as urgent notices.
+switches are injected as urgent notices. When the TUI is unfocused, a live
+completed, failed, partial, or waiting-input run can raise a desktop OS
+notification. Replay does not notify. Set `CARINA_DESKTOP_NOTIFY=off` to
+silence it.
 
 ## The reasoner (model backend)
 
@@ -56,8 +64,9 @@ switches are injected as urgent notices.
 step). Four implementations, plus one dedicated route inside model-router:
 
 - **model-router** — routes through `go/model-router` provider adapters (BYOK).
-  Supports prompt segments (stable prefix / volatile suffix) for prompt caching
-  and media parts for catalog-gated vision delivery. Catalog models that
+  Supports prompt sections (constitution / workspace / catalog) as a stable
+  prefix plus a volatile transcript suffix for prompt caching, and media
+  parts for catalog-gated vision delivery. Catalog models that
   advertise native tool calling use HTTP tools on the first try and fall back
   to JSON ReAct. The `grok-build/*` route is JSON-only: Carina drives an
   isolated `grok` CLI as a pure inference engine and does not enable Grok

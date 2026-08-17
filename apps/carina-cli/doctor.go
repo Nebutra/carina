@@ -279,7 +279,74 @@ func doctorChecks(report map[string]any) []doctorCheck {
 			out = append(out, chk)
 		}
 	}
+	if recover, ok := report["recover"].(map[string]any); ok {
+		if chk, present := recoverCheck(recover); present {
+			out = append(out, chk)
+		}
+	}
+	if sandbox, ok := report["sandbox"].(map[string]any); ok {
+		out = append(out, sandboxCheck(sandbox))
+	}
+	if gateway, ok := report["gateway"].(map[string]any); ok {
+		out = append(out, gatewayCheck(gateway))
+	}
 	return out
+}
+
+func gatewayCheck(gateway map[string]any) doctorCheck {
+	pinned, _ := gateway["workspace_pin"].(bool)
+	if !pinned {
+		return doctorCheck{name: "gateway", state: "PASS", detail: "gateway workspace not pinned"}
+	}
+	return doctorCheck{name: "gateway", state: "PASS", detail: "gateway workspace is pinned"}
+}
+
+func sandboxCheck(sandbox map[string]any) doctorCheck {
+	requested, _ := sandbox["requested"].(bool)
+	applied, _ := sandbox["applied"].(bool)
+	available, _ := sandbox["available"].(bool)
+	helper, _ := sandbox["helper"].(string)
+	reason, _ := sandbox["reason"].(string)
+	if !requested {
+		return doctorCheck{name: "sandbox", state: "PASS", detail: "OS sandbox not requested"}
+	}
+	if applied && available {
+		detail := "OS sandbox applied"
+		if helper != "" {
+			detail += " via " + helper
+		}
+		return doctorCheck{name: "sandbox", state: "PASS", detail: detail}
+	}
+	detail := "OS sandbox requested but not applied"
+	if reason != "" {
+		detail = reason
+	}
+	return doctorCheck{
+		name:        "sandbox",
+		state:       "FAIL",
+		detail:      detail,
+		remediation: "install the platform helper (sandbox-exec or bwrap) or unset CARINA_SANDBOX_COMMANDS",
+	}
+}
+
+// recoverCheck prints the latest named recover/terminal code when the daemon
+// journal is non-empty. Empty journals stay silent so existing healthy
+// fixtures do not grow a new row.
+func recoverCheck(recover map[string]any) (doctorCheck, bool) {
+	recent, _ := recover["recent"].([]any)
+	if len(recent) == 0 {
+		return doctorCheck{}, false
+	}
+	last, _ := recent[len(recent)-1].(map[string]any)
+	code, _ := last["reason_code"].(string)
+	if code == "" {
+		return doctorCheck{}, false
+	}
+	detail := code
+	if phase, _ := last["phase"].(string); phase != "" {
+		detail = code + " (" + phase + ")"
+	}
+	return doctorCheck{name: "recover", state: "PASS", detail: detail}, true
 }
 
 func resourceCheck(resources map[string]any) (doctorCheck, bool) {
@@ -292,6 +359,11 @@ func resourceCheck(resources map[string]any) (doctorCheck, bool) {
 		return doctorCheck{}, false
 	}
 	detail := fmt.Sprintf("sessions %d", count)
+	if copies, ok := resources["copies"].(map[string]any); ok {
+		detail += " · " + formatResourceCopy("checkpoint", copies["checkpoint"])
+		detail += " · " + formatResourceCopy("heap", copies["heap"])
+		detail += " · " + formatResourceCopy("provider-cache", copies["provider_cache"])
+	}
 	if process, ok := resources["process"].(map[string]any); ok {
 		if available, _ := process["rss_available"].(bool); available {
 			if rss, ok := doctorNumber(process["rss_bytes"]); ok {
@@ -326,6 +398,31 @@ func resourceCheck(resources map[string]any) (doctorCheck, bool) {
 		}
 	}
 	return doctorCheck{name: "resources", state: "PASS", detail: detail}, true
+}
+
+func formatResourceCopy(name string, raw any) string {
+	copy, ok := raw.(map[string]any)
+	if !ok {
+		return name + " unavailable"
+	}
+	if available, _ := copy["available"].(bool); !available {
+		return name + " unavailable"
+	}
+	bytes, ok := doctorNumber(copy["bytes"])
+	if !ok {
+		return name + " unavailable"
+	}
+	return name + " " + formatDoctorBytes(bytes)
+}
+
+func formatDoctorBytes(n int64) string {
+	if n < 1024 {
+		return fmt.Sprintf("%d B", n)
+	}
+	if n < 1024*1024 {
+		return fmt.Sprintf("%.1f KiB", float64(n)/1024)
+	}
+	return fmt.Sprintf("%.1f MiB", float64(n)/(1024*1024))
 }
 
 func doctorNumber(value any) (int64, bool) {

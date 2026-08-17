@@ -62,6 +62,55 @@ func TestRenderDoctorReportIncludesResourceSummary(t *testing.T) {
 	}
 }
 
+func TestGatewayCheckReportsPinWithoutFailingUnpinned(t *testing.T) {
+	unpinned := gatewayCheck(map[string]any{"ok": true, "workspace_pin": false})
+	if unpinned.state != "PASS" || !strings.Contains(unpinned.detail, "not pinned") {
+		t.Fatalf("unpinned = %+v", unpinned)
+	}
+	pinned := gatewayCheck(map[string]any{"ok": true, "workspace_pin": true, "workspace": "/repo"})
+	if pinned.state != "PASS" || !strings.Contains(pinned.detail, "pinned") {
+		t.Fatalf("pinned = %+v", pinned)
+	}
+}
+
+func TestSandboxCheckFailsClosedWhenRequestedButMissing(t *testing.T) {
+	pass := sandboxCheck(map[string]any{"requested": false, "applied": false, "available": false})
+	if pass.state != "PASS" || !strings.Contains(pass.detail, "not requested") {
+		t.Fatalf("unrequested = %+v", pass)
+	}
+	applied := sandboxCheck(map[string]any{"requested": true, "applied": true, "available": true, "helper": "sandbox-exec"})
+	if applied.state != "PASS" || !strings.Contains(applied.detail, "sandbox-exec") {
+		t.Fatalf("applied = %+v", applied)
+	}
+	fail := sandboxCheck(map[string]any{"requested": true, "applied": false, "available": false, "reason": "bubblewrap (bwrap) is not on PATH"})
+	if fail.state != "FAIL" || !strings.Contains(fail.detail, "bwrap") || fail.remediation == "" {
+		t.Fatalf("missing helper = %+v", fail)
+	}
+}
+
+func TestResourceCheckRendersAttributedCopies(t *testing.T) {
+	chk, ok := resourceCheck(map[string]any{
+		"sessions": map[string]any{"count": float64(2), "items": []any{}},
+		"process":  map[string]any{"rss_available": false},
+		"copies": map[string]any{
+			"checkpoint":     map[string]any{"available": true, "bytes": float64(2048)},
+			"heap":           map[string]any{"available": true, "bytes": float64(3 * 1024 * 1024)},
+			"provider_cache": map[string]any{"available": false, "reason": "provider catalog cache is absent"},
+		},
+	})
+	if !ok {
+		t.Fatal("resource check missing")
+	}
+	for _, want := range []string{"sessions 2", "checkpoint 2.0 KiB", "heap 3.0 MiB", "provider-cache unavailable"} {
+		if !strings.Contains(chk.detail, want) {
+			t.Fatalf("copy attribution missing %q in %q", want, chk.detail)
+		}
+	}
+	if strings.Contains(strings.ToLower(chk.detail), "pss") {
+		t.Fatalf("doctor must not print PSS: %q", chk.detail)
+	}
+}
+
 func TestResourceCheckDoesNotInventUnavailableRSS(t *testing.T) {
 	chk, ok := resourceCheck(map[string]any{
 		"process":  map[string]any{"rss_available": false, "go_heap_alloc_bytes": float64(1024)},
@@ -158,6 +207,23 @@ func TestRenderDoctorReportDisabled(t *testing.T) {
 	out := renderDoctorReport(report, false)
 	if !strings.Contains(out, "disabled") && !strings.Contains(out, "DISABLE") {
 		t.Fatalf("disabled report should say so plainly:\n%s", out)
+	}
+}
+
+func TestRecoverCheckRendersLatestNamedCode(t *testing.T) {
+	chk, ok := recoverCheck(map[string]any{
+		"ok":    true,
+		"codes": []any{"native_tool_rejected"},
+		"recent": []any{
+			map[string]any{"reason_code": "empty_after_tools", "phase": "recover"},
+			map[string]any{"reason_code": "native_tool_rejected", "phase": "terminal"},
+		},
+	})
+	if !ok || chk.state != "PASS" || !strings.Contains(chk.detail, "native_tool_rejected") || !strings.Contains(chk.detail, "terminal") {
+		t.Fatalf("recover check = %+v present=%v", chk, ok)
+	}
+	if _, present := recoverCheck(map[string]any{"ok": true, "recent": []any{}}); present {
+		t.Fatal("empty recover journal must stay silent")
 	}
 }
 

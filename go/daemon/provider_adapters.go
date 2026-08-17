@@ -277,6 +277,7 @@ type providerStatusError struct {
 	endpointUnsupported bool
 	clientRestricted    bool
 	toolsUnsupported    bool
+	promptTooLong       bool
 }
 
 func (e providerStatusError) Error() string {
@@ -298,6 +299,10 @@ func (e providerStatusError) ProviderError() providerErrorInfo {
 	info := providerErrorInfo{Code: "provider_http_error", Category: "internal", Retryable: false, Provider: e.provider, HTTPStatus: e.status, CorrelationID: e.requestID}
 	if e.clientRestricted {
 		info.Code, info.Category, info.UserAction = "provider_client_restricted", "compatibility", "choose an endpoint that accepts Carina clients"
+		return info
+	}
+	if e.promptTooLong {
+		info.Code, info.Category, info.UserAction = recoverPromptTooLong, "invalid_input", "compact the conversation or start a new session"
 		return info
 	}
 	switch {
@@ -338,6 +343,7 @@ func statusError(provider string, resp *http.Response) error {
 		requestID: requestID, endpointUnsupported: responseEndpointUnsupported(resp.StatusCode, raw),
 		clientRestricted: responseClientRestricted(raw),
 		toolsUnsupported: responseToolsUnsupported(resp.StatusCode, raw),
+		promptTooLong:    responsePromptTooLong(resp.StatusCode, raw),
 	}
 }
 

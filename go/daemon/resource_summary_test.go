@@ -88,12 +88,49 @@ func TestResourceSummaryAttributesSessionCountersAndCompactions(t *testing.T) {
 	if _, ok := summary.Caches["artifact_store"]; !ok {
 		t.Fatalf("artifact cache metrics missing: %+v", summary.Caches)
 	}
+	if !summary.Copies.Checkpoint.Available || summary.Copies.Checkpoint.Bytes == nil || *summary.Copies.Checkpoint.Bytes != uint64(got.CheckpointBytes) {
+		t.Fatalf("checkpoint copy = %+v want %d", summary.Copies.Checkpoint, got.CheckpointBytes)
+	}
+	if summary.Copies.Checkpoint.Scope != "session" || summary.Copies.Heap.Scope != "process" || summary.Copies.ProviderCache.Scope != "host" {
+		t.Fatalf("copy scopes = %+v", summary.Copies)
+	}
+	if !summary.Copies.Heap.Available || summary.Copies.Heap.Bytes == nil || *summary.Copies.Heap.Bytes == 0 {
+		t.Fatalf("heap copy must be the live Go heap, got %+v", summary.Copies.Heap)
+	}
+	if strings.Contains(strings.ToLower(summary.Copies.Heap.Reason), "pss") && !strings.Contains(strings.ToLower(summary.Copies.Heap.Reason), "not pss") {
+		t.Fatalf("heap copy must not claim PSS: %+v", summary.Copies.Heap)
+	}
 	raw, err := json.Marshal(summary)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(strings.ToLower(string(raw)), "pss") {
+	if strings.Contains(strings.ToLower(string(raw)), `"pss"`) || strings.Contains(strings.ToLower(string(raw)), "pss_bytes") {
 		t.Fatalf("resource summary must not claim PSS: %s", raw)
+	}
+}
+
+func TestProviderCatalogCacheCopyAttributesFileWithoutInventingPSS(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	absent := providerCatalogCacheCopy()
+	if absent.Available || absent.Scope != "host" {
+		t.Fatalf("absent cache must stay explicit: %+v", absent)
+	}
+
+	path := filepath.Join(home, ".carina", "cache", "models.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{"openai":{"id":"openai"}}`)
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := providerCatalogCacheCopy()
+	if !got.Available || got.Bytes == nil || *got.Bytes != uint64(len(payload)) {
+		t.Fatalf("present cache = %+v want %d bytes", got, len(payload))
+	}
+	if strings.Contains(strings.ToLower(got.Source), "pss") {
+		t.Fatalf("provider cache must not pretend to be PSS: %+v", got)
 	}
 }
 

@@ -67,6 +67,40 @@ func TestGatewayHTTPModelsChatAndToolsInvoke(t *testing.T) {
 	}
 }
 
+func TestGatewayHTTPWorkspacePinFailsClosed(t *testing.T) {
+	pin := t.TempDir()
+	d, sock, httpAddr := startGatewayHTTPDaemonPinned(t, pin)
+	defer d.Close()
+	c, err := rpc.Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	token := issueGatewayHTTPToken(t, c, []string{"read", "write"}, []string{"/v1/*"})
+	foreign := map[string]any{
+		"model": "carina/default",
+		"messages": []map[string]any{{
+			"role": "user", "content": "hello",
+		}},
+		"metadata": map[string]any{"workspace_root": t.TempDir()},
+	}
+	resp := httpJSON(t, http.MethodPost, "http://"+httpAddr+"/v1/chat/completions", token, foreign)
+	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body, "pinned") {
+		t.Fatalf("foreign workspace should fail closed, got %d: %s", resp.Code, resp.Body)
+	}
+	okBody := map[string]any{
+		"model": "carina/default",
+		"messages": []map[string]any{{
+			"role": "user", "content": "hello",
+		}},
+		"metadata": map[string]any{"workspace_root": pin},
+	}
+	resp = httpJSON(t, http.MethodPost, "http://"+httpAddr+"/v1/chat/completions", token, okBody)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("pinned workspace should pass, got %d: %s", resp.Code, resp.Body)
+	}
+}
+
 func TestGatewayHTTPAuthFailures(t *testing.T) {
 	d, sock, httpAddr := startGatewayHTTPDaemon(t)
 	defer d.Close()
@@ -353,6 +387,11 @@ func TestGatewayHTTPRequiresTokenSigner(t *testing.T) {
 
 func startGatewayHTTPDaemon(t *testing.T) (*daemon.Daemon, string, string) {
 	t.Helper()
+	return startGatewayHTTPDaemonPinned(t, "")
+}
+
+func startGatewayHTTPDaemonPinned(t *testing.T, workspace string) (*daemon.Daemon, string, string) {
+	t.Helper()
 	repoRoot := repoRoot(t)
 	kernelBin := firstExisting(
 		os.Getenv("CARINA_KERNEL_BIN"),
@@ -372,6 +411,7 @@ func startGatewayHTTPDaemon(t *testing.T) (*daemon.Daemon, string, string) {
 		ToolsDir:                   filepath.Join(repoRoot, "zig/zig-out/bin"),
 		GatewayTokenSigningKeyFile: keyFile,
 		GatewayTokenMaxTTLSeconds:  120,
+		GatewayWorkspace:           workspace,
 	})
 	if err != nil {
 		t.Fatal(err)

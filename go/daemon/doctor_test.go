@@ -31,6 +31,12 @@ func TestDoctorProbes(t *testing.T) {
 	if _, ok := m["fix_plan"].([]map[string]any); !ok {
 		t.Fatalf("doctor fix_plan missing or untyped: %T", m["fix_plan"])
 	}
+	if sandbox, ok := m["sandbox"].(map[string]any); !ok || sandbox["ok"] != true || sandbox["requested"] != false {
+		t.Fatalf("unrequested sandbox must be an honest passing probe: %v", m["sandbox"])
+	}
+	if gateway, ok := m["gateway"].(map[string]any); !ok || gateway["ok"] != true || gateway["workspace_pin"] != false {
+		t.Fatalf("unpinned gateway must be an honest passing probe: %v", m["gateway"])
+	}
 	if proto, ok := m["runtime_protocol"].(map[string]any); !ok || proto["version"] != runtimeProtocolVersion {
 		t.Fatalf("runtime protocol check missing: %v", m["runtime_protocol"])
 	}

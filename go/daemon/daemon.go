@@ -83,6 +83,7 @@ type Options struct {
 	NebutraSyncMode            string             // currently only "off"; future sync modes belong behind Nebutra
 	GatewayTokenSigningKeyFile string             // optional local file containing Gateway token signing material
 	GatewayTokenMaxTTLSeconds  int                // max scoped Gateway token TTL (0 => 15m)
+	GatewayWorkspace           string             // optional Gateway HTTP/WS pin; empty leaves those surfaces unpinned
 	ContextEngine              string             // auto|off|noop
 	MemoryProvider             string             // off|hms-shadow|hms-hybrid
 	MemoryHMSEndpoint          string             // deployment-owned HMS endpoint
@@ -155,6 +156,7 @@ type Daemon struct {
 	debugTrace          *debugTrace
 	started             time.Time
 	journey             *journeyMetrics
+	recovers            recoverJournal
 	readinessGeneration atomic.Uint64
 
 	org              *kernel.OrgPolicy // enterprise policy (nil when unconfigured)
@@ -321,6 +323,7 @@ type Daemon struct {
 	schedules                *scheduler.ScheduleStore // persistent cron/at/every definitions
 	gatewayTokens            *rpc.GatewayTokenIssuer  // optional scoped Gateway token signer/verifier
 	gatewayTokenMaxTTL       time.Duration            // max TTL for locally issued scoped Gateway tokens
+	gatewayWorkspacePin      string                   // canonical Gateway HTTP/WS pin; empty = unpinned
 	gatewayHTTPServers       []*http.Server
 	gatewayResponses         map[string]string // response id -> session id for /v1/responses continuity
 	agentView                *agentview.Store
@@ -461,6 +464,11 @@ func New(opts Options) (*Daemon, error) {
 		indexBuildBatchSize:   backgroundIndexBatchSize,
 		replayTailV1:          true,
 		nativeToolsHTTP:       true,
+	}
+	d.server.SetRemoteParamsGuard(d.gatewayRemoteParamsAllowed)
+	if err := d.configureGatewayWorkspacePin(opts.GatewayWorkspace); err != nil {
+		_ = kern.Close()
+		return nil, fmt.Errorf("daemon: %w", err)
 	}
 	d.journey = newJourneyMetrics(time.Now)
 	d.server.SetConnectionObserver(d)
@@ -1416,6 +1424,8 @@ func (d *Daemon) handleDoctor(_ json.RawMessage) (any, error) {
 			return os.Remove(f)
 		}),
 		"tools":    map[string]any{"available": d.tools.Available(), "dir": d.tools.Dir()},
+		"sandbox":  d.sandboxDoctor(),
+		"gateway":  d.gatewayDoctor(),
 		"reasoner": d.reasonerReady(),
 		// Resolved credential SOURCE only — never the value. "" = unauthenticated.
 		"auth":           map[string]any{"source": d.authChain.ResolvedSource()},
@@ -1527,8 +1537,31 @@ func (d *Daemon) handleDoctor(_ json.RawMessage) (any, error) {
 	report["runtime_protocol"] = map[string]any{"version": runtimeProtocolVersion, "negotiation": "runtime.initialize"}
 	report["telemetry"] = map[string]any{"enabled": d.telemetry.Enabled(), "format": "carina-telemetry-json-v1", "otlp": false}
 	report["compaction_circuit"] = d.compactionBreaker.snapshot()
+	report["recover"] = d.recoverDoctor()
 	report["fix_plan"] = fixPlan
 	return report, nil
+}
+
+func (d *Daemon) sandboxDoctor() map[string]any {
+	st := toolchain.InspectSandbox(d != nil && d.sandbox.Load())
+	ok := !st.Requested || st.Applied
+	out := map[string]any{
+		"ok":        ok,
+		"requested": st.Requested,
+		"available": st.Available,
+		"applied":   st.Applied,
+		"platform":  st.Platform,
+	}
+	if st.Helper != "" {
+		out["helper"] = st.Helper
+	}
+	if st.Reason != "" {
+		out["reason"] = st.Reason
+	}
+	if !ok {
+		out["error"] = st.Reason
+	}
+	return out
 }
 
 // ---- daemon ---------------------------------------------------------------

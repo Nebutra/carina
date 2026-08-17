@@ -309,7 +309,10 @@ pub fn project_doctor_report(raw: &Value, revision: u64) -> DoctorReport {
     let mut sections = Vec::new();
     if let Some(map) = object {
         for (key, value) in map {
-            if matches!(key.as_str(), "version" | "disabled" | "reason" | "fix_plan") {
+            if matches!(
+                key.as_str(),
+                "version" | "disabled" | "reason" | "fix_plan" | "recover"
+            ) {
                 continue;
             }
             sections.push(project_section(key, value));
@@ -722,6 +725,31 @@ mod tests {
         assert!(recommended.detail.contains("restart the daemon"));
         // Credential-looking values never appear as raw secrets.
         assert!(!format!("{report:?}").contains("sk-"));
+    }
+
+    #[test]
+    fn recover_journal_is_not_a_doctor_section() {
+        let raw = json!({
+            "version": "0.8.22",
+            "disabled": false,
+            "kernel": {"ok": true},
+            "recover": {
+                "ok": true,
+                "codes": ["native_tool_rejected", "empty_after_tools", "prompt_too_long"],
+                "recent": [{"reason_code":"native_tool_rejected","phase":"recover"}]
+            }
+        });
+        let report = project_doctor_report(&raw, 1);
+        assert!(
+            !report.sections.iter().any(|section| section.id == "recover"),
+            "named recover is doctor/audit JSON, not TUI chrome: {report:?}"
+        );
+        assert!(
+            report
+                .sections
+                .iter()
+                .any(|section| section.id == "kernel")
+        );
     }
 
     #[test]

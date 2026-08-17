@@ -4106,6 +4106,7 @@ impl App {
             interrupt_key: self.keybindings.interrupt.label(),
             priority_notice: self.notice.is_localized(MessageId::RuntimeUnavailable)
                 || self.notice.is_localized(MessageId::EventStreamInterrupted),
+            ambient_notice: self.notice.is_ambient(),
             context: self
                 .context_summary
                 .as_ref()
@@ -4135,6 +4136,13 @@ impl App {
         }
 
         let activity = self.execution_activity.current();
+        let mut rows = Vec::new();
+        if let Some(notice) = &chrome.notice {
+            rows.push(Line::from(Span::styled(
+                truncate_cells(&notice.text, area.width as usize, self.theme.glyphs),
+                chrome_tone_style(notice.tone, self.theme),
+            )));
+        }
 
         let mut primary_spans = Vec::new();
         if let Some(primary) = &chrome.primary {
@@ -4165,12 +4173,15 @@ impl App {
                 ),
                 chrome_tone_style(primary.tone, self.theme),
             ));
+            rows.push(Line::from(primary_spans));
         }
 
         let slots = chrome.layout_slots(area.width, self.theme.glyphs);
         let separator = format!(" {} ", self.theme.glyphs.separator());
         let mut slot_spans = Vec::new();
-        let slot_row = area.y.saturating_add(u16::from(chrome.primary.is_some()));
+        let slot_row = area.y.saturating_add(
+            u16::from(chrome.notice.is_some()) + u16::from(chrome.primary.is_some()),
+        );
         for (index, slot) in slots.iter().enumerate() {
             if index > 0 {
                 slot_spans.push(Span::styled(separator.clone(), self.theme.muted()));
@@ -4191,14 +4202,34 @@ impl App {
                 });
             }
         }
-        let mut rows = Vec::with_capacity(2);
-        if chrome.primary.is_some() {
-            rows.push(Line::from(primary_spans));
-        }
         if !slots.is_empty() {
             rows.push(Line::from(slot_spans));
         }
+        let painted = chrome.notice.is_some()
+            && area.height >= u16::from(chrome.notice.is_some())
+            && area.width > 0;
+        let unoccluded = painted && self.overlays.active().is_none();
+        self.record_notice_paint(unoccluded);
         frame.render_widget(Paragraph::new(rows), area);
+    }
+
+    fn record_notice_paint(&mut self, unoccluded: bool) {
+        let key = self
+            .notice
+            .render(self.ui_locale(), self.theme.glyphs)
+            .into_owned();
+        if key.is_empty() {
+            self.notice_seen_key.clear();
+            self.notice_seen = false;
+            return;
+        }
+        if self.notice_seen_key != key {
+            self.notice_seen_key = key;
+            self.notice_seen = false;
+        }
+        if unoccluded {
+            self.notice_seen = true;
+        }
     }
 
     fn product_header_metadata(&self) -> (String, String, String) {
@@ -12073,6 +12104,23 @@ mod transcript_tests {
         app.notice = crate::i18n::Notice::localized(MessageId::RuntimeUnavailable);
         terminal.draw(|frame| app.render(frame)).unwrap();
         assert_eq!(app.composer_area, idle_composer);
+        assert!(app.notice_seen, "unoccluded notice must count as seen");
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn overlay_does_not_count_as_seeing_the_notice() {
+        let (mut app, root, server) = production_render_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 28)).unwrap();
+        app.notice = crate::i18n::Notice::localized(MessageId::RuntimeUnavailable);
+        app.overlays.replace(Overlay::Help(crate::overlay::HelpOverlay { scroll: 0 }));
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        assert!(!app.notice_seen, "occluded notice must not count as seen");
+        assert!(app.overlays.close_non_governance());
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        assert!(app.notice_seen, "unoccluded notice must count as seen");
         server.join().unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }

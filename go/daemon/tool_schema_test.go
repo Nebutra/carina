@@ -31,6 +31,21 @@ func TestCarinaToolSpecsIncludeDoneAndRead(t *testing.T) {
 	if !haveRead || !haveDone || !haveEdit {
 		t.Fatalf("missing read, done, or edit in %+v", specs)
 	}
+	var firstMCP = -1
+	for i, spec := range specs {
+		if spec.Name == "mcp" || spec.Name == "mcp_find" {
+			if firstMCP < 0 {
+				firstMCP = i
+			}
+			continue
+		}
+		if firstMCP >= 0 && spec.Name != "done" {
+			t.Fatalf("built-in tool %q must stay before MCP wrappers (or be done)", spec.Name)
+		}
+	}
+	if firstMCP < 0 {
+		t.Fatal("mcp wrappers missing")
+	}
 }
 
 func TestDecodeNativeToolCallsReadAndBatch(t *testing.T) {

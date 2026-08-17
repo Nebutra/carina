@@ -16,7 +16,11 @@ type Request struct {
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 	Prompt          string `json:"prompt"`
 	StablePrefix    string `json:"stable_prefix,omitempty"`
-	VolatileSuffix  string `json:"volatile_suffix,omitempty"`
+	// StableSections, when set, are the cacheable prefix split into
+	// constitution / workspace / catalog(+task) text blocks. Adapters that
+	// do not understand sections keep using StablePrefix as one blob.
+	StableSections []string `json:"stable_sections,omitempty"`
+	VolatileSuffix string   `json:"volatile_suffix,omitempty"`
 	// Media carries image parts for vision-capable models. Raw bytes here,
 	// provider-specific encoding (base64 data URI vs source block) in each
 	// adapter. Callers are responsible for gating on the model's declared

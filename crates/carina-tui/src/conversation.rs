@@ -122,6 +122,7 @@ pub struct ChromePrimary {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComposerChrome {
     pub primary: Option<ChromePrimary>,
+    pub notice: Option<ChromePrimary>,
     pub mode: FooterMode,
     slots: Vec<ChromeSlot>,
     context_protected: bool,
@@ -137,6 +138,7 @@ pub struct ComposerChromeInput<'a> {
     pub background_work: bool,
     pub interrupt_key: &'a str,
     pub priority_notice: bool,
+    pub ambient_notice: bool,
     pub context: Option<&'a ModelContextTokens>,
     pub locale: Locale,
     pub screen_mode: &'a str,
@@ -164,13 +166,26 @@ impl ComposerChrome {
         } else {
             Some(status_value)
         };
-        let notice = input.notice.trim();
-        let primary = if input.priority_notice && !notice.is_empty() {
+        let notice_text = input.notice.trim();
+        let failed = matches!(mode, FooterMode::Failed);
+        let show_notice = !notice_text.is_empty() && !(input.ambient_notice && failed);
+        let notice = if input.priority_notice && show_notice {
             Some(ChromePrimary {
-                text: notice.to_owned(),
+                text: notice_text.to_owned(),
                 tone: ChromeTone::Danger,
                 animated: false,
             })
+        } else if show_notice {
+            Some(ChromePrimary {
+                text: notice_text.to_owned(),
+                tone: ChromeTone::Warning,
+                animated: false,
+            })
+        } else {
+            None
+        };
+        let primary = if input.priority_notice && notice.is_some() {
+            None
         } else if active {
             let mut parts = Vec::new();
             if let Some(activity) = input.activity.filter(|value| !value.trim().is_empty()) {
@@ -189,19 +204,10 @@ impl ComposerChrome {
                 },
                 &[("key", input.interrupt_key)],
             ));
-            if !notice.is_empty() {
-                parts.push(notice.to_owned());
-            }
             Some(ChromePrimary {
                 text: parts.join("  "),
                 tone: ChromeTone::Accent,
                 animated: true,
-            })
-        } else if !notice.is_empty() {
-            Some(ChromePrimary {
-                text: notice.to_owned(),
-                tone: ChromeTone::Warning,
-                animated: false,
             })
         } else {
             None
@@ -230,6 +236,7 @@ impl ComposerChrome {
         slots.push(screen_mode_slot(locale, input.screen_mode));
         Self {
             primary,
+            notice,
             mode,
             slots,
             context_protected,
@@ -245,7 +252,9 @@ impl ComposerChrome {
     }
 
     pub fn row_count(&self, width: u16) -> u16 {
-        u16::from(self.primary.is_some()) + u16::from(!self.visible_slots(width).is_empty())
+        u16::from(self.notice.is_some())
+            + u16::from(self.primary.is_some())
+            + u16::from(!self.visible_slots(width).is_empty())
     }
 
     fn slot_visible(&self, kind: ChromeSlotKind, _width: u16) -> bool {
@@ -1047,6 +1056,7 @@ mod tests {
             background_work: false,
             interrupt_key: "Esc",
             priority_notice: false,
+            ambient_notice: false,
             context: None,
             locale: Locale::En,
             screen_mode: "fullscreen",
@@ -1105,6 +1115,7 @@ mod tests {
             background_work: false,
             interrupt_key: "Esc",
             priority_notice: false,
+            ambient_notice: false,
             context: Some(&context),
             locale: Locale::En,
             screen_mode: "fullscreen",
@@ -1146,6 +1157,7 @@ mod tests {
             background_work: false,
             interrupt_key: "Esc",
             priority_notice: false,
+            ambient_notice: false,
             context: None,
             locale: Locale::ZhHans,
             screen_mode: "fullscreen",
@@ -1199,6 +1211,7 @@ mod tests {
                 background_work: false,
                 interrupt_key: "Esc",
                 priority_notice: false,
+            ambient_notice: false,
                 context: Some(&context),
                 locale,
                 screen_mode: "fullscreen",
@@ -1254,6 +1267,7 @@ mod tests {
                 background_work: false,
                 interrupt_key: "Esc",
                 priority_notice: false,
+            ambient_notice: false,
                 context: Some(&context),
                 locale: Locale::En,
                 screen_mode: "minimal",
@@ -1287,6 +1301,7 @@ mod tests {
             background_work: false,
             interrupt_key: "Esc",
             priority_notice: false,
+            ambient_notice: false,
             context: Some(&context),
             locale: Locale::En,
             screen_mode: "fullscreen",
@@ -1324,6 +1339,7 @@ mod tests {
                 background_work: false,
                 interrupt_key: "Esc",
                 priority_notice: false,
+            ambient_notice: false,
                 context: None,
                 locale: Locale::En,
                 screen_mode: "fullscreen",
@@ -1354,6 +1370,7 @@ mod tests {
             background_work: false,
             interrupt_key: "Esc",
             priority_notice: false,
+            ambient_notice: false,
             context: None,
             locale: Locale::ZhHans,
             screen_mode: "inline",
@@ -1380,6 +1397,7 @@ mod tests {
             background_work: false,
             interrupt_key: "Esc",
             priority_notice: false,
+            ambient_notice: false,
             context: Some(&context),
             locale: Locale::En,
             screen_mode: "future-screen",
@@ -1431,6 +1449,7 @@ mod tests {
                 background_work: false,
                 interrupt_key: "Esc",
                 priority_notice: false,
+            ambient_notice: false,
                 context: Some(&context),
                 locale,
                 screen_mode: "fullscreen",
@@ -1481,6 +1500,7 @@ mod tests {
             background_work: false,
             interrupt_key: "Esc",
             priority_notice: false,
+            ambient_notice: false,
             context: None,
             locale: Locale::En,
             screen_mode: "fullscreen",
@@ -1488,11 +1508,19 @@ mod tests {
             isolation_profile: "safe-edit",
             sandbox_commands: Some(true),
         });
-        let primary = chrome.primary.unwrap();
+        let primary = chrome.primary.as_ref().unwrap();
         assert!(primary.animated);
         assert_eq!(primary.tone, ChromeTone::Accent);
-        assert!(primary.text.starts_with("Working 1s  Esc pause safely"));
-        assert!(primary.text.ends_with("Message added"));
+        assert_eq!(primary.text, "Working 1s  Esc pause safely");
+        assert_eq!(
+            chrome.notice,
+            Some(ChromePrimary {
+                text: "Message added".into(),
+                tone: ChromeTone::Warning,
+                animated: false,
+            })
+        );
+        assert_eq!(chrome.row_count(80), 3);
     }
 
     #[test]
@@ -1508,6 +1536,7 @@ mod tests {
                 background_work: false,
                 interrupt_key: "Esc",
                 priority_notice: false,
+            ambient_notice: false,
                 context: None,
                 locale,
                 screen_mode: "fullscreen",
@@ -1542,6 +1571,7 @@ mod tests {
             background_work: false,
             interrupt_key: "Ctrl-C",
             priority_notice: true,
+            ambient_notice: false,
             context: Some(&context),
             locale: Locale::En,
             screen_mode: "fullscreen",
@@ -1549,8 +1579,9 @@ mod tests {
             isolation_profile: "safe-edit",
             sandbox_commands: Some(true),
         });
+        assert!(chrome.primary.is_none());
         assert_eq!(
-            chrome.primary,
+            chrome.notice,
             Some(ChromePrimary {
                 text: "Runtime unavailable".into(),
                 tone: ChromeTone::Danger,
@@ -1561,5 +1592,29 @@ mod tests {
             .visible_slots(120)
             .iter()
             .any(|slot| slot.text.contains("stale activity")));
+    }
+
+    #[test]
+    fn ambient_notice_yields_to_a_failed_run() {
+        let chrome = ComposerChrome::project(ComposerChromeInput {
+            execution_status: "failed",
+            notice: "Try /help",
+            elapsed: None,
+            activity: None,
+            activity_elapsed: None,
+            queued_follow_ups: 0,
+            background_work: false,
+            interrupt_key: "Esc",
+            priority_notice: false,
+            ambient_notice: true,
+            context: None,
+            locale: Locale::En,
+            screen_mode: "fullscreen",
+            hitl: "ask",
+            isolation_profile: "safe-edit",
+            sandbox_commands: Some(true),
+        });
+        assert!(chrome.notice.is_none());
+        assert!(chrome.primary.is_none());
     }
 }

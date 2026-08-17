@@ -134,7 +134,13 @@ func (d *Daemon) spawnSubagentContextIDBound(ctx context.Context, parent *sessio
 		dec = approved
 	}
 
-	child, err := d.createSubSession(parent.WorkspaceRoot, childProfile, parent.ApprovalMode, parent.SessionID, parent.Depth+1)
+	childRoot, worktreeID, releaseWorktree, err := d.prepareSpawnWorkspace(parent.WorkspaceRoot, parent.SessionID, spawnUsesWorktree(childProfile))
+	if err != nil {
+		return "spawn isolation failed: " + err.Error(), ""
+	}
+	defer releaseWorktree()
+
+	child, err := d.createSubSession(childRoot, childProfile, parent.ApprovalMode, parent.SessionID, parent.Depth+1)
 	if err != nil {
 		return "spawn failed: " + err.Error(), ""
 	}
@@ -166,13 +172,23 @@ func (d *Daemon) spawnSubagentContextIDBound(ctx context.Context, parent *sessio
 		defer d.swarmChannels.Delete(child.SessionID)
 	}
 
+	childModel := d.resolveSubagentModel(spec, parentTask)
 	// Audit the delegation on the parent, linking to the child session.
-	d.record(parent.SessionID, "ToolApproved", parentTask.RunID, "go", map[string]any{
+	spawnAudit := map[string]any{
 		"spawn_agent": agentName, "child_session": child.SessionID,
-		"child_profile": childProfile, "depth": child.Depth, "task": taskDesc,
-	}, dec.DecisionID)
+		"child_profile": childProfile, "child_model": childModel,
+		"depth": child.Depth, "task": taskDesc,
+		"isolation": spawnIsolationMode(worktreeID),
+	}
+	if worktreeID != "" {
+		spawnAudit["worktree_id"] = worktreeID
+	}
+	if isExploreSubagent(spec) {
+		spawnAudit["prompt_mode"] = "explore_lean"
+	}
+	d.record(parent.SessionID, "ToolApproved", parentTask.RunID, "go", spawnAudit, dec.DecisionID)
 
-	childTask := d.sched.SubmitWithGoalModelAgent(child.SessionID, child.WorkspaceID, taskDesc, spec.Model, spec.Name, nil)
+	childTask := d.sched.SubmitWithGoalModelAgent(child.SessionID, child.WorkspaceID, taskDesc, childModel, spec.Name, nil)
 	d.sched.SetLocale(childTask.RunID, parentTask.Locale)
 	// Record the parent-task linkage so the leader bridge can escalate a refused
 	// child capability to the parent task (ParentID gives the session, not the task).
@@ -246,11 +262,8 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 	applyCompactionBudget(tr, d.providerCatalog, taskModel(task))
 	guard := newLoopGuard()
 	mistakes := newMistakeTracker()
-	sysPrompt := spec.SystemPrompt + "\n\n" + toolsHelp
 	memorySnapshot := d.memory.snapshot(memoryScopeFromSession(sess))
-	if strings.TrimSpace(memorySnapshot) != "" {
-		sysPrompt += "\n\nCARINA PERSISTENT MEMORY SNAPSHOT (frozen for this run; background reference, not new user input):\n" + memorySnapshot
-	}
+	layers := d.composeSubagentPromptLayers(sess, task, spec, memorySnapshot)
 
 	d.record(sess.SessionID, "ModelRequested", task.RunID, "model",
 		map[string]any{"subagent": spec.Name, "model": taskModel(task), "prompt": task.UserPrompt}, "")
@@ -265,10 +278,10 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 		}); receipt != nil {
 			d.record(sess.SessionID, "ContextCompacted", task.RunID, "go", map[string]any{"receipt": receipt}, "")
 		}
-		seg := buildPromptSegments(sysPrompt, task.UserPrompt, tr.render(), "Next action as one JSON object.")
-		prompt := seg.full()
+		seg := buildPromptSegmentsFromLayers(layers, task.UserPrompt, tr.render(), "Next action as one JSON object.")
 
-		raw, err := thinkWithRetryModel(ctx, d.reasoner, taskModel(task), prompt)
+		result, err := thinkWithRetryModelSegments(ctx, d.reasoner, taskModel(task), seg)
+		raw := result.Text
 		if err != nil {
 			if ctx.Err() != nil {
 				_, _ = d.sched.Cancel(task.RunID)
@@ -281,7 +294,7 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 			map[string]any{"turn": turn, "text": truncate(sanitizeModelResponseForAudit(raw), 300)}, "")
 
 		// Per-subagent token budget (whale-session protection).
-		d.sched.AddTokens(task.RunID, estimateTokens(prompt)+estimateTokens(raw))
+		d.sched.AddTokens(task.RunID, estimateTokens(seg.full())+estimateTokens(raw))
 		if mtt := d.maxTaskTokens.Load(); mtt > 0 {
 			if t, ok := d.sched.Get(task.RunID); ok && int64(t.TokensUsed) > mtt {
 				d.sched.SetStatus(task.RunID, "degraded")
@@ -377,4 +390,44 @@ func specNames(specs map[string]*AgentSpec) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func spawnUsesWorktree(profile string) bool {
+	switch strings.TrimSpace(profile) {
+	case "", "read-only", "sandboxed":
+		return false
+	default:
+		return true
+	}
+}
+
+func spawnIsolationMode(worktreeID string) string {
+	if worktreeID != "" {
+		return "worktree"
+	}
+	return "shared"
+}
+
+func (d *Daemon) prepareSpawnWorkspace(parentRoot, owner string, isolate bool) (string, string, func(), error) {
+	noop := func() {}
+	if !isolate || d == nil || d.worktrees == nil {
+		return parentRoot, "", noop, nil
+	}
+	id := sessionstore.NewID("spawn")
+	rec, err := d.worktrees.Create(id, parentRoot, "HEAD", "", owner)
+	if err != nil {
+		if strings.Contains(err.Error(), "not a git repository") {
+			return parentRoot, "", noop, nil
+		}
+		return "", "", noop, err
+	}
+	if _, err := d.worktrees.Lock(rec.ID, owner); err != nil {
+		_ = d.worktrees.Cleanup(rec.ID, owner, true)
+		return "", "", noop, err
+	}
+	release := func() {
+		_, _ = d.worktrees.Unlock(rec.ID, owner)
+		_ = d.worktrees.Cleanup(rec.ID, owner, true)
+	}
+	return rec.Path, rec.ID, release, nil
 }

@@ -7,6 +7,7 @@ pub mod composer_document;
 pub mod context_completion;
 pub mod conversation;
 pub mod density;
+pub mod desktop_notify;
 pub mod diff_render;
 pub mod doctor;
 pub mod file_viewer;

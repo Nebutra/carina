@@ -15,12 +15,17 @@ time and investigate compaction or cache pressure.
 | `sessions.items[].checkpoint_bytes` | JSON-serialized bytes in the latest durable checkpoints for that session's runs | Not heap or RSS |
 | `sessions.items[].compactions` | Durable compaction receipts in those checkpoints | Not the number of provider requests |
 | `caches.artifact_store` | Authoritative artifact-store operation and GC counters | Not a byte-accurate view of OS page cache |
+| `copies.checkpoint` | Sum of per-session durable checkpoint file bytes | Not heap; not RSS; not PSS |
+| `copies.heap` | Live Go `HeapAlloc` | Not RSS; not PSS; not attributable to one session |
+| `copies.provider_cache` | Size of `~/.carina/cache/models.json` when present | Not a live provider connection; absent is not a failure |
 
 On platforms where current process RSS is not implemented, or when procfs is
 unavailable, `rss_available` is false and no numeric RSS estimate is emitted.
 Carina does not substitute peak RSS, Go heap size, or `process RSS / sessions`
 for a missing measurement. It does not report PSS without a real platform
-collector.
+collector. Doctor prints checkpoint, heap, and provider-cache as three
+separate copies so a growing catalog file is not mistaken for a growing
+session, and a growing heap is not mistaken for a growing checkpoint.
 
 ## Initial operating principles
 

@@ -48,7 +48,7 @@ carina gateway methods
 
 ## 可选 Gateway
 
-WebSocket 首帧必须是带签名 token 的 `gateway.hello`；浏览器 `Origin` 不在允许列表时会被拒绝。HTTP 请求必须带 `Authorization: Bearer <gw1 token>`，并匹配 transport、路由授权和 scope。
+WebSocket 首帧必须是带签名 token 的 `gateway.hello`；浏览器 `Origin` 不在允许列表时会被拒绝。HTTP 请求必须带 `Authorization: Bearer <gw1 token>`，并匹配 transport、路由授权和 scope。可选的 `-gateway-workspace` 把 Gateway 上带会话的工作钉在一个已存在的目录；本机 Unix socket 合同不变。这不是 ACP，也不是多租户 SaaS。
 
 | 路由 | 作用 | Scope |
 | --- | --- | --- |

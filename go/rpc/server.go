@@ -279,18 +279,24 @@ func (Response) withNotify(method string, params any) notification {
 }
 
 type Server struct {
-	mu             sync.RWMutex
-	handlers       map[string]Handler
-	streams        map[string]StreamHandler
-	descriptors    map[string]MethodDescriptor
-	scopeResolvers map[string]ScopeResolver
-	listeners      []net.Listener
-	remoteSafe     map[string]bool // methods a Remote origin may call
-	remoteDisabled bool            // kill-switch: refuse all Remote calls
-	strictMethods  bool            // refuse registered handlers without descriptors
-	lockFile       *os.File        // ListenUnix's cross-process advisory lock (P1.8), nil until acquired
-	observer       ConnectionObserver
+	mu                sync.RWMutex
+	handlers          map[string]Handler
+	streams           map[string]StreamHandler
+	descriptors       map[string]MethodDescriptor
+	scopeResolvers    map[string]ScopeResolver
+	listeners         []net.Listener
+	remoteSafe        map[string]bool // methods a Remote origin may call
+	remoteDisabled    bool            // kill-switch: refuse all Remote calls
+	strictMethods     bool            // refuse registered handlers without descriptors
+	remoteParamsGuard RemoteParamsGuard
+	lockFile          *os.File // ListenUnix's cross-process advisory lock (P1.8), nil until acquired
+	observer          ConnectionObserver
 }
+
+// RemoteParamsGuard inspects a remote-origin request after transport
+// authorization and before the handler. Local Unix-socket calls never
+// invoke it. A non-nil error refuses the call.
+type RemoteParamsGuard func(method string, params json.RawMessage) error
 
 // SetConnectionObserver installs the transport lifecycle observer.
 func (s *Server) SetConnectionObserver(observer ConnectionObserver) {
@@ -331,6 +337,27 @@ func (s *Server) SetRemoteDisabled(on bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.remoteDisabled = on
+}
+
+// SetRemoteParamsGuard installs an origin-aware check for WebSocket/TCP
+// requests. The local Unix-socket owner contract is unchanged.
+func (s *Server) SetRemoteParamsGuard(guard RemoteParamsGuard) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.remoteParamsGuard = guard
+}
+
+func (s *Server) applyRemoteParamsGuard(origin Origin, method string, params json.RawMessage) error {
+	if origin == OriginLocal {
+		return nil
+	}
+	s.mu.RLock()
+	guard := s.remoteParamsGuard
+	s.mu.RUnlock()
+	if guard == nil {
+		return nil
+	}
+	return guard(method, params)
 }
 
 // RequireDescriptors makes the server fail closed for registered methods that
@@ -624,6 +651,10 @@ func (s *Server) serveWithScopes(conn net.Conn, origin Origin, scopes []Scope) {
 				_ = w.enqueue(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeMethodNotFound, Message: "method scope not negotiated: " + req.Method + " requires " + string(scope)}})
 				continue
 			}
+		}
+		if err := s.applyRemoteParamsGuard(origin, req.Method, req.Params); err != nil {
+			_ = w.enqueue(Response{JSONRPC: "2.0", ID: req.ID, Error: responseError(err)})
+			continue
 		}
 
 		// Stream methods keep the connection open and push notifications.

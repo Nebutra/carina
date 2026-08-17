@@ -138,6 +138,11 @@ func (t *Toolchain) RunContext(ctx context.Context, argv []string, cwd string, t
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("toolchain: empty command")
 	}
+	if sandbox {
+		if st := InspectSandbox(true); !st.Available {
+			return nil, sandboxUnavailableError(st)
+		}
+	}
 	args := []string{"--cwd", cwd, "--timeout-ms", fmt.Sprintf("%d", timeout.Milliseconds())}
 	if sandbox {
 		args = append(args, "--sandbox")

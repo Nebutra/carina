@@ -46,7 +46,7 @@ States:
 | Bounded evidence + full tool-output viewer | **wired** | visual-row head/receipt/tail budget; visible pointer/`Ctrl-T` entry; fixed owning-prompt band; paged artifact reads to 8 MiB; retained loading/failure state; unbounded logical scroll with EN/zh-Hans, Unicode/ASCII, short-terminal and resize regressions | runtime truth geometry |
 | Semantic lifecycle + live/replay parity | **wired** | canonical protocol catalog; durable daemon event identity; `ExecutionLifecycleReducer`; transcript component-tree parity | ISSUE-002 |
 | Model-aware failure recovery cells | **wired** | current/original `execution.retry` routing; immutable linked audit evidence; stable retry-chain projection; visible pointer/Tab actions | ISSUE-014 / 08-11 failure recovery UX |
-| Installed skill slash discovery | **wired** | daemon skill prompt registry; trusted-root marketplace policy; slash command tests | ISSUE-016 |
+| Installed skill slash discovery | **wired** | catalog lists `skill://name`; bodies load on `read` or slash, not stuffed into the prefix; trusted-root marketplace policy | ISSUE-016 |
 | Operator `/new` `/fork` `/compact` `/goal` | **wired** | typed `CommandId` verbs over `session.create` / `session.fork` / `session.checkpoint.compact` / `goal.*`; `/help` lists the registry | operator command truth |
 | Operator HITL + `/btw` | **wired** | `/always-approve` `/dont-ask` `/accept-edits` `/approval-mode` `/approve-plan` over `daemon.set_interactive_approval` / `session.approve_plan`; `/btw` answer-only via `execution.btw`; `/side` and `/btw --fork` withdrawn | operator command truth residual |
 | Subagent observation surface | **wired** | `agent.view` / `agent.recap`; retained Agents overlay; permission attenuation tests | ISSUE-012 |
@@ -72,7 +72,10 @@ States:
 | Visual density regression gate | **wired** | Production App matrix for both densities at 80/120/160 × EN/zh-Hans; Unicode style-run goldens; ASCII/color/polarity/selection contracts; Make + CI gate | V011 visual density |
 | Assistant content-type channel | **wired** | action JSON suppressed (`tool=done`→summary); whole-body JSON → pretty `json` markdown fence; else prose/markdown | transcript projection |
 | Managed-proxy context window alias | **wired** | `ccswitch-*/model` resolves via openai/azure catalog; footer uses real window not 32k guess | daemon compaction_budget |
-| Operator-facing reasoner failures | **wired** | degrade/ExecutionFailed reasons VOICE-ized; stacks stay on RoutingOutcome | daemon agent/reasoner |
+| Operator-facing reasoner failures | **wired** | degrade/ExecutionFailed reasons VOICE-ized; stacks stay on RoutingOutcome; named recover `reason_code` on RoutingOutcome/ExecutionFailed | daemon agent/reasoner |
+| Desktop OS notify | **wired** | unfocused live terminal/fail/degraded/needs-input only; replay skipped; `CARINA_DESKTOP_NOTIFY=off` kill switch | tui desktop_notify |
+| OS sandbox honesty | **wired** | doctor reports requested/available/applied; missing sandbox-exec/bwrap fails closed | toolchain + carina-run |
+| Spawn worktree isolation | **wired** | writable git spawn uses managed worktree; read-only stays shared; no second edit path | daemon spawn + worktree |
 | Edit dialogue-first density | **wired** | `edit` and `patch` share `ToolKind::Patch`; successful edits start collapsed; create-only card with path/stats/preview (no green + dump) | transcript + render |
 | Session status labels | **wired** | `degraded`→partial; bare `unknown`→ready (not StatusUnknown spam) | conversation localization |
 | Interactive final-turn prose contract | **wired** | `done.summary` must be plain language; no JSON completion payloads as user answer | daemon toolsHelp |

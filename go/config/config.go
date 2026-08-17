@@ -46,6 +46,7 @@ type Config struct {
 	GatewayWSOrigins           []string            `json:"gateway_ws_origins"`
 	GatewayTokenSigningKeyFile string              `json:"gateway_token_signing_key_file"`
 	GatewayTokenMaxTTLSeconds  int                 `json:"gateway_token_max_ttl_seconds"`
+	GatewayWorkspace           string              `json:"gateway_workspace"`
 	KernelBin                  string              `json:"kernel_bin"`
 	ToolsDir                   string              `json:"tools_dir"`
 	PolicyDir                  string              `json:"policy_dir"`
@@ -219,6 +220,7 @@ func mergeEnv(cfg *Config) {
 	envList("CARINA_GATEWAY_WS_ORIGINS", &cfg.GatewayWSOrigins)
 	envStr("CARINA_GATEWAY_TOKEN_SIGNING_KEY_FILE", &cfg.GatewayTokenSigningKeyFile)
 	envInt("CARINA_GATEWAY_TOKEN_MAX_TTL_SECONDS", &cfg.GatewayTokenMaxTTLSeconds)
+	envStr("CARINA_GATEWAY_WORKSPACE", &cfg.GatewayWorkspace)
 	envStr("CARINA_KERNEL_BIN", &cfg.KernelBin)
 	envStr("CARINA_TOOLS_DIR", &cfg.ToolsDir)
 	envStr("CARINA_POLICY_DIR", &cfg.PolicyDir)

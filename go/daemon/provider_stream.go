@@ -567,16 +567,7 @@ func (a *anthropicProvider) Stream(ctx context.Context, req modelrouter.Request,
 	}
 	model, responseModel, override := a.resolveModel(req)
 	messages := any([]map[string]string{{"role": "user", "content": req.Prompt}})
-	if req.StablePrefix != "" || len(req.Media) > 0 {
-		blocks := make([]map[string]any, 0, 2+len(req.Media))
-		if req.StablePrefix != "" {
-			blocks = append(blocks,
-				map[string]any{"type": "text", "text": req.StablePrefix, "cache_control": map[string]string{"type": "ephemeral"}},
-				map[string]any{"type": "text", "text": req.VolatileSuffix})
-		} else {
-			blocks = append(blocks, map[string]any{"type": "text", "text": req.Prompt})
-		}
-		blocks = append(blocks, anthropicImageBlocks(req.Media)...)
+	if blocks, ok := anthropicUserBlocks(req); ok {
 		messages = []map[string]any{{"role": "user", "content": blocks}}
 	}
 	bodyMap := map[string]any{"model": model, "max_tokens": agentMaxOutputTokens, "messages": messages, "stream": true}

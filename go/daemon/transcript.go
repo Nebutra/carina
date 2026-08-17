@@ -120,6 +120,11 @@ type CompactionReceipt struct {
 	ReserveTokens   int            `json:"reserve_tokens,omitempty"`
 	MetadataSource  string         `json:"metadata_source,omitempty"`
 	PressureBefore  float64        `json:"pressure_before,omitempty"`
+	PressureAfter   float64        `json:"pressure_after,omitempty"`
+	CharsBefore     int            `json:"chars_before,omitempty"`
+	CharsAfter      int            `json:"chars_after,omitempty"`
+	TokensBefore    int            `json:"tokens_before,omitempty"`
+	TokensAfter     int            `json:"tokens_after,omitempty"`
 	Mode            CompactionMode `json:"mode,omitempty"`
 	Transforms      []string       `json:"transforms,omitempty"`
 }
@@ -361,6 +366,9 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 	}
 	preCompactionSummary := t.Summary
 	preCompactionTurns := append([]Turn(nil), t.Turns...)
+	preRender := t.render()
+	charsBefore := len(preRender)
+	tokensBefore := estimateTokens(preRender)
 	pressureBefore := t.compactionPressure()
 	// Step 1: elide.
 	cutoff := len(t.Turns) - t.policy.KeepRecent
@@ -444,13 +452,17 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 		t.Summary = summary
 		kept = applyVerbatimUserBudget(kept, t.policy.VerbatimUserMaxChars)
 		t.Turns = append(kept, t.Turns[headEnd:]...)
+		afterRender := t.render()
 		receipt := CompactionReceipt{
 			Version: receiptVersion, CreatedAt: time.Now().UTC(), FirstTurn: firstTurn, LastTurn: lastTurn,
 			RemovedTurns: len(folded), PreimageSHA256: preimageHash, SummarySHA256: sha256Hex(summary),
 			KeptTurnIndices: keptIdx, KeyFiles: keyFiles(folded, 5),
 			PolicyVersion: t.policy.PolicyVersion, WindowTokens: t.policy.WindowTokens,
 			ReserveTokens: t.policy.ReserveTokens, MetadataSource: t.policy.MetadataSource,
-			PressureBefore: pressureBefore, Mode: mode, Transforms: transforms,
+			PressureBefore: pressureBefore, PressureAfter: t.compactionPressure(),
+			CharsBefore: charsBefore, CharsAfter: len(afterRender),
+			TokensBefore: tokensBefore, TokensAfter: estimateTokens(afterRender),
+			Mode: mode, Transforms: transforms,
 		}
 		if len(kept) > 0 {
 			receipt.KeptSHA256 = turnsSHA256(kept)

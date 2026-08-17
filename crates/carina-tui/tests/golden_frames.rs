@@ -198,6 +198,7 @@ fn render_status_with_mode(
                 background_work: false,
                 interrupt_key: "Esc",
                 priority_notice: false,
+                ambient_notice: false,
                 context,
                 locale: Locale::En,
                 screen_mode: "minimal",

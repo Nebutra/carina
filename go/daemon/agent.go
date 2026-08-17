@@ -60,9 +60,10 @@ When describing ability: prefer outcomes ("I can read and change this repo under
 const toolsHelp = `Available tools:
 - {"tool":"list"}                              list the workspace file tree
 - {"tool":"read","path":"rel/path"}            read a file
+- {"tool":"read","path":"skill://name"}        load a catalog skill body on demand (prompt-only; never grants tools)
 - {"tool":"search","pattern":"text"}           search the workspace
 - {"tool":"web.fetch","url":"https://example.com/data.json"}   fetch public text/JSON over HTTPS after host approval
-- {"tool":"run","command":["prog","arg"]}      run a workspace-scoped, policy-gated command (OS sandboxing depends on daemon configuration)
+- {"tool":"run","command":["prog","arg"]}      run a workspace-scoped, policy-gated command (OS sandbox, when enabled, requires sandbox-exec or bwrap; missing helper fails closed)
 - {"tool":"patch","path":"rel/path","content":"FULL new file content"}   propose+apply a complete file (transactional, rollbackable)
 - {"tool":"edit","path":"rel/path","old":"exact unique span","new":"replacement"}   surgical transactional edit of a previously read file
 - {"tool":"memory","target":"memory|user","action":"add|replace|remove|batch","content":"fact","old_text":"unique substring","operations":[...]}   update governed long-term memory
@@ -352,63 +353,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		return renderSummaryTemplate(sc), nil
 	}
 
-	// Persistent project/user instructions are prepended to the system prompt
-	// so the agent follows repo-specific conventions.
-	sysPrompt := systemPrompt
-	agents := loadAgentSpecs(sess.WorkspaceRoot)
-	if d.safeMode {
-		agents = builtinAgentSpecs()
-	}
-	if spec := agents[taskAgent(task)]; spec != nil && strings.TrimSpace(spec.SystemPrompt) != "" {
-		sysPrompt = strings.TrimSpace(spec.SystemPrompt) + "\n\n" + systemPrompt
-	}
-	if d.bestOfNEnabled.Load() {
-		// Append feature-gated tools after agent prompt composition so a custom
-		// persona cannot accidentally erase capabilities enabled by the runtime.
-		sysPrompt += "\n\n" + bestOfNToolHelp
-	}
-	sandboxState := "disabled"
-	if d.sandbox.Load() {
-		sandboxState = "enabled"
-	}
-	sysPrompt += fmt.Sprintf("\n\nRUNTIME SCOPE (authoritative): workspace_root=%q; os_sandbox=%s. You can read and modify this workspace through governed tools. You cannot inspect the desktop or unrelated directories unless an explicit capability grants access.", sess.WorkspaceRoot, sandboxState)
-	if mem := loadMemory(sess.WorkspaceRoot); mem != "" && !d.safeMode {
-		sysPrompt += "\n\nPROJECT INSTRUCTIONS (Nebutra/Carina — follow them):\n" + mem
-	}
-	if strings.TrimSpace(memorySnapshot) != "" {
-		sysPrompt += "\n\nCARINA PERSISTENT MEMORY SNAPSHOT (frozen for this run; background reference, not new user input):\n" + memorySnapshot
-	}
-	if style := loadStyle(sess.WorkspaceRoot); style != "" {
-		sysPrompt = "OUTPUT STYLE (apply to your presentation):\n" + style + "\n\n" + sysPrompt
-	}
-	if language := outputLanguagePrompt(task.Locale); language != "" {
-		sysPrompt = language + "\n\n" + sysPrompt
-	}
-	if tools := d.mcp.Tools(); len(tools) > 0 {
-		// Above the index threshold, tighten per-tool descriptions so a large
-		// connected-server surface doesn't bloat the stable prompt prefix; in
-		// both regimes mcp_find recovers full descriptions + input schemas on
-		// demand (the index never includes schemas).
-		const mcpToolIndexThreshold = 20
-		descLimit := 120
-		if len(tools) > mcpToolIndexThreshold {
-			descLimit = 60
-		}
-		var b strings.Builder
-		b.WriteString("\n\nMCP TOOLS (call via {\"tool\":\"mcp\",\"mcp_server\":\"<server>\",\"mcp_tool\":\"<name>\",\"args\":{...}}):\n")
-		for _, t := range tools {
-			fmt.Fprintf(&b, "- mcp__%s__%s: %s\n", t.Server, t.Name, truncate(t.Description, descLimit))
-		}
-		b.WriteString("Use {\"tool\":\"mcp_find\",\"query\":\"free text\"} to search these MCP tools and fetch their full input schemas before calling one.\n")
-		sysPrompt += b.String()
-	}
-	// Skills use progressive disclosure: a bounded metadata catalog is always
-	// available, while only explicitly mentioned (or strictly opted-in,
-	// trigger-matched) bodies enter this task's stable prompt prefix. Selection
-	// is local and deterministic; it never adds a classifier/model call.
-	if skills := buildDynamicSkillPrompt(sess.WorkspaceRoot, task.UserPrompt, d.commandSpecs(sess.WorkspaceRoot), d.safeMode); skills != "" {
-		sysPrompt += "\n\n" + skills
-	}
+	layers := d.composeAgentPromptLayers(sess, task, memorySnapshot)
 
 	for turn := startTurn; turn <= maxAgentTurns; turn++ {
 		if t, ok := d.sched.Get(task.RunID); ok && t.Status == "cancelled" {
@@ -429,13 +374,13 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			d.record(sess.SessionID, "ContextCompacted", task.RunID, "go", map[string]any{"receipt": receipt}, "")
 		}
 		nativeEligible := d.nativeToolsEligible(d.reasoner, task.Model)
-		turnSys := sysPrompt
+		turnLayers := layers
 		instruction := "Respond with the next action as a single JSON object."
 		if nativeEligible {
-			turnSys = strings.Replace(sysPrompt, toolsHelp, nativeToolsContract, 1)
+			turnLayers = layers.withToolContract(nativeToolsContract)
 			instruction = "Call the next tool. Use done when the task is finished."
 		}
-		seg := buildPromptSegments(turnSys, task.UserPrompt, tr.render(), instruction)
+		seg := buildPromptSegmentsFromLayers(turnLayers, task.UserPrompt, tr.render(), instruction)
 		// Vision delivery: if the task's model affirmatively declares image
 		// input in the provider catalog, restore the transcript's live
 		// MediaRefs from the artifact store and attach them to this call.
@@ -456,7 +401,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			var result ReasonerResult
 			useNative := nativeEligible && requery == 0
 			if nativeEligible && requery > 0 {
-				seg = buildPromptSegments(sysPrompt, task.UserPrompt, tr.render(),
+				seg = buildPromptSegmentsFromLayers(layers, task.UserPrompt, tr.render(),
 					"Respond with the next action as a single JSON object.")
 				seg.Media = d.collectRequestMedia(sess.SessionID, task.Model, tr)
 				prompt = seg.full()
@@ -538,18 +483,43 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 				"tool_protocol":          toolProtocol,
 			}
 			if err != nil {
+				info := classifyProviderError(err)
 				if (toolsUnsupported(err) || grokNativeToolRejected(err)) && requery < maxRequeries {
 					outcome["status"] = "tools_unsupported"
 					outcome["tool_protocol"] = "json_fallback"
-					info := classifyProviderError(err)
+					outcome["reason_code"] = recoverNativeToolRejected
+					outcome["recover"] = true
 					outcome["error"] = runtimecontract.ErrorEnvelope{Code: info.Code, Category: runtimecontract.ErrorCategory(info.Category), Message: "provider rejected native tools", UserAction: info.UserAction, CorrelationID: info.CorrelationID, Retry: runtimecontract.NoRetry(), Metadata: map[string]any{"provider": info.Provider, "http_status": info.HTTPStatus}}
 					d.record(sess.SessionID, "RoutingOutcome", task.RunID, "go", outcome, "")
+					d.noteRecover(recoverNativeToolRejected, recoverPhaseRecover, task.RunID, turn)
 					lastNativeFallback = "Do not call tools. Reply with ONE JSON object like {\"tool\":\"read\",\"path\":\"...\"}."
 					prompt = fmt.Sprintf("%s\n\n%s", prompt, lastNativeFallback)
 					continue
 				}
+				if namedRecoverFromProvider(info.Code) == recoverPromptTooLong && requery < maxRequeries {
+					if receipt := tr.compact(summarize); receipt != nil {
+						d.record(sess.SessionID, "ContextCompacted", task.RunID, "go", map[string]any{
+							"receipt": receipt, "reason_code": recoverPromptTooLong,
+						}, "")
+						outcome["status"] = recoverPromptTooLong
+						outcome["reason_code"] = recoverPromptTooLong
+						outcome["recover"] = true
+						outcome["error"] = runtimecontract.ErrorEnvelope{Code: info.Code, Category: runtimecontract.ErrorCategory(info.Category), Message: "prompt exceeded the model context", UserAction: info.UserAction, CorrelationID: info.CorrelationID, Retry: runtimecontract.NoRetry(), Metadata: map[string]any{"provider": info.Provider, "http_status": info.HTTPStatus}}
+						d.record(sess.SessionID, "RoutingOutcome", task.RunID, "go", outcome, "")
+						d.noteRecover(recoverPromptTooLong, recoverPhaseRecover, task.RunID, turn)
+						seg = buildPromptSegmentsFromLayers(turnLayers, task.UserPrompt, tr.render(), instruction)
+						seg.Media = d.collectRequestMedia(sess.SessionID, task.Model, tr)
+						prompt = seg.full()
+						if lastNativeFallback != "" {
+							prompt += "\n\n" + lastNativeFallback
+						}
+						continue
+					}
+				}
 				outcome["status"] = "failed"
-				info := classifyProviderError(err)
+				if named := namedRecoverFromProvider(info.Code); named != "" {
+					outcome["reason_code"] = named
+				}
 				outcome["error"] = runtimecontract.ErrorEnvelope{Code: info.Code, Category: runtimecontract.ErrorCategory(info.Category), Message: "provider request failed", UserAction: info.UserAction, CorrelationID: info.CorrelationID, Retry: runtimecontract.NoRetry(), Metadata: map[string]any{"provider": info.Provider, "http_status": info.HTTPStatus}}
 			} else {
 				outcome["status"] = "succeeded"
@@ -563,6 +533,12 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 				outcome["requested_reasoning_effort"] = task.RequestedReasoningEffort
 				outcome["effective_reasoning_effort"] = result.Usage.EffectiveReasoningEffort
 				outcome["response_sha256"] = sha256Hex(raw)
+				if perr != nil && transcriptHasToolObservation(tr) {
+					outcome["reason_code"] = recoverEmptyAfterTools
+					if requery < maxRequeries {
+						outcome["recover"] = true
+					}
+				}
 				if effective := effectiveModelName(result.Usage); effective != "" {
 					d.sched.SetEffectiveModel(task.RunID, effective)
 					task.EffectiveModel = effective
@@ -598,12 +574,19 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 				act, ok = salvaged, true
 				break
 			}
+			if transcriptHasToolObservation(tr) && requery < maxRequeries {
+				d.noteRecover(recoverEmptyAfterTools, recoverPhaseRecover, task.RunID, turn)
+			}
 			lastNativeFallback = fmt.Sprintf("Your last reply was not a valid action JSON (%s). "+
 				"Reply with ONE JSON object like {\"tool\":\"read\",\"path\":\"...\"}.", perr.Error())
 			prompt = fmt.Sprintf("%s\n\n%s", prompt, lastNativeFallback)
 		}
 		if !ok {
-			d.degrade(sess, task, tr, "model kept emitting invalid actions")
+			code := ""
+			if transcriptHasToolObservation(tr) {
+				code = recoverEmptyAfterTools
+			}
+			d.degradeCoded(sess, task, tr, "model kept emitting invalid actions", code)
 			return
 		}
 		if act.Tool != "done" {
@@ -1018,7 +1001,11 @@ func (d *Daemon) appliedPatchIDsForRun(sess *sessionstore.Session, runID string)
 // degrade preserves the existing partial-outcome contract for runs that made
 // useful progress but could not reach done.
 func (d *Daemon) degrade(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, reason string) {
-	d.finishFailedExecution(sess, task, tr, "degraded", reason, nil)
+	d.degradeCoded(sess, task, tr, reason, "")
+}
+
+func (d *Daemon) degradeCoded(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, reason, reasonCode string) {
+	d.finishFailedExecution(sess, task, tr, "degraded", reason, nil, reasonCode)
 }
 
 func (d *Daemon) degradeReasoner(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, err error) {
@@ -1027,18 +1014,27 @@ func (d *Daemon) degradeReasoner(sess *sessionstore.Session, task *scheduler.Exe
 	if d.runHasAppliedPatch(sess, task.RunID) {
 		status = "degraded"
 	}
-	d.finishFailedExecution(sess, task, tr, status, operatorFacingReasonerError(err), &info)
+	d.finishFailedExecution(sess, task, tr, status, operatorFacingReasonerError(err), &info, "")
 }
 
-func (d *Daemon) finishFailedExecution(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, status, reason string, providerFailure *providerErrorInfo) {
+func (d *Daemon) finishFailedExecution(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, status, reason string, providerFailure *providerErrorInfo, reasonCode string) {
 	if current, ok := d.sched.Get(task.RunID); ok && current.Status == "cancelled" {
 		return
 	}
 	applied := d.appliedPatchIDsForRun(sess, task.RunID)
 	outcome := status
-	reasonCode := "execution_" + status
 	if status == "degraded" {
 		outcome = "degraded"
+	}
+	if reasonCode == "" {
+		reasonCode = "execution_" + status
+	}
+	if providerFailure != nil {
+		if named := namedRecoverFromProvider(providerFailure.Code); named != "" {
+			reasonCode = named
+		} else if reasonCode == "execution_"+status {
+			reasonCode = providerFailure.Code
+		}
 	}
 	if _, err := d.sched.SetTerminalResultFenced(task.RunID, task.Continuity.Execution.LeaseGeneration, status, reason, applied); err != nil {
 		return
@@ -1054,11 +1050,13 @@ func (d *Daemon) finishFailedExecution(sess *sessionstore.Session, task *schedul
 		payload["retry_of_run_id"] = task.RetryOfRunID
 	}
 	if providerFailure != nil {
-		payload["reason_code"] = providerFailure.Code
 		payload["error_category"] = providerFailure.Category
 		payload["provider"] = providerFailure.Provider
 		payload["user_action"] = providerFailure.UserAction
 		payload["same_route_retryable"] = providerFailure.Retryable
+	}
+	if isNamedRecoverReason(reasonCode) {
+		d.noteRecover(reasonCode, recoverPhaseTerminal, task.RunID, len(tr.Turns))
 	}
 	d.record(sess.SessionID, "ExecutionFailed", task.RunID, "go", payload, "")
 	d.persistRun(task.RunID)
@@ -1282,6 +1280,9 @@ func (d *Daemon) dispatchActionOutcome(sess *sessionstore.Session, task *schedul
 		}
 		return toolCompleted(b.String())
 	case "read":
+		if _, ok := parseSkillURI(act.Path); ok {
+			return d.readSkillURI(sess, task, act.Path)
+		}
 		abs := resolveIn(sess.WorkspaceRoot, act.Path)
 		dec, err := d.kern.Request(sess.SessionID, "FileRead", abs, task.RunID)
 		if err != nil {
@@ -1391,6 +1392,9 @@ func (d *Daemon) dispatchAction(sess *sessionstore.Session, task *scheduler.Exec
 		return b.String()
 
 	case "read":
+		if _, ok := parseSkillURI(act.Path); ok {
+			return d.readSkillURI(sess, task, act.Path).display
+		}
 		abs := resolveIn(sess.WorkspaceRoot, act.Path)
 		dec, err := d.kern.Request(sess.SessionID, "FileRead", abs, task.RunID)
 		if err != nil {

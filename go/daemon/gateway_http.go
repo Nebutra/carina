@@ -62,6 +62,14 @@ func (h *gatewayHTTP) handleModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	root := strings.TrimSpace(r.URL.Query().Get("workspace_root"))
+	if root != "" {
+		if err := h.d.gatewayWorkspaceAllowed(root); err != nil {
+			h.writeError(w, http.StatusForbidden, "workspace_forbidden", err.Error())
+			return
+		}
+	} else if h.d.gatewayWorkspacePin != "" {
+		root = h.d.gatewayWorkspacePin
+	}
 	data := []map[string]any{
 		gatewayModel("carina", "Default Carina agent target"),
 		gatewayModel("carina/default", "Default Carina agent target"),
@@ -463,6 +471,18 @@ func (h *gatewayHTTP) handleToolsInvoke(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	method := normalizeToolInvokeMethod(req.Tool, req.Action)
+	if sid := stringArg(req.Args, "session_id"); sid != "" {
+		if err := h.d.gatewaySessionAllowed(sid); err != nil {
+			h.writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": err.Error(), "method": method})
+			return
+		}
+	}
+	if root := stringArg(req.Args, "workspace_root"); root != "" {
+		if err := h.d.gatewayWorkspaceAllowed(root); err != nil {
+			h.writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": err.Error(), "method": method})
+			return
+		}
+	}
 	result, err := h.invokeReadOnlyTool(method, req.Args)
 	if err != nil {
 		if sid := stringArg(req.Args, "session_id"); sid != "" {
@@ -553,17 +573,29 @@ func (h *gatewayHTTP) submitAgentTask(r *http.Request, model, prompt string, met
 		sessionID = h.d.gatewayResponses[previousResponseID]
 		h.d.mu.Unlock()
 	}
+	if sessionID != "" {
+		if err := h.d.gatewaySessionAllowed(sessionID); err != nil {
+			return nil, "", err
+		}
+	}
 	if sessionID == "" {
 		root := metadataString(metadata, "workspace_root")
 		if root == "" {
 			root = strings.TrimSpace(r.Header.Get("X-Carina-Workspace"))
 		}
 		if root == "" {
-			var err error
-			root, err = os.Getwd()
-			if err != nil {
-				return nil, "", err
+			if h.d.gatewayWorkspacePin != "" {
+				root = h.d.gatewayWorkspacePin
+			} else {
+				var err error
+				root, err = os.Getwd()
+				if err != nil {
+					return nil, "", err
+				}
 			}
+		}
+		if err := h.d.gatewayWorkspaceAllowed(root); err != nil {
+			return nil, "", err
 		}
 		sess, err := h.createGatewaySession(root)
 		if err != nil {
