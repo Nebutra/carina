@@ -5192,11 +5192,55 @@ impl App {
                         context.checkpoint.compaction_count,
                     )),
                 ];
+                let ledger = &context.ledger;
+                if ledger.available || !ledger.cache.is_empty() {
+                    body.push(Line::from(""));
+                    body.push(Line::from(format!(
+                        "ledger  cache {}  {}  {} est. tokens",
+                        fallback_label(&ledger.cache),
+                        fallback_label(&ledger.estimate_method),
+                        crate::render_contract::format_tokens(
+                            ledger.model_visible_tokens_estimated
+                        ),
+                    )));
+                    if !ledger.layers.is_empty() {
+                        let layers = ledger
+                            .layers
+                            .iter()
+                            .map(|layer| {
+                                format!(
+                                    "{} {}B/{}",
+                                    layer.id,
+                                    crate::render_contract::format_tokens(layer.bytes),
+                                    fallback_label(&layer.cache)
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("  ");
+                        body.push(Line::from(format!("layers  {layers}")));
+                    }
+                    body.push(Line::from(format!(
+                        "turns  elided {}  pinned {}  visible {} bytes",
+                        ledger.elided_turns.len(),
+                        ledger.pinned_turns.len(),
+                        ledger.model_visible_bytes,
+                    )));
+                    if !ledger.model_visible_sha256.is_empty() {
+                        body.push(Line::from(format!(
+                            "visible  {}",
+                            short_hash(&ledger.model_visible_sha256)
+                        )));
+                    }
+                } else if !ledger.reason.is_empty() {
+                    body.push(Line::from(""));
+                    body.push(Line::from(format!("ledger  {}", ledger.reason)));
+                }
                 if let Some(receipt) = &context.recent_receipt {
                     body.extend([
                         Line::from(""),
                         Line::from(format!(
-                            "receipt  pressure {:.0}%  removed {}  verbatim {}",
+                            "receipt  {}  pressure {:.0}%  removed {}  verbatim {}",
+                            fallback_label(&receipt.mode),
                             receipt.pressure_before * 100.0,
                             receipt.removed_turns,
                             receipt.kept_turn_indices.len(),

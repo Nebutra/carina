@@ -55,6 +55,7 @@ States:
 | Dual-axis HITL state | **wired** | typed `config.inventory`; actionable governance remains visible while routine HITL/isolation facts live in Settings/Status; front-only approval queue count | ISSUE-010 |
 | Model-aware context compaction | **wired** | catalog/fallback budget resolver; checkpoint snapshot; verifiable receipt policy metadata | ISSUE-004 |
 | Context pressure and receipt detail | **wired** | warning/critical `ctx%` is protected in chrome; routine context lives in typed `/context`; 80/90 semantic thresholds | ISSUE-011 |
+| Context ledger = model-visible prompt | **wired** | `context.summary.ledger` projects `tr.render()`, prompt layers, elided/pinned turns, receipts; Grok/JSON-only labeled `cache=none`; `/context` overlay consumes the RPC only | ISSUE-019 / #28 |
 | Patch attribution and rollback trust loop | **wired** | typed `workspace.patch.list/show/rollback.preview/rollback`; Changes workbench; apply/verify/rollback E2E | ISSUE-003 |
 | Fullscreen patch review workbench | **wired** | typed background `PatchReview` projection; transaction/file/hunk regions at 120/160; bounded numbered diff; exact preview identity; EN/zh-Hans goldens plus ASCII/no-color/resize geometry contracts | V005 visual density |
 | Large diff progressive highlight + cap | **wired** | 2MiB/50k review cap; 500-row/32KiB transcript window; 4KiB line + bounded LCS; `/changes` paging | ISSUE-015 |

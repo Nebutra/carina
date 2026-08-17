@@ -99,6 +99,54 @@ pub struct ContextSummary {
     pub compact: ContextCompactAvailability,
     #[serde(default)]
     pub recent_receipt: Option<ContextCompactionReceipt>,
+    #[serde(default)]
+    pub ledger: ContextLedger,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct ContextLedger {
+    #[serde(default)]
+    pub available: bool,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub cache: String,
+    #[serde(default)]
+    pub estimate_method: String,
+    #[serde(default)]
+    pub estimated: bool,
+    #[serde(default)]
+    pub model_visible: String,
+    #[serde(default)]
+    pub model_visible_bytes: u64,
+    #[serde(default)]
+    pub model_visible_sha256: String,
+    #[serde(default)]
+    pub model_visible_tokens_estimated: u64,
+    #[serde(default)]
+    pub layers: Vec<ContextPromptLayer>,
+    #[serde(default)]
+    pub elided_turns: Vec<usize>,
+    #[serde(default)]
+    pub pinned_turns: Vec<usize>,
+    #[serde(default)]
+    pub receipts: Vec<ContextCompactionReceipt>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct ContextPromptLayer {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub bytes: u64,
+    #[serde(default)]
+    pub tokens_estimated: u64,
+    #[serde(default)]
+    pub estimated: bool,
+    #[serde(default)]
+    pub estimate_method: String,
+    #[serde(default)]
+    pub cache: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
@@ -358,6 +406,12 @@ pub struct ContextCompactionReceipt {
     pub summary_sha256: String,
     #[serde(default)]
     pub kept_sha256: String,
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub transforms: Vec<String>,
+    #[serde(default)]
+    pub pressure_after: f64,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
@@ -1948,13 +2002,11 @@ mod tests {
             epoch: expected.epoch.clone(),
             ..RuntimeIdentity::default()
         }));
-        assert!(
-            !RuntimeExpectation {
-                epoch: " ".into(),
-                ..expected.clone()
-            }
-            .is_complete()
-        );
+        assert!(!RuntimeExpectation {
+            epoch: " ".into(),
+            ..expected.clone()
+        }
+        .is_complete());
         assert!(!expected.matches(&RuntimeIdentity {
             workspace_id: expected.workspace_id.clone(),
             runtime_id: expected.runtime_id.clone(),
@@ -2691,7 +2743,9 @@ mod tests {
         }
         for lifecycle in all {
             assert!(
-                encodings.iter().any(|(_, _, encoded)| *encoded == lifecycle),
+                encodings
+                    .iter()
+                    .any(|(_, _, encoded)| *encoded == lifecycle),
                 "missing wire encoding for {lifecycle:?}"
             );
         }
@@ -3054,7 +3108,20 @@ mod tests {
                     "recent_receipt": {
                         "pressure_before": 1.02,
                         "summary_sha256": "abcdef123456",
-                        "key_files": ["src/lib.rs"]
+                        "key_files": ["src/lib.rs"],
+                        "mode": "collapse_only"
+                    },
+                    "ledger": {
+                        "available": true,
+                        "cache": "none",
+                        "estimate_method": "chars/4",
+                        "model_visible": "turn 1: read\nobservation: ok\n\n",
+                        "model_visible_bytes": 32,
+                        "elided_turns": [1],
+                        "pinned_turns": [3],
+                        "layers": [
+                            {"id": "transcript", "bytes": 32, "cache": "none"}
+                        ]
                     }
                 }),
             ),
@@ -3121,6 +3188,13 @@ mod tests {
                         decoded.recent_receipt.unwrap().summary_sha256,
                         "abcdef123456"
                     );
+                    assert!(decoded.ledger.available);
+                    assert_eq!(decoded.ledger.cache, "none");
+                    assert_eq!(decoded.ledger.elided_turns, vec![1]);
+                    assert_eq!(
+                        decoded.ledger.model_visible,
+                        "turn 1: read\nobservation: ok\n\n"
+                    );
                 }
                 "PlanModeState" => {
                     let decoded: PlanModeState = serde_json::from_value(value).unwrap();
@@ -3138,14 +3212,12 @@ mod tests {
     #[test]
     fn daemon_owned_fixtures_reject_legacy_task_submit_shape() {
         // Old task.submit style payloads must not decode as ExecutionRun.
-        assert!(
-            serde_json::from_value::<ExecutionRun>(json!({
-                "task_id": "task_legacy",
-                "session_id": "sess_1",
-                "status": "running"
-            }))
-            .is_err()
-        );
+        assert!(serde_json::from_value::<ExecutionRun>(json!({
+            "task_id": "task_legacy",
+            "session_id": "sess_1",
+            "status": "running"
+        }))
+        .is_err());
         // Wire events without a typed kind stay non-governance.
         let bare: WireEvent = serde_json::from_value(json!({
             "type": "task.created",

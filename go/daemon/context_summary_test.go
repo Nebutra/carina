@@ -55,6 +55,16 @@ func TestContextSummarySeparatesExactCheckpointFactsFromModelContextUsage(t *tes
 	if taskSummary["mode"] != task.Mode {
 		t.Fatalf("task execution mode = %#v, want %q", taskSummary["mode"], task.Mode)
 	}
+	ledger := out["ledger"].(map[string]any)
+	if ledger["model_visible"] != tr.render() {
+		t.Fatalf("ledger model_visible must equal tr.render()\n got %#v\nwant %#v", ledger["model_visible"], tr.render())
+	}
+	if ledger["model_visible_bytes"] != len(tr.render()) {
+		t.Fatalf("ledger model_visible_bytes = %#v, want %d", ledger["model_visible_bytes"], len(tr.render()))
+	}
+	if method, _ := ledger["estimate_method"].(string); method != "chars/4" {
+		t.Fatalf("token estimate method missing: %#v", ledger)
+	}
 	compact := out["compact"].(map[string]any)
 	if !compact["available"].(bool) || compact["method"] != "session.checkpoint.compact" {
 		t.Fatalf("compact safety boundary missing: %#v", compact)
@@ -125,5 +135,141 @@ func TestContextSummaryWithoutTaskDoesNotInventCheckpointUsage(t *testing.T) {
 	checkpoint := out["checkpoint"].(map[string]any)
 	if checkpoint["available"].(bool) {
 		t.Fatalf("empty session reported checkpoint usage: %#v", checkpoint)
+	}
+	ledger := out["ledger"].(map[string]any)
+	if ledger["available"].(bool) {
+		t.Fatalf("empty session invented a model-visible ledger: %#v", ledger)
+	}
+}
+
+func TestContextSummaryLedgerMatchesRenderedTranscriptAfterElide(t *testing.T) {
+	d, workspace := newLoopDaemon(t)
+	defer d.Close()
+	sess, err := d.store.CreateSession(workspace, "safe-edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "inspect context")
+	tr := newTranscript("inspect context")
+	tr.addTurn(Turn{Thought: "read", Tool: "read", ActionBrief: "read a.go", Path: "a.go", Obs: Observation{Content: "package a"}})
+	tr.addTurn(Turn{Thought: "steer", Tool: "user", ActionBrief: "don't use X", Obs: Observation{Content: "don't use X"}})
+	tr.addTurn(Turn{Thought: "pin", Tool: "read", ActionBrief: "read fail", Path: "fail.go", Obs: Observation{Content: "FAIL", Pinned: true}})
+	tr.Turns[0].Obs.Elided = true
+	tr.Turns[0].Obs.OriginalSHA256 = "deadbeef"
+	tr.CompactionReceipts = []CompactionReceipt{{
+		Version: 3, Mode: compactionModeCollapseOnly,
+		Transforms:      []string{"elide_tool_output", "collapse_action_skeleton"},
+		KeptTurnIndices: []int{tr.Turns[1].Index},
+		RemovedTurns:    1,
+	}}
+	if err := d.runs.saveCheckpointChecked(task.RunID, &runCheckpoint{Turn: 3, Transcript: tr}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := d.handleContextSummary(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := result.(map[string]any)["ledger"].(map[string]any)
+	if ledger["model_visible"] != tr.render() {
+		t.Fatalf("model_visible != tr.render()\n got %q\nwant %q", ledger["model_visible"], tr.render())
+	}
+	if !strings.Contains(ledger["model_visible"].(string), "don't use X") {
+		t.Fatalf("user constraint missing from model-visible ledger: %q", ledger["model_visible"])
+	}
+	if !strings.Contains(ledger["model_visible"].(string), "[elided to save context]") {
+		t.Fatalf("elided turn not projected: %q", ledger["model_visible"])
+	}
+	elided := intSlice(t, ledger["elided_turns"])
+	if len(elided) != 1 || elided[0] != tr.Turns[0].Index {
+		t.Fatalf("elided_turns = %#v, want [%d]", ledger["elided_turns"], tr.Turns[0].Index)
+	}
+	pinned := intSlice(t, ledger["pinned_turns"])
+	if len(pinned) != 1 || pinned[0] != tr.Turns[2].Index {
+		t.Fatalf("pinned_turns = %#v, want [%d]", ledger["pinned_turns"], tr.Turns[2].Index)
+	}
+	receipts, ok := ledger["receipts"].([]CompactionReceipt)
+	if !ok || len(receipts) != 1 || receipts[0].Mode != compactionModeCollapseOnly {
+		t.Fatalf("ledger receipts missing collapse receipt: %#v", ledger["receipts"])
+	}
+	if len(receipts[0].KeptTurnIndices) != 1 || receipts[0].KeptTurnIndices[0] != tr.Turns[1].Index {
+		t.Fatalf("kept user turn missing from receipt: %#v", receipts[0].KeptTurnIndices)
+	}
+}
+
+func TestContextSummaryLedgerLabelsGrokCacheNone(t *testing.T) {
+	d, workspace := newLoopDaemon(t)
+	defer d.Close()
+	sess, err := d.store.CreateSession(workspace, "safe-edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.SubmitWithGoalAndModel(sess.SessionID, sess.WorkspaceID, "inspect context", "grok-build/grok-4.6", nil)
+	tr := newTranscript("inspect context")
+	tr.addTurn(Turn{Thought: "go", Tool: "read", ActionBrief: "read x", Obs: Observation{Content: "ok"}})
+	if err := d.runs.saveCheckpointChecked(task.RunID, &runCheckpoint{Turn: 1, Transcript: tr}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := d.handleContextSummary(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := result.(map[string]any)["ledger"].(map[string]any)
+	if ledger["cache"] != "none" {
+		t.Fatalf("Grok route must label cache=none: %#v", ledger)
+	}
+	for _, raw := range ledgerLayers(t, ledger["layers"]) {
+		if raw["id"] == "constitution" && raw["cache"] != "none" {
+			t.Fatalf("Grok constitution layer must be cache=none: %#v", raw)
+		}
+		if raw["id"] == "transcript" && raw["cache"] != "none" {
+			t.Fatalf("transcript layer is volatile: %#v", raw)
+		}
+	}
+}
+
+func ledgerLayers(t *testing.T, raw any) []map[string]any {
+	t.Helper()
+	switch layers := raw.(type) {
+	case []map[string]any:
+		return layers
+	case []any:
+		out := make([]map[string]any, 0, len(layers))
+		for _, layer := range layers {
+			item, ok := layer.(map[string]any)
+			if !ok {
+				t.Fatalf("layer is not a map: %#v", layer)
+			}
+			out = append(out, item)
+		}
+		return out
+	default:
+		t.Fatalf("layers is not a slice: %#v", raw)
+		return nil
+	}
+}
+
+func intSlice(t *testing.T, raw any) []int {
+	t.Helper()
+	switch values := raw.(type) {
+	case []int:
+		return values
+	case []any:
+		out := make([]int, 0, len(values))
+		for _, value := range values {
+			switch n := value.(type) {
+			case int:
+				out = append(out, n)
+			case float64:
+				out = append(out, int(n))
+			default:
+				t.Fatalf("not an int: %#v", value)
+			}
+		}
+		return out
+	default:
+		t.Fatalf("not a slice: %#v", raw)
+		return nil
 	}
 }
