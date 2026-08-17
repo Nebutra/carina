@@ -236,6 +236,7 @@ func (d *Daemon) runTaskContext(ctx context.Context, sess *sessionstore.Session,
 	d.record(sess.SessionID, "ModelRequested", task.RunID, "go",
 		map[string]any{"engine": d.reasoner.Name(), "model": taskModel(task), "reasoning_effort": task.EffectiveReasoningEffort, "agent": taskAgent(task), "prompt": task.UserPrompt}, "")
 	tr := newTranscript(task.UserPrompt)
+	tr.bindArtifacts(d.artifacts, artifact.Scope{SessionID: sess.SessionID, TaskID: task.RunID})
 	applyCompactionBudget(tr, d.providerCatalog, taskModel(task))
 	memorySnapshot := d.memory.snapshot(memoryScopeFromSession(sess))
 	if sess.ForkedFromTaskID != "" {
@@ -251,6 +252,7 @@ func (d *Daemon) runTaskContext(ctx context.Context, sess *sessionstore.Session,
 		}
 		tr.policy = defaultCompactionPolicy()
 		applyCompactionBudget(tr, d.providerCatalog, taskModel(task))
+		tr.bindArtifacts(d.artifacts, artifact.Scope{SessionID: sess.SessionID, TaskID: task.RunID})
 		tr.Task = task.UserPrompt
 		tr.addTurn(Turn{Tool: "user", ActionBrief: "fork-task", Obs: Observation{Content: "FORK TASK (continue from inherited context): " + task.UserPrompt, Pinned: true}})
 		memorySnapshot = cp.MemorySnapshot

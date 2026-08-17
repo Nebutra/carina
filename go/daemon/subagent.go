@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Nebutra/carina/go/artifact"
 	"github.com/Nebutra/carina/go/scheduler"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
@@ -259,6 +260,7 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 		maxTurns = subagentMaxTurns
 	}
 	tr := newTranscript(task.UserPrompt)
+	tr.bindArtifacts(d.artifacts, artifact.Scope{SessionID: sess.SessionID, TaskID: task.RunID})
 	applyCompactionBudget(tr, d.providerCatalog, taskModel(task))
 	guard := newLoopGuard()
 	mistakes := newMistakeTracker()

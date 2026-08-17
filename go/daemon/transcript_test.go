@@ -15,8 +15,15 @@ func TestTranscriptTruncatesOversizedObservation(t *testing.T) {
 	tr := newTranscript("task")
 	big := strings.Repeat("x", 5000)
 	tr.addTurn(Turn{Tool: "read", ActionBrief: "read big", Obs: Observation{Content: big}})
-	if len(tr.Turns[0].Obs.Content) > tr.policy.ToolOutputMax+20 {
-		t.Fatalf("observation not truncated: %d", len(tr.Turns[0].Obs.Content))
+	got := tr.Turns[0].Obs
+	if len(got.Content) > tr.policy.ToolOutputMax+observationSnipPointerSlack {
+		t.Fatalf("observation not truncated: %d", len(got.Content))
+	}
+	if got.OriginalBytes != len(big) || got.OriginalSHA256 != sha256Hex(big) {
+		t.Fatalf("snip lost original identity: %#v", got)
+	}
+	if !strings.Contains(got.Content, "bytes omitted") || !strings.Contains(got.Content, "sha256=") {
+		t.Fatalf("snip pointer missing: %q", got.Content)
 	}
 }
 
@@ -31,14 +38,51 @@ func TestTranscriptTruncationPreservesTailSignal(t *testing.T) {
 
 	tr.addTurn(Turn{ActionBrief: "run tests", Obs: Observation{Content: output.String()}})
 	got := tr.Turns[0].Obs.Content
-	if len(got) > tr.policy.ToolOutputMax {
-		t.Fatalf("preview exceeded byte budget: %d > %d", len(got), tr.policy.ToolOutputMax)
+	if len(got) > tr.policy.ToolOutputMax+observationSnipPointerSlack {
+		t.Fatalf("preview exceeded byte budget: %d > %d", len(got), tr.policy.ToolOutputMax+observationSnipPointerSlack)
 	}
-	if !strings.HasPrefix(got, "compiling package 0\n") || !strings.HasSuffix(got, "FINAL: tests failed\n") {
+	if !strings.HasPrefix(got, "compiling package 0\n") || !strings.Contains(got, "FINAL: tests failed\n") {
 		t.Fatalf("head+tail signal not preserved: %q", got)
 	}
 	if !strings.Contains(got, "bytes omitted") {
 		t.Fatalf("preview did not disclose truncation: %q", got)
+	}
+}
+
+func TestAddTurnPersistsOversizedObservationInArtifactStore(t *testing.T) {
+	dir := t.TempDir()
+	store, err := artifact.New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := newTranscript("task")
+	scope := artifact.Scope{SessionID: "sess_snip", TaskID: "run_snip"}
+	tr.bindArtifacts(store, scope)
+	big := strings.Repeat("x", 2<<20)
+	tr.addTurn(Turn{Tool: "run", ActionBrief: "run tests", Obs: Observation{Content: big}})
+	got := tr.Turns[0].Obs
+	if len(tr.render()) >= len(big)/10 {
+		t.Fatalf("model-visible transcript still huge: %d", len(tr.render()))
+	}
+	if !strings.HasPrefix(got.OriginalRef, "artifact:") {
+		t.Fatalf("missing artifact ref: %#v", got)
+	}
+	id := strings.TrimPrefix(got.OriginalRef, "artifact:")
+	raw, _, err := store.Read(scope, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != big {
+		t.Fatalf("artifact round-trip lost %d bytes", len(raw))
+	}
+}
+
+func TestPinnedObservationStaysFullUnlessEnormous(t *testing.T) {
+	tr := newTranscript("task")
+	body := strings.Repeat("pin ", 400)
+	tr.addTurn(Turn{Tool: "run", ActionBrief: "run fail", Obs: Observation{Content: body, Pinned: true}})
+	if tr.Turns[0].Obs.Content != body {
+		t.Fatalf("pinned observation was snipped: %q", tr.Turns[0].Obs.Content)
 	}
 }
 

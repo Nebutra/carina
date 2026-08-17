@@ -5,11 +5,18 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/Nebutra/carina/go/artifact"
+)
+
+const (
+	observationSnipInlineEnv    = "CARINA_INLINE_TOOL_OUTPUT"
+	pinnedObservationMaxChars   = 1 << 20
+	observationSnipPointerSlack = 220
 )
 
 // The agent's view of history is a *bounded projection* of the append-only
@@ -61,6 +68,16 @@ type Transcript struct {
 	CompactionReceipts []CompactionReceipt      `json:"compaction_receipts,omitempty"`
 	CompactionBudget   CompactionBudgetSnapshot `json:"compaction_budget,omitempty"`
 	policy             CompactionPolicy
+	artifacts          *artifact.Store
+	artifactScope      artifact.Scope
+}
+
+func (t *Transcript) bindArtifacts(store *artifact.Store, scope artifact.Scope) {
+	if t == nil {
+		return
+	}
+	t.artifacts = store
+	t.artifactScope = scope
 }
 
 type CompactionBudgetSnapshot struct {
@@ -190,6 +207,74 @@ func newTranscript(task string) *Transcript {
 	return &Transcript{Task: task, policy: defaultCompactionPolicy()}
 }
 
+func observationSnipInline() bool {
+	value := strings.TrimSpace(os.Getenv(observationSnipInlineEnv))
+	return value == "1" || strings.EqualFold(value, "on") || strings.EqualFold(value, "true")
+}
+
+func snipObservation(obs Observation, policy CompactionPolicy, store *artifact.Store, scope artifact.Scope) Observation {
+	if strings.TrimSpace(obs.Content) == "" {
+		return obs
+	}
+	if obs.Pinned {
+		if len(obs.Content) > pinnedObservationMaxChars {
+			sum := sha256Hex(obs.Content)
+			obs.OriginalSHA256 = sum
+			obs.OriginalBytes = len(obs.Content)
+			obs.Transforms = append(obs.Transforms, "snip_pinned_fail_closed")
+			obs.Content = fmt.Sprintf(
+				"error: pinned observation exceeds %d bytes; re-read the source. sha256=%s bytes=%d",
+				pinnedObservationMaxChars, sum, len(obs.Content),
+			)
+		}
+		return obs
+	}
+	max := policy.ToolOutputMax
+	if max <= 0 || len(obs.Content) <= max {
+		return obs
+	}
+	raw := []byte(obs.Content)
+	obs.OriginalSHA256 = sha256Hex(obs.Content)
+	obs.OriginalBytes = len(obs.Content)
+	if store != nil && strings.TrimSpace(scope.SessionID) != "" {
+		meta, err := store.Put(raw, artifact.PutOptions{
+			Scope:        scope,
+			MediaType:    "text/plain; charset=utf-8",
+			Retention:    artifact.RetentionNormal,
+			PreviewBytes: max,
+		})
+		if err == nil {
+			obs.OriginalRef = "artifact:" + meta.ID
+		}
+	}
+	previewBudget := max
+	pointer := snipPointerLine(obs)
+	if previewBudget > len(pointer)+32 {
+		previewBudget -= len(pointer)
+	}
+	preview, truncated, valid := artifact.Preview(raw, previewBudget, 0)
+	if !valid {
+		return obs
+	}
+	if truncated {
+		obs.Content = strings.TrimRight(preview, "\n") + "\n" + pointer
+		obs.Transforms = append(obs.Transforms, "snip_on_enqueue")
+		obs.CompressedBytes = len(obs.Content)
+	}
+	return obs
+}
+
+func snipPointerLine(obs Observation) string {
+	ref := obs.OriginalRef
+	if ref == "" {
+		ref = "-"
+	}
+	return fmt.Sprintf(
+		"[artifact ref=%s sha256=%s bytes=%d — read this artifact or the original path to recover]\n",
+		ref, obs.OriginalSHA256, obs.OriginalBytes,
+	)
+}
+
 // addTurn records a completed turn, truncating oversized observations up front.
 // A new turn carrying a Path (a read-family tool) first supersedes any
 // earlier, still-verbatim turn of the identical path: the earlier read is now
@@ -197,11 +282,8 @@ func newTranscript(task string) *Transcript {
 // copies verbatim in the model view only burns budget for no benefit — see
 // supersedeStaleReads.
 func (t *Transcript) addTurn(turn Turn) {
-	if len(turn.Obs.Content) > t.policy.ToolOutputMax && !turn.Obs.Pinned {
-		preview, _, valid := artifact.Preview([]byte(turn.Obs.Content), t.policy.ToolOutputMax, 0)
-		if valid {
-			turn.Obs.Content = preview
-		}
+	if !observationSnipInline() {
+		turn.Obs = snipObservation(turn.Obs, t.policy, t.artifacts, t.artifactScope)
 	}
 	if turn.Path != "" {
 		t.supersedeStaleReads(turn.Path)
