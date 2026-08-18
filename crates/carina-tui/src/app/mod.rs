@@ -8228,10 +8228,6 @@ fn combined_prompt_history(
     history
 }
 
-fn agent_entries(projection: &ProductProjection) -> Vec<&crate::rpc::AgentViewEntry> {
-    agent_roster_entries(projection, "")
-}
-
 fn agent_roster_entries<'a>(
     projection: &'a ProductProjection,
     parent_session: &str,
