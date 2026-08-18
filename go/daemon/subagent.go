@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Nebutra/carina/go/agentview"
 	"github.com/Nebutra/carina/go/artifact"
 	"github.com/Nebutra/carina/go/scheduler"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
@@ -183,6 +184,9 @@ func (d *Daemon) spawnSubagentContextIDBound(ctx context.Context, parent *sessio
 	}
 	if worktreeID != "" {
 		spawnAudit["worktree_id"] = worktreeID
+		if d.agentView != nil {
+			_ = d.agentView.Set(child.SessionID, agentview.Metadata{WorktreeID: worktreeID})
+		}
 	}
 	if isExploreSubagent(spec) {
 		spawnAudit["prompt_mode"] = "explore_lean"

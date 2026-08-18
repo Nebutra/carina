@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/Nebutra/carina/go/contextengine"
@@ -19,8 +20,11 @@ func TestContextHandlersNoopStatsAndCompress(t *testing.T) {
 		t.Fatal(err)
 	}
 	cr := compressed.(contextengine.CompressResponse)
-	if cr.Content != "hello" || cr.Engine != contextengine.ModeNoop {
+	if cr.Content != "hello" || cr.Engine != contextengine.ModeNoop || cr.Transformed {
 		t.Fatalf("unexpected compression response: %+v", cr)
+	}
+	if !strings.Contains(cr.Reason, "no bytes were transformed") {
+		t.Fatalf("compress reason missing identity sentence: %q", cr.Reason)
 	}
 
 	stats, err := d.handleContextStats(nil)

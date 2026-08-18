@@ -62,6 +62,24 @@ func TestRenderDoctorReportIncludesResourceSummary(t *testing.T) {
 	}
 }
 
+func TestContextEngineCheckSaysNoopIdentity(t *testing.T) {
+	chk := contextEngineCheck(map[string]any{
+		"ok":          true,
+		"engine":      "noop",
+		"transformed": false,
+		"reason":      "no bytes were transformed; Transcript.compact is the product compressor",
+	})
+	if chk.state != "PASS" {
+		t.Fatalf("noop context engine must stay PASS: %+v", chk)
+	}
+	if !strings.Contains(chk.detail, "engine=noop") || !strings.Contains(chk.detail, "no bytes were transformed") {
+		t.Fatalf("context engine check missing identity honesty: %+v", chk)
+	}
+	if strings.Contains(chk.detail, "compressed") {
+		t.Fatalf("identity compress must not say compressed: %+v", chk)
+	}
+}
+
 func TestGatewayCheckReportsPinWithoutFailingUnpinned(t *testing.T) {
 	unpinned := gatewayCheck(map[string]any{"ok": true, "workspace_pin": false})
 	if unpinned.state != "PASS" || !strings.Contains(unpinned.detail, "not pinned") {

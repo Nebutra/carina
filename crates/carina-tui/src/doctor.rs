@@ -512,6 +512,7 @@ fn project_section(id: &str, value: &Value) -> DoctorSection {
         Value::Object(map) if map.get("configured").and_then(Value::as_bool) == Some(false) => {
             "Not configured".into()
         }
+        Value::Object(map) if id == "context_engine" => context_engine_summary(map),
         Value::Object(map) if map.get("ok").and_then(Value::as_bool) == Some(true) => {
             "Healthy".into()
         }
@@ -548,6 +549,25 @@ fn project_section(id: &str, value: &Value) -> DoctorSection {
     }
 }
 
+fn context_engine_summary(map: &serde_json::Map<String, Value>) -> String {
+    let status = map.get("status").and_then(Value::as_object);
+    let engine = status
+        .and_then(|status| status.get("effective_engine"))
+        .or_else(|| map.get("engine"))
+        .and_then(Value::as_str)
+        .unwrap_or("noop");
+    let reason = status
+        .and_then(|status| status.get("reason"))
+        .or_else(|| map.get("reason"))
+        .and_then(Value::as_str)
+        .unwrap_or("no bytes were transformed");
+    if engine == "noop" || reason.contains("no-op") || reason.contains("no bytes") {
+        format!("engine={engine} — no bytes transformed")
+    } else {
+        "Healthy".into()
+    }
+}
+
 fn section_title(id: &str) -> String {
     match id {
         "kernel" => "Kernel".into(),
@@ -556,7 +576,7 @@ fn section_title(id: &str) -> String {
         "tools" => "Native tools".into(),
         "reasoner" => "Reasoner".into(),
         "auth" => "Authentication".into(),
-        "context_engine" => "Context engine".into(),
+        "context_engine" => "Context engine (noop)".into(),
         "lsp" => "Language servers".into(),
         "byok" => "BYOK providers".into(),
         "policy" => "Enterprise policy".into(),
@@ -686,6 +706,34 @@ pub fn execute_recovery(action: &RecoveryAction) -> Result<DoctorOperation, Stri
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn context_engine_section_says_noop_not_healthy() {
+        let raw = json!({
+            "context_engine": {
+                "ok": true,
+                "engine": "noop",
+                "transformed": false,
+                "reason": "no bytes were transformed; Transcript.compact is the product compressor"
+            }
+        });
+        let report = project_doctor_report(&raw, 1);
+        let section = report
+            .sections
+            .iter()
+            .find(|section| section.id == "context_engine")
+            .expect("context_engine section");
+        assert_eq!(section.title, "Context engine (noop)");
+        let summary = &section.checks[0].summary;
+        assert!(
+            summary.contains("engine=noop") && summary.contains("no bytes"),
+            "summary={summary}"
+        );
+        assert!(
+            !summary.contains("Healthy") && !summary.contains("compressed"),
+            "summary={summary}"
+        );
+    }
 
     #[test]
     fn projects_kernel_failure_and_policy_stale_into_typed_sections() {

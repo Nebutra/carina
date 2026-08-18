@@ -5411,14 +5411,10 @@ impl App {
                     .style(Style::default());
                 let inner = block.inner(popup).inner(Margin::new(1, 1));
                 frame.render_widget(block, popup);
-                let agents: Vec<_> = overlay
+                let agents = overlay
                     .projection
                     .agents
-                    .needs_input
-                    .iter()
-                    .chain(overlay.projection.agents.working.iter())
-                    .chain(overlay.projection.agents.completed.iter())
-                    .collect();
+                    .roster_entries(&overlay.load.session_id);
                 let columns = Layout::default()
                     .direction(if inner.width >= layout_contract::SPLIT_PANE_MIN_WIDTH {
                         Direction::Horizontal
@@ -5450,12 +5446,17 @@ impl App {
                             1,
                         );
                         let category = localized_agent_category(locale, agent.product_category());
+                        let spec = if agent.agent.is_empty() {
+                            tr(locale, MessageId::Agent)
+                        } else {
+                            agent.agent.as_str()
+                        };
                         let label = if !agent.summary.is_empty() {
                             agent.summary.as_str()
                         } else if !agent.prompt.is_empty() {
                             agent.prompt.as_str()
                         } else {
-                            agent.agent.as_str()
+                            spec
                         };
                         let style = if index == overlay.selected {
                             self.theme.selected()
@@ -5464,8 +5465,13 @@ impl App {
                         };
                         frame.render_widget(
                             Paragraph::new(format!(
-                                "{category:<width$} {label}",
-                                width = layout_contract::AGENT_CATEGORY_WIDTH
+                                "{category:<width$} {spec}  {id}  {label}",
+                                width = layout_contract::AGENT_CATEGORY_WIDTH,
+                                id = if agent.task_id.is_empty() {
+                                    agent.session_id.as_str()
+                                } else {
+                                    agent.task_id.as_str()
+                                },
                             ))
                             .style(style),
                             row,
@@ -5499,8 +5505,26 @@ impl App {
                         Line::from(format!(
                             "{}  {}",
                             tr(locale, MessageId::Workspace),
-                            agent.workspace
+                            workspace_relative(
+                                self.active_session
+                                    .as_ref()
+                                    .map(|session| session.workspace_root.as_str())
+                                    .unwrap_or(""),
+                                &agent.workspace,
+                            )
                         )),
+                    ];
+                    if !agent.profile.is_empty() {
+                        details.push(Line::from(format!(
+                            "{}  {}",
+                            tr(locale, MessageId::CurrentProfile),
+                            agent.profile
+                        )));
+                    }
+                    if !agent.worktree_id.is_empty() {
+                        details.push(Line::from(format!("worktree  {}", agent.worktree_id)));
+                    }
+                    details.extend([
                         Line::from(""),
                         Line::from(Span::styled(
                             tr(locale, MessageId::Request),
@@ -5513,7 +5537,7 @@ impl App {
                             Style::default().fg(self.theme.muted),
                         )),
                         Line::from(agent.summary.as_str()),
-                    ];
+                    ]);
                     if let Some(recap) = &overlay.recap {
                         details.push(Line::from(""));
                         details.push(Line::from(Span::styled(
@@ -5790,6 +5814,133 @@ impl App {
             }
             Overlay::ToolOutput(output) => {
                 self.render_tool_output_overlay(frame, area, output);
+            }
+            Overlay::Plugins(plugins) => {
+                let popup = centered(area, 72, 22);
+                frame.render_widget(Clear, popup);
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(self.theme.glyphs.outer_border_type())
+                    .border_style(self.theme.focus())
+                    .title(format!(" {} ", tr(locale, MessageId::PluginsTitle)))
+                    .style(Style::default());
+                let inner = block.inner(popup).inner(Margin::new(1, 1));
+                frame.render_widget(block, popup);
+                let columns = Layout::default()
+                    .direction(if inner.width >= layout_contract::SPLIT_PANE_MIN_WIDTH {
+                        Direction::Horizontal
+                    } else {
+                        Direction::Vertical
+                    })
+                    .constraints(if inner.width >= layout_contract::SPLIT_PANE_MIN_WIDTH {
+                        vec![Constraint::Percentage(44), Constraint::Percentage(56)]
+                    } else {
+                        vec![Constraint::Percentage(55), Constraint::Percentage(45)]
+                    })
+                    .split(inner);
+                if plugins.inventory.plugins.is_empty() {
+                    let empty = if plugins.inventory.safe_mode {
+                        tr(locale, MessageId::PluginsSafeMode)
+                    } else {
+                        tr(locale, MessageId::PluginsEmpty)
+                    };
+                    frame.render_widget(
+                        Paragraph::new(empty).style(Style::default().fg(self.theme.muted)),
+                        columns[0],
+                    );
+                } else {
+                    for (index, plugin) in plugins
+                        .inventory
+                        .plugins
+                        .iter()
+                        .take(columns[0].height as usize)
+                        .enumerate()
+                    {
+                        let row = Rect::new(
+                            columns[0].x,
+                            columns[0].y + index as u16,
+                            columns[0].width,
+                            1,
+                        );
+                        let state = if plugin.effective_enabled {
+                            "on"
+                        } else {
+                            "off"
+                        };
+                        let name = if plugin.manifest.name.is_empty() {
+                            "plugin"
+                        } else {
+                            plugin.manifest.name.as_str()
+                        };
+                        let style = if index == plugins.selected {
+                            self.theme.selected()
+                        } else {
+                            Style::default().fg(self.theme.text)
+                        };
+                        frame.render_widget(
+                            Paragraph::new(format!("{state}  {name}  {}", plugin.manifest.version))
+                                .style(style),
+                            row,
+                        );
+                    }
+                }
+                let mut details = Vec::new();
+                if plugins.inventory.safe_mode {
+                    details.push(Line::from(Span::styled(
+                        tr(locale, MessageId::PluginsSafeMode),
+                        Style::default().fg(self.theme.warning),
+                    )));
+                }
+                if !plugins.error.is_empty() {
+                    details.push(Line::from(Span::styled(
+                        plugins.error.as_str(),
+                        Style::default().fg(self.theme.danger),
+                    )));
+                }
+                if let Some(plugin) = plugins.inventory.plugins.get(plugins.selected) {
+                    details.push(Line::from(Span::styled(
+                        plugin.manifest.name.as_str(),
+                        Style::default()
+                            .fg(self.theme.accent)
+                            .add_modifier(Modifier::BOLD),
+                    )));
+                    if !plugin.manifest.description.is_empty() {
+                        details.push(Line::from(plugin.manifest.description.as_str()));
+                    }
+                    details.push(Line::from(format!(
+                        "{}  {}",
+                        tr(locale, MessageId::Workspace),
+                        plugin.source
+                    )));
+                    if !plugin.manifest.components.is_empty() {
+                        details.push(Line::from(format!(
+                            "components  {}",
+                            plugin.manifest.components.join(", ")
+                        )));
+                    }
+                    if !plugin.manifest.permissions.is_empty() {
+                        details.push(Line::from(Span::styled(
+                            tr(locale, MessageId::Review),
+                            Style::default().fg(self.theme.muted),
+                        )));
+                        details.push(Line::from(plugin.manifest.permissions.join(", ")));
+                    }
+                    if !plugin.enable_provenance.is_empty() {
+                        details.push(Line::from(format!(
+                            "provenance  {}",
+                            plugin.enable_provenance
+                        )));
+                    }
+                }
+                details.push(Line::from(""));
+                details.push(Line::from(Span::styled(
+                    tr(locale, MessageId::PluginsHint),
+                    Style::default().fg(self.theme.muted),
+                )));
+                frame.render_widget(
+                    Paragraph::new(details).wrap(Wrap { trim: false }),
+                    columns[1],
+                );
             }
             Overlay::Queue(queue) => {
                 let popup = centered(area, 72, 22);
@@ -7907,6 +8058,18 @@ fn localized_agent_category(locale: Locale, category: AgentCategory<'_>) -> Stri
         AgentCategory::Unknown(_) => MessageId::UnknownValue,
     };
     tr(locale, id).to_owned()
+}
+
+fn workspace_relative(parent: &str, child: &str) -> String {
+    let parent = parent.trim_end_matches('/');
+    if parent.is_empty() || child == parent {
+        return child.to_owned();
+    }
+    let prefix = format!("{parent}/");
+    child
+        .strip_prefix(&prefix)
+        .unwrap_or(child)
+        .to_owned()
 }
 
 fn localized_activity_kind(locale: Locale, kind: ActivityKind<'_>) -> String {

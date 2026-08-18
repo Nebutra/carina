@@ -21,22 +21,38 @@ func (d *Daemon) agentRoster() agentview.Roster {
 
 func (d *Daemon) handleAgentView(_ json.RawMessage) (any, error) { return d.agentRoster(), nil }
 
-func (d *Daemon) handleAgentPeek(params json.RawMessage) (any, error) {
+func executionIDFromParams(params json.RawMessage) (string, error) {
 	var p struct {
-		RunID string `json:"run_id"`
+		RunID  string `json:"run_id"`
+		TaskID string `json:"task_id"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		return "", fmt.Errorf("invalid params: %w", err)
+	}
+	id := strings.TrimSpace(p.RunID)
+	if id == "" {
+		id = strings.TrimSpace(p.TaskID)
+	}
+	if id == "" {
+		return "", fmt.Errorf("run_id is required")
+	}
+	return id, nil
+}
+
+func (d *Daemon) handleAgentPeek(params json.RawMessage) (any, error) {
+	runID, err := executionIDFromParams(params)
+	if err != nil {
+		return nil, err
 	}
 	roster := d.agentRoster()
 	for _, group := range [][]agentview.Entry{roster.NeedsInput, roster.Working, roster.Completed} {
 		for _, e := range group {
-			if e.RunID == p.RunID {
+			if e.RunID == runID || e.TaskID == runID {
 				return e, nil
 			}
 		}
 	}
-	return nil, fmt.Errorf("unknown execution %s", p.RunID)
+	return nil, fmt.Errorf("unknown execution %s", runID)
 }
 
 func (d *Daemon) handleAgentRecap(params json.RawMessage) (any, error) {

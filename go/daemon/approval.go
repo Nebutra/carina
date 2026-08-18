@@ -18,7 +18,7 @@ const defaultApprovalTimeout = 5 * time.Minute
 // handleSetInteractiveApproval is the governed RPC for operator toggles.
 // Params (either form):
 //   - { "on": bool } — true = ask, false = always-approve (legacy)
-//   - { "mode": "ask"|"always-approve"|"dont-ask"|"accept-edits" } — preferred product mode
+//   - { "mode": "ask"|"always-approve"|"dont-ask"|"accept-edits"|preset } — product mode or named preset
 //
 // mode wins when both are set. always-approve is rejected when
 // disable_always_approve is set (org/managed policy).
@@ -35,8 +35,14 @@ func (d *Daemon) handleSetInteractiveApproval(params json.RawMessage) (any, erro
 	}
 	prevMode := d.approvalModeString()
 	var next string
+	var presetID string
 	switch {
 	case strings.TrimSpace(p.Mode) != "":
+		if preset, ok := resolveHITLPreset(p.Mode); ok {
+			next = preset.ProductMode
+			presetID = preset.ID
+			break
+		}
 		var err error
 		next, err = normalizeApprovalMode(p.Mode)
 		if err != nil {
@@ -60,15 +66,22 @@ func (d *Daemon) handleSetInteractiveApproval(params json.RawMessage) (any, erro
 		"disable_always_approve": d.disableAlwaysApprove.Load(),
 		"warning":                approvalModeWarning(mode),
 	}
+	if presetID != "" {
+		payload["preset"] = presetID
+	}
 	sid := p.SessionID
 	d.record(sid, "InteractiveApprovalChanged", "", "operator", payload, "")
-	return map[string]any{
+	out := map[string]any{
 		"interactive_approval":   interactive,
 		"approval_mode":          mode,
 		"previous_mode":          prevMode,
 		"disable_always_approve": d.disableAlwaysApprove.Load(),
 		"warning":                payload["warning"],
-	}, nil
+	}
+	if presetID != "" {
+		out["preset"] = presetID
+	}
+	return out, nil
 }
 
 func approvalModeWarning(mode string) string {

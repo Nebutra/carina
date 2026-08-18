@@ -232,6 +232,114 @@ func TestContextSummaryLedgerReportsOpenSummarizerCircuit(t *testing.T) {
 	}
 }
 
+func TestPromptCacheKindIsAnthropicOnlyForAnthropicProtocol(t *testing.T) {
+	catalog := provider.Seed()
+	cases := []struct {
+		model string
+		want  string
+	}{
+		{"", "none"},
+		{"default", "none"},
+		{"grok-build/grok-4.6", "none"},
+		{"openai/gpt-5", "none"},
+		{"openrouter/anthropic/claude-sonnet-4-5", "none"},
+		{"anthropic/claude-sonnet-4-5-20250929", "anthropic"},
+		{"anthropic/claude", "anthropic"},
+	}
+	for _, tc := range cases {
+		if got := promptCacheKindFor(catalog, nil, tc.model); got != tc.want {
+			t.Fatalf("promptCacheKindFor(%q) = %q, want %q", tc.model, got, tc.want)
+		}
+	}
+	relay := provider.Catalog{"relay": {ID: "relay", APIProtocol: "anthropic"}}
+	if got := promptCacheKindFor(relay, nil, "relay/claude"); got != "anthropic" {
+		t.Fatalf("catalog anthropic protocol = %q", got)
+	}
+	d := &Daemon{reasoner: &scriptedReasoner{steps: []string{`{"tool":"done"}`}}, providerCatalog: catalog}
+	if got := d.promptCacheKind("openai/gpt-5"); got != "none" {
+		t.Fatalf("reasoner presence must not invent anthropic cache, got %q", got)
+	}
+	if got := d.promptCacheKind("anthropic/claude-sonnet-4-5-20250929"); got != "anthropic" {
+		t.Fatalf("anthropic route = %q", got)
+	}
+}
+
+func TestContextSummaryLedgerLabelsOpenAICacheNone(t *testing.T) {
+	d, workspace := newLoopDaemon(t)
+	defer d.Close()
+	sess, err := d.store.CreateSession(workspace, "safe-edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.SubmitWithGoalAndModel(sess.SessionID, sess.WorkspaceID, "inspect context", "openai/gpt-5", nil)
+	tr := newTranscript("inspect context")
+	tr.addTurn(Turn{Thought: "go", Tool: "read", ActionBrief: "read x", Obs: Observation{Content: "ok"}})
+	if err := d.runs.saveCheckpointChecked(task.RunID, &runCheckpoint{Turn: 1, Transcript: tr}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.usage.record(sess.SessionID, task.RunID, ModelUsage{Provider: "openai", Model: "gpt-5", InputTokens: 20, OutputTokens: 4}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := d.handleContextSummary(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := result.(map[string]any)["ledger"].(map[string]any)
+	if ledger["cache"] != "none" {
+		t.Fatalf("OpenAI route must label cache=none: %#v", ledger)
+	}
+	for _, raw := range ledgerLayers(t, ledger["layers"]) {
+		if raw["cache"] != "none" {
+			t.Fatalf("OpenAI layer must be cache=none: %#v", raw)
+		}
+	}
+	context := result.(map[string]any)["model_context_tokens"].(map[string]any)
+	breakdown := context["breakdown"].(map[string]any)
+	if breakdown["cache_read_tokens"] != 0 {
+		t.Fatalf("OpenAI usage invented cache-read tokens: %#v", breakdown)
+	}
+}
+
+func TestContextSummaryLedgerLabelsAnthropicCache(t *testing.T) {
+	d, workspace := newLoopDaemon(t)
+	defer d.Close()
+	sess, err := d.store.CreateSession(workspace, "safe-edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.SubmitWithGoalAndModel(sess.SessionID, sess.WorkspaceID, "inspect context", "anthropic/claude-sonnet-4-5-20250929", nil)
+	tr := newTranscript("inspect context")
+	tr.addTurn(Turn{Thought: "go", Tool: "read", ActionBrief: "read x", Obs: Observation{Content: "ok"}})
+	if err := d.runs.saveCheckpointChecked(task.RunID, &runCheckpoint{Turn: 1, Transcript: tr}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := d.handleContextSummary(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := result.(map[string]any)["ledger"].(map[string]any)
+	if ledger["cache"] != "anthropic" {
+		t.Fatalf("Anthropic route must keep cache=anthropic: %#v", ledger)
+	}
+	foundConstitution := false
+	for _, raw := range ledgerLayers(t, ledger["layers"]) {
+		if raw["id"] == "constitution" {
+			foundConstitution = true
+			if raw["cache"] != "anthropic" {
+				t.Fatalf("Anthropic constitution must stay cacheable: %#v", raw)
+			}
+		}
+		if raw["id"] == "transcript" && raw["cache"] != "none" {
+			t.Fatalf("transcript layer is volatile: %#v", raw)
+		}
+	}
+	if !foundConstitution {
+		t.Fatal("missing constitution layer")
+	}
+}
+
 func TestContextSummaryLedgerLabelsGrokCacheNone(t *testing.T) {
 	d, workspace := newLoopDaemon(t)
 	defer d.Close()

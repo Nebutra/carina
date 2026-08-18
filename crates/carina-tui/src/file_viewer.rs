@@ -3,9 +3,17 @@ use std::ops::Range;
 use ratatui::text::Line;
 use xai_ratatui_textarea::TextArea;
 
-use crate::context_completion::{FILE_ELEMENT_KIND, file_chip};
+use crate::context_completion::{file_chip, FILE_ELEMENT_KIND};
 
 pub const MAX_PREVIEW_BYTES: usize = 1024 * 1024;
+pub const MAX_FILE_CHIP_EXCERPT_CHARS: usize = 4000;
+const MAX_FILE_CHIP_EXCERPT_LINES: usize = 80;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileRangeError {
+    Invalid,
+    OutOfRange { lines: usize },
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileViewerOrigin {
@@ -155,7 +163,9 @@ impl FileViewer {
 
     pub fn confirm(self, textarea: &mut TextArea) {
         let selected = self.selected_range();
-        let backing = format!("@{}:{}", self.path, self.selected_label());
+        let content = self.lines.join("\n");
+        let backing = file_chip_backing(&self.path, selected.clone(), &content)
+            .unwrap_or_else(|_| format!("@{}:{}", self.path, self.selected_label()));
         let display = file_chip(&self.path, Some(selected));
         let (target, trailing_space) = match self.origin {
             FileViewerOrigin::Completion { range } => (range, true),
@@ -184,18 +194,91 @@ impl FileViewer {
 }
 
 pub fn parse_file_reference(backing: &str) -> Option<(String, Option<Range<usize>>)> {
-    let body = backing.strip_prefix('@')?;
-    let (path, range) = match body.rsplit_once(':') {
-        Some((path, suffix))
-            if suffix
-                .chars()
-                .all(|character| character.is_ascii_digit() || character == '-') =>
-        {
-            (path, parse_line_range(suffix))
+    let head = backing.lines().next().unwrap_or(backing);
+    let body = head.strip_prefix('@')?;
+    match split_at_query(body) {
+        Ok((path, range)) if !path.is_empty() => Some((path, range)),
+        _ => None,
+    }
+}
+
+pub fn split_at_query(query: &str) -> Result<(String, Option<Range<usize>>), FileRangeError> {
+    match query.rsplit_once(':') {
+        Some((path, suffix)) if is_line_range_suffix(suffix) => {
+            let range = parse_line_range(suffix).ok_or(FileRangeError::Invalid)?;
+            if path.is_empty() {
+                return Err(FileRangeError::Invalid);
+            }
+            Ok((path.to_owned(), Some(range)))
         }
-        _ => (body, None),
+        _ => Ok((query.to_owned(), None)),
+    }
+}
+
+fn is_line_range_suffix(suffix: &str) -> bool {
+    !suffix.is_empty()
+        && suffix
+            .chars()
+            .all(|character| character.is_ascii_digit() || character == '-')
+}
+
+pub fn file_chip_backing(
+    path: &str,
+    lines: Range<usize>,
+    content: &str,
+) -> Result<String, FileRangeError> {
+    let all: Vec<&str> = if content.is_empty() {
+        Vec::new()
+    } else {
+        content.lines().collect()
     };
-    (!path.is_empty()).then(|| (path.to_owned(), range))
+    if lines.start == 0 || lines.end <= lines.start || lines.start > all.len() {
+        return Err(FileRangeError::OutOfRange { lines: all.len() });
+    }
+    if lines.end - 1 > all.len() {
+        return Err(FileRangeError::OutOfRange { lines: all.len() });
+    }
+    let selected = &all[lines.start - 1..lines.end - 1];
+    let label = if lines.end == lines.start + 1 {
+        lines.start.to_string()
+    } else {
+        format!("{}-{}", lines.start, lines.end - 1)
+    };
+    let numbered: Vec<String> = selected
+        .iter()
+        .enumerate()
+        .map(|(index, line)| format!("{}| {}", lines.start + index, clip_excerpt_line(line)))
+        .collect();
+    let mut backing = format!("@{path}:{label}\n");
+    if numbered.len() <= MAX_FILE_CHIP_EXCERPT_LINES
+        && backing.len() + numbered.iter().map(String::len).sum::<usize>() + numbered.len()
+            <= MAX_FILE_CHIP_EXCERPT_CHARS
+    {
+        backing.push_str(&numbered.join("\n"));
+        return Ok(backing);
+    }
+    let head = numbered.len().min(40).max(1).min(numbered.len());
+    let tail = numbered.len().saturating_sub(head).min(20);
+    let omitted = numbered.len().saturating_sub(head + tail);
+    backing.push_str(&numbered[..head].join("\n"));
+    if omitted > 0 {
+        backing.push_str(&format!("\n... {omitted} lines omitted ..."));
+    }
+    if tail > 0 {
+        backing.push('\n');
+        backing.push_str(&numbered[numbered.len() - tail..].join("\n"));
+    }
+    Ok(backing)
+}
+
+fn clip_excerpt_line(line: &str) -> String {
+    let mut chars = line.chars();
+    let clipped: String = chars.by_ref().take(200).collect();
+    if chars.next().is_some() {
+        format!("{clipped}…")
+    } else {
+        clipped
+    }
 }
 
 fn parse_line_range(value: &str) -> Option<Range<usize>> {
@@ -229,6 +312,36 @@ mod tests {
             parse_file_reference("@src/main.rs:4-9"),
             Some(("src/main.rs".into(), Some(4..10)))
         );
+        assert_eq!(
+            parse_file_reference("@文档/主.rs:2-3\n2| α\n3| β"),
+            Some(("文档/主.rs".into(), Some(2..4)))
+        );
+        assert!(split_at_query("src/main.rs:40-12").is_err());
+    }
+
+    #[test]
+    fn excerpt_is_bounded_and_fails_closed_past_eof() {
+        let content = (1..=5)
+            .map(|n| format!("line{n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let backing = file_chip_backing("src/a.rs", 2..4, &content).unwrap();
+        assert!(backing.starts_with("@src/a.rs:2-3\n"));
+        assert!(backing.contains("2| line2"));
+        assert!(backing.contains("3| line3"));
+        assert!(!backing.contains("line1"));
+        assert!(!backing.contains("line5"));
+        assert!(matches!(
+            file_chip_backing("src/a.rs", 4..8, &content),
+            Err(FileRangeError::OutOfRange { lines: 5 })
+        ));
+        let wide = (1..=200)
+            .map(|n| format!("row{n} {}", "x".repeat(80)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let bounded = file_chip_backing("src/a.rs", 1..201, &wide).unwrap();
+        assert!(bounded.contains("lines omitted"));
+        assert!(bounded.len() < wide.len());
     }
 
     #[test]
@@ -246,7 +359,9 @@ mod tests {
         viewer.toggle_range();
         viewer.move_cursor(2, 8);
         viewer.confirm(&mut textarea);
-        assert_eq!(textarea.text(), "inspect @src/main.rs:1-3 ");
+        assert!(textarea.text().starts_with("inspect @src/main.rs:1-3\n"));
+        assert!(textarea.text().contains("1| one"));
+        assert!(textarea.text().contains("3| three"));
         assert_eq!(textarea.elements().len(), 1);
         textarea.undo();
         assert_eq!(textarea.text(), "inspect @main");

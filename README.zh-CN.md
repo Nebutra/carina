@@ -290,10 +290,11 @@ Carina 的长期记忆保存在 daemon state 目录下。本地 runtime 区分 a
 
 外部语义记忆 provider 和 Nebutra Cloud 记忆同步尚未启用。
 
-### 原生 Context Engine
+### Context engine（noop 边界）
 
 Carina 不再内置或启动外部 context compression runtime。
 `context_engine=auto` 会确定性地使用本地 no-op engine；`off` 可显式关闭该边界。
+长会话压缩是 `Transcript.compact`，不是这个适配器。
 
 ```bash
 carina context status

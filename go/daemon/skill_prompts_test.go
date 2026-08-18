@@ -137,6 +137,9 @@ func TestDynamicSkillPromptNoMatchKeepsBodiesOut(t *testing.T) {
 	if !strings.Contains(got, "- skill://release") || !strings.Contains(got, "- command /review") {
 		t.Fatalf("bounded metadata catalogs should remain discoverable:\n%s", got)
 	}
+	if strings.Contains(got, "skill://review") {
+		t.Fatalf("catalog must not advertise /review as skill://review:\n%s", got)
+	}
 }
 
 func TestDynamicSkillPromptLivesInStablePrefix(t *testing.T) {

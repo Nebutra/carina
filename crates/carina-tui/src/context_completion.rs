@@ -3,6 +3,7 @@ use std::ops::Range;
 use ratatui::text::{Line, Span};
 use xai_ratatui_textarea::{ElementKind, TextArea};
 
+use crate::file_viewer::{file_chip_backing, split_at_query, FileRangeError};
 use crate::rpc::WorkspaceFile;
 
 pub const FILE_ELEMENT_KIND: ElementKind = ElementKind(2);
@@ -168,6 +169,13 @@ impl ContextCompletion {
         ))
     }
 
+    pub fn typed_line_range(&self) -> Result<Option<Range<usize>>, FileRangeError> {
+        let Some(context) = &self.context else {
+            return Ok(None);
+        };
+        Ok(split_at_query(&context.query)?.1)
+    }
+
     pub fn move_selection(&mut self, delta: isize) {
         let max = self.results.len().saturating_sub(1);
         self.selected = self.selected.saturating_add_signed(delta).min(max);
@@ -204,22 +212,48 @@ impl ContextCompletion {
         let Some(candidate) = self.results.get(self.selected).cloned() else {
             return false;
         };
-        let backing = format!("@{}", candidate.path);
-        let display = file_chip(&candidate.path, None);
-        textarea.begin_undo_group();
-        textarea.replace_range_with_element(
+        if split_at_query(&context.query)
+            .ok()
+            .and_then(|(_, range)| range)
+            .is_some()
+        {
+            return false;
+        }
+        insert_file_chip(
+            textarea,
             context.range,
-            &backing,
-            FILE_ELEMENT_KIND,
-            Some(display),
+            &format!("@{}", candidate.path),
+            &candidate.path,
+            None,
         );
-        textarea.insert_str(" ");
-        textarea.end_undo_group();
+        self.clear_open_state();
+        true
+    }
+
+    pub fn accept_with_content(
+        &mut self,
+        textarea: &mut TextArea,
+        token: &AtContext,
+        path: &str,
+        lines: Range<usize>,
+        content: &str,
+    ) -> Result<bool, FileRangeError> {
+        let backing = file_chip_backing(path, lines.clone(), content)?;
+        if token.range.end > textarea.text().len()
+            || textarea.text().get(token.range.clone()).is_none()
+        {
+            return Ok(false);
+        }
+        insert_file_chip(textarea, token.range.clone(), &backing, path, Some(lines));
+        self.clear_open_state();
+        Ok(true)
+    }
+
+    fn clear_open_state(&mut self) {
         self.context = None;
         self.results.clear();
         self.selected = 0;
         self.dismissed_token = None;
-        true
     }
 
     fn recompute(&mut self) {
@@ -233,12 +267,15 @@ impl ContextCompletion {
             self.selected = 0;
             return;
         };
-        let query = context.query.to_lowercase();
+        let path_query = split_at_query(&context.query)
+            .map(|(path, _)| path)
+            .unwrap_or_else(|_| context.query.clone())
+            .to_lowercase();
         let mut results: Vec<_> = files
             .iter()
             .filter(|file| !file.path.trim().is_empty())
             .filter_map(|file| {
-                fuzzy_path_score(&file.path, &query).map(|score| FileCandidate {
+                fuzzy_path_score(&file.path, &path_query).map(|score| FileCandidate {
                     path: file.path.trim_start_matches("./").to_owned(),
                     language: file.language.clone(),
                     size: file.size,
@@ -329,6 +366,24 @@ fn fuzzy_path_score(path: &str, query: &str) -> Option<i64> {
     None
 }
 
+fn insert_file_chip(
+    textarea: &mut TextArea,
+    token: Range<usize>,
+    backing: &str,
+    path: &str,
+    lines: Option<Range<usize>>,
+) {
+    textarea.begin_undo_group();
+    textarea.replace_range_with_element(
+        token,
+        backing,
+        FILE_ELEMENT_KIND,
+        Some(file_chip(path, lines)),
+    );
+    textarea.insert_str(" ");
+    textarea.end_undo_group();
+}
+
 pub fn file_chip(path: &str, lines: Option<Range<usize>>) -> Line<'static> {
     let theme = crate::theme::Theme::detected(None);
     let suffix = lines.map_or_else(String::new, |range| {
@@ -412,6 +467,58 @@ mod tests {
         textarea.delete_backward(2);
         assert_eq!(textarea.text(), "inspect ");
         assert!(textarea.elements().is_empty());
+    }
+
+    #[test]
+    fn typed_range_matches_path_and_accepts_excerpt_not_whole_file() {
+        let mut completion = ContextCompletion::default();
+        let mut textarea = TextArea::new();
+        textarea.insert_str("see @render.rs:2-3");
+        assert!(completion.update_context(&textarea));
+        let generation = completion.begin_load("session".into());
+        assert!(completion.apply_load(generation, "session", Ok(files())));
+        assert_eq!(completion.results()[0].path, "src/app/render.rs");
+        assert_eq!(completion.typed_line_range().unwrap(), Some(2..4));
+        assert!(!completion.accept(&mut textarea));
+        let token = completion.context.clone().unwrap();
+        let content = "alpha\nbeta\ngamma\ndelta";
+        assert!(completion
+            .accept_with_content(&mut textarea, &token, "src/app/render.rs", 2..4, content)
+            .unwrap());
+        let prompt = crate::media::MediaComposer::default().prompt_text(&textarea);
+        assert!(prompt.contains("2| beta"));
+        assert!(prompt.contains("3| gamma"));
+        assert!(!prompt.contains("alpha"));
+        assert!(!prompt.contains("delta"));
+        assert_eq!(textarea.elements().len(), 1);
+        assert_eq!(textarea.elements()[0].kind, FILE_ELEMENT_KIND);
+        textarea.undo();
+        assert_eq!(textarea.text(), "see @render.rs:2-3");
+        assert!(textarea.elements().is_empty());
+    }
+
+    #[test]
+    fn cjk_path_range_and_inverted_range_fail_closed() {
+        let mut files = files();
+        files.push(WorkspaceFile {
+            path: "文档/主.rs".into(),
+            language: "rust".into(),
+            ..Default::default()
+        });
+        let mut completion = ContextCompletion::default();
+        let mut textarea = TextArea::new();
+        textarea.insert_str("@主.rs:2-3");
+        assert!(completion.update_context(&textarea));
+        let generation = completion.begin_load("session".into());
+        assert!(completion.apply_load(generation, "session", Ok(files.clone())));
+        assert_eq!(completion.results()[0].path, "文档/主.rs");
+        let token = completion.context.clone().unwrap();
+        let backing = completion
+            .accept_with_content(&mut textarea, &token, "文档/主.rs", 2..4, "一\n二\n三")
+            .unwrap();
+        assert!(backing);
+        assert!(textarea.text().contains("2| 二"));
+        assert!(crate::file_viewer::split_at_query("文档/主.rs:3-1").is_err());
     }
 
     #[test]

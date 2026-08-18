@@ -2,6 +2,7 @@ package contextengine
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -42,8 +43,13 @@ func TestAutoIsDeterministicLocalNoop(t *testing.T) {
 	if st.ConfiguredEngine != ModeAuto || st.EffectiveEngine != ModeNoop || st.Phase != PhaseReady {
 		t.Fatalf("unexpected status: %+v", st)
 	}
-	if doc := m.Doctor(); doc["ok"] != true {
-		t.Fatalf("doctor should pass: %+v", doc)
+	doc := m.Doctor()
+	if doc["ok"] != true || doc["engine"] != ModeNoop || doc["transformed"] != false {
+		t.Fatalf("doctor should pass as noop: %+v", doc)
+	}
+	reason, _ := doc["reason"].(string)
+	if !strings.Contains(reason, "no bytes were transformed") {
+		t.Fatalf("doctor reason missing identity sentence: %q", reason)
 	}
 }
 
@@ -56,7 +62,7 @@ func TestCompressIsLocalNoopAndCountsCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Content != "hello" || res.OriginalBytes != 5 || res.CompressedBytes != 5 || res.Ratio != 1 || res.Engine != ModeNoop {
+	if res.Content != "hello" || res.OriginalBytes != 5 || res.CompressedBytes != 5 || res.Ratio != 1 || res.Engine != ModeNoop || res.Transformed || res.Reason != NoopIdentityReason {
 		t.Fatalf("unexpected compression result: %+v", res)
 	}
 	stats, err := m.Stats(context.Background())
@@ -65,5 +71,23 @@ func TestCompressIsLocalNoopAndCountsCalls(t *testing.T) {
 	}
 	if stats.CompressionCalls != 1 || stats.Engine != ModeNoop || stats.Phase != PhaseReady {
 		t.Fatalf("unexpected stats: %+v", stats)
+	}
+}
+
+func TestAutoCompressIsIdentity(t *testing.T) {
+	m, err := New(Config{ContextEngine: ModeAuto})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const payload = "verbatim payload"
+	res, err := m.Compress(context.Background(), CompressRequest{Content: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Content != payload || res.Transformed || res.Ratio != 1 || res.Engine != ModeNoop {
+		t.Fatalf("auto compress must be identity noop: %+v", res)
+	}
+	if !strings.Contains(res.Reason, "no bytes were transformed") {
+		t.Fatalf("auto compress missing identity reason: %q", res.Reason)
 	}
 }

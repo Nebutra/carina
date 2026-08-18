@@ -42,11 +42,12 @@ Do **not** advertise a release tag in README unless that tag has a GitHub Releas
 | Sessions | `/api/sessions/` | `session.*` RPC | TUI session, SDK |
 | Permission profiles | `/concepts/policy/` | `docs/security-model.md`, profiles | session create `profile` |
 | Capability types | `/concepts/policy/` | `protocol/capabilities/` | kernel decisions |
-| Approvals / dual-axis HITL | `/concepts/policy/` + `/use/cli-tui/` | permission decisions, TUI footer | TUI overlay, `approve`/`deny` |
+| Approvals / dual-axis HITL | `/concepts/policy/` + `/use/cli-tui/` | permission decisions, named presets over existing modes | TUI overlay, `/approval-mode`, `approve`/`deny` |
 | Agent ReAct loop | `/agents/overview/` | `docs/agent.md` | `carina run`, TUI |
-| Sub-agents | `/agents/sub-agents/` | SubagentSpawn attenuation | spawn tool / agent.view |
+| Sub-agents | `/agents/sub-agents/` | SubagentSpawn attenuation | spawn tool / `agent.view` / TUI `/agents` |
 | Built-in tools | `/tools/overview/` | agent tool table, Zig bins | tool calls |
 | MCP | `/tools/mcp/` | MCP manager | inventory / mcp tools |
+| Local plugins | `/tools/overview/` | `extension.list` + WASM inspect | TUI `/plugins`, `carina plugin inspect` |
 | Memory | `/memory/overview/` | MemoryWrite capability | `carina memory *` |
 | Workflows | `/workflows/overview/` | `docs/workflows.md`, schema | `carina workflow run` |
 | Workflow tutorial | `/workflows/tutorial-review/` | `examples/workflows/review.json` | review pipeline |
@@ -60,7 +61,7 @@ Do **not** advertise a release tag in README unless that tag has a GitHub Releas
 | Semantic motion | `/use/cli-tui/#motion--accessibility` | frame scheduler + glyph policy | activity, validation, `CARINA_REDUCED_MOTION` |
 | Fullscreen transaction review (next) | `/use/cli-tui/#review-workbench` + `/concepts/audit/#transaction-review` | typed PatchReview projection | `/changes` in Fullscreen |
 | Checkpoints | `/reference/cli/` | `session.checkpoint.*` | `carina checkpoint *` |
-| Context pressure | `/use/cli-tui/` | context engine + TUI | `/context`, `carina context *` |
+| Context pressure | `/use/cli-tui/` | `Transcript.compact` + TUI `/context` | `/context`, `carina context *` (no-op adapter) |
 | Follow-up queue | `/use/cli-tui/` | `execution.queue.*` | `/queue` |
 | Screen modes | `/use/cli-tui/` | TUI ScreenMode | `/minimal` `/fullscreen` `/inline` |
 | Traces / items | `/observability/traces/` | item stream, events | session items / events |
@@ -69,7 +70,7 @@ Do **not** advertise a release tag in README unless that tag has a GitHub Releas
 | API versions | `/api/versions/` | channels **0.8.x** / **next** | version selector |
 | Gateway HTTP | `/api/overview/` | gateway docs | scoped `/v1` |
 | Cost reporting | `/reference/cli/` | `carina cost` | cost CLI |
-| Context engine CLI | `/reference/cli/` | `context.*` methods | `carina context *` |
+| Context engine CLI | `/reference/cli/` | no-op `context.*` boundary; product compressor is `Transcript.compact` | `carina context *` |
 | Nebutra Cloud boundary | introduction + enterprise notes | `docs/nebutra-cloud-boundary.md` | sync off by default |
 | Math / KaTeX | `/reference/math/` | KaTeX pipeline | authoring only |
 | Glossary | `/reference/glossary/` | this map + product.md | — |

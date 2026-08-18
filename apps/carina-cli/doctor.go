@@ -264,9 +264,7 @@ func doctorChecks(report map[string]any) []doctorCheck {
 		out = append(out, chk)
 	}
 	if ctxEng, ok := report["context_engine"].(map[string]any); ok {
-		out = append(out, boolCheck("context_engine", ctxEng,
-			"context engine healthy",
-			"run: carina context doctor"))
+		out = append(out, contextEngineCheck(ctxEng))
 	}
 	if lsp, ok := report["lsp"].(map[string]any); ok {
 		out = append(out, lspChecks(lsp)...)
@@ -474,6 +472,30 @@ func policyCheck(policy map[string]any) (chk doctorCheck, present bool) {
 
 // boolCheck renders a simple {"ok": bool, "error": string} probe map as a
 // PASS/FAIL doctorCheck.
+func contextEngineCheck(probe map[string]any) doctorCheck {
+	chk := boolCheck("context_engine", probe, "engine=noop; no bytes were transformed", "run: carina context doctor")
+	engine, reason := "", ""
+	if status, ok := probe["status"].(map[string]any); ok {
+		engine, _ = status["effective_engine"].(string)
+		reason, _ = status["reason"].(string)
+	}
+	if engine == "" {
+		engine, _ = probe["engine"].(string)
+	}
+	if reason == "" {
+		reason, _ = probe["reason"].(string)
+	}
+	if engine != "" {
+		chk.detail = "engine=" + engine
+		if reason != "" {
+			chk.detail += "; " + reason
+		} else if engine == "noop" {
+			chk.detail += "; no bytes were transformed"
+		}
+	}
+	return chk
+}
+
 func boolCheck(name string, probe map[string]any, passDetail, remediation string) doctorCheck {
 	ok, _ := probe["ok"].(bool)
 	if ok {

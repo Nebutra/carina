@@ -1,6 +1,11 @@
 package daemon
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/Nebutra/carina/go/contextengine"
+)
 
 // TestDoctorProbes: the doctor surface reports the version and passing probes
 // for a healthy daemon.
@@ -27,6 +32,10 @@ func TestDoctorProbes(t *testing.T) {
 	}
 	if ctx, ok := m["context_engine"].(map[string]any); !ok || ctx["ok"] != true {
 		t.Fatalf("context engine probe missing/wrong: %v", m["context_engine"])
+	} else if ctx["engine"] != contextengine.ModeNoop || ctx["transformed"] != false {
+		t.Fatalf("context engine probe must be identity noop: %v", ctx)
+	} else if reason, _ := ctx["reason"].(string); !strings.Contains(reason, "no bytes were transformed") {
+		t.Fatalf("context engine probe missing identity reason: %v", ctx)
 	}
 	if _, ok := m["fix_plan"].([]map[string]any); !ok {
 		t.Fatalf("doctor fix_plan missing or untyped: %T", m["fix_plan"])

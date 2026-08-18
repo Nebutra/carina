@@ -71,7 +71,11 @@ step). Four implementations, plus one dedicated route inside model-router:
   to JSON ReAct. The `grok-build/*` route is JSON-only: Carina drives an
   isolated `grok` CLI as a pure inference engine and does not enable Grok
   native tools. If Grok emits a native `tool_call`, Carina keeps any streamed
-  text or requeries instead of executing it.
+  text or requeries instead of executing it. Grok and other non-Anthropic
+  routes do not claim prefix cache (`context.summary` ledger `cache=none`);
+  only Anthropic Messages adapters attach `cache_control` breakpoints.
+  Provider `cache_read_tokens` are recorded only when the provider returned
+  them.
 - **claude-cli** — uses the local `claude` binary in headless mode
   (`claude -p … --allowedTools "" `) as a pure inference engine, running in an
   isolated empty cwd so it cannot touch the workspace. This supports gateway

@@ -20,6 +20,17 @@ func TestOperatorFacingToolErrorKeepsSkillCause(t *testing.T) {
 	if !strings.Contains(got, "skill://review") || strings.Contains(got, "did not complete successfully") {
 		t.Fatalf("operator copy = %q", got)
 	}
+	if strings.HasPrefix(got, "error:") || strings.HasPrefix(got, "DENIED:") {
+		t.Fatalf("operator copy leaked a stack prefix: %q", got)
+	}
+	denied := operatorFacingToolError("DENIED: policy blocked skill://review")
+	if strings.HasPrefix(denied, "DENIED:") || strings.HasPrefix(denied, "error:") || !strings.Contains(denied, "skill://review") {
+		t.Fatalf("DENIED prefix must be stripped: %q", denied)
+	}
+	long := operatorFacingToolError("error: " + strings.Repeat("x", 400))
+	if len(long) > 240 {
+		t.Fatalf("operator copy exceeded 240 bytes: %d", len(long))
+	}
 	if got := operatorFacingToolError(""); got != "tool did not complete successfully" {
 		t.Fatalf("empty copy = %q", got)
 	}

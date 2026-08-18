@@ -269,6 +269,29 @@ mod tests {
     }
 
     #[test]
+    fn file_range_chip_layout_uses_display_width_not_excerpt() {
+        let mut area = TextArea::new();
+        area.insert_str("see ");
+        let excerpt = "@src/lib.rs:2-3\n2| hello\n3| world";
+        area.insert_element(
+            excerpt,
+            FILE_ELEMENT_KIND,
+            Some(crate::context_completion::file_chip(
+                "src/lib.rs",
+                Some(2..4),
+            )),
+        );
+        let map = DocumentLayoutMap::from_textarea(&area);
+        let chip = map
+            .nodes
+            .iter()
+            .find(|node| node.kind == DocumentNodeKind::Media)
+            .expect("file chip");
+        assert!(chip.width < excerpt.len());
+        assert_eq!(map.step_right(chip.start), chip.end);
+        assert_eq!(map.step_left(chip.end), chip.start);
+    }
+
     fn paste_chip_layout_uses_display_width_not_backing_text() {
         let mut area = TextArea::new();
         area.insert_str("see ");

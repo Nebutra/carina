@@ -153,6 +153,13 @@ func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 
 func (d *Daemon) contextLedger(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, memorySnapshot string) map[string]any {
 	model := taskModel(task)
+	if d != nil && d.usage != nil && task != nil {
+		if usage, ok := d.usage.latestTaskContext(task.RunID); ok {
+			if ref := effectiveModelName(usage); ref != "" {
+				model = ref
+			}
+		}
+	}
 	cache := d.promptCacheKind(model)
 	nativeEligible := d.nativeToolsEligible(d.reasoner, model)
 	instruction := "Respond with the next action as a single JSON object."
@@ -221,19 +228,40 @@ func (d *Daemon) contextLedger(sess *sessionstore.Session, task *scheduler.Execu
 }
 
 func (d *Daemon) promptCacheKind(model string) string {
-	providerID, _, _ := strings.Cut(strings.TrimSpace(model), "/")
+	var catalog provider.Catalog
+	var reasoner Reasoner
+	if d != nil {
+		catalog = d.providerCatalog
+		reasoner = d.reasoner
+	}
+	return promptCacheKindFor(catalog, reasoner, model)
+}
+
+// promptCacheKindFor labels prefix-cache capability. Only Anthropic Messages
+// adapters attach cache_control breakpoints. A live reasoner is not enough:
+// Grok JSON-only, Claude CLI, OpenAI-compatible, and unknown routes are none.
+func promptCacheKindFor(catalog provider.Catalog, reasoner Reasoner, model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" || strings.EqualFold(model, "default") {
+		return "none"
+	}
+	providerID, _, _ := strings.Cut(model, "/")
 	if strings.EqualFold(providerID, provider.GrokBuildProviderID) {
 		return "none"
 	}
-	if d != nil {
-		if rr, ok := d.reasoner.(*routerReasoner); ok {
-			if _, _, routed := rr.claudeCodeRoute(model); routed {
-				return "none"
-			}
+	if rr, ok := reasoner.(*routerReasoner); ok {
+		if _, _, routed := rr.claudeCodeRoute(model); routed {
+			return "none"
 		}
-		if d.reasoner != nil {
+	}
+	if info, ok := catalog[normalizeProviderID(providerID)]; ok {
+		if detectRuntimeProtocol(info) == protocolAnthropic {
 			return "anthropic"
 		}
+		return "none"
+	}
+	if strings.EqualFold(providerID, "anthropic") {
+		return "anthropic"
 	}
 	return "none"
 }

@@ -227,7 +227,8 @@ External semantic memory providers and Nebutra Cloud memory sync are not enabled
 
 Carina does not bundle or start an external context-compression runtime.
 `context_engine=auto` deterministically uses the local no-op engine; `off`
-disables the boundary explicitly.
+disables the boundary explicitly. Long-session compaction is
+`Transcript.compact`, not this adapter.
 
 ```bash
 carina context status

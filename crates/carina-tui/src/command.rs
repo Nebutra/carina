@@ -37,6 +37,8 @@ pub enum CommandId {
     Fullscreen,
     Inline,
     Queue,
+    Agents,
+    Plugins,
     Doctor,
     Keymap,
     Help,
@@ -230,6 +232,18 @@ pub const COMMANDS: &[CommandSpec] = &[
         CommandId::Queue,
         "/queue",
         MessageId::CommandQueue,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::Agents,
+        "/agents",
+        MessageId::CommandAgents,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::Plugins,
+        "/plugins",
+        MessageId::CommandPlugins,
         AvailabilityRule::Always,
     ),
     command(
@@ -888,6 +902,58 @@ mod tests {
     }
 
     #[test]
+    fn plugins_is_a_builtin_command_available_while_idle() {
+        assert!(matching("/pl", false)
+            .iter()
+            .any(|item| item.id == CommandId::Plugins));
+        assert_eq!(
+            resolve("/plugins", false).map(|item| item.id),
+            Some(CommandId::Plugins)
+        );
+        assert_eq!(
+            lookup("/plugins").map(|item| item.description),
+            Some(MessageId::CommandPlugins)
+        );
+        assert!(!accepts_arguments(CommandId::Plugins));
+    }
+
+    #[test]
+    fn plugins_palette_sources_never_call_plugin_run() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        for relative in [
+            "command.rs",
+            "help.rs",
+            "app/mod.rs",
+            "app/render.rs",
+            "app/slash_dispatch.rs",
+            "rpc/mod.rs",
+            "overlay.rs",
+        ] {
+            let source = std::fs::read_to_string(root.join(relative)).unwrap();
+            assert!(
+                !source.contains("\"plugin.run\""),
+                "TUI source {relative} must not invoke plugin execution RPC"
+            );
+        }
+    }
+
+    #[test]
+    fn agents_is_a_builtin_command_available_while_idle() {
+        assert!(matching("/ag", false)
+            .iter()
+            .any(|item| item.id == CommandId::Agents));
+        assert_eq!(
+            resolve("/agents", false).map(|item| item.id),
+            Some(CommandId::Agents)
+        );
+        assert_eq!(
+            lookup("/agents").map(|item| item.description),
+            Some(MessageId::CommandAgents)
+        );
+        assert!(!accepts_arguments(CommandId::Agents));
+    }
+
+    #[test]
     fn density_is_discoverable_and_resolves_while_idle() {
         assert!(matching("/den", false)
             .iter()
@@ -1223,6 +1289,12 @@ mod tests {
         assert_eq!(command.id, CommandId::ApprovalMode);
         assert_eq!(tail, Some("dont-ask"));
         assert!(accepts_arguments(CommandId::ApprovalMode));
+        for preset in ["agent", "read-only", "accept-edits"] {
+            let input = format!("/approval-mode {preset}");
+            let (command, tail) = resolve_operator_input(&input).unwrap();
+            assert_eq!(command.id, CommandId::ApprovalMode);
+            assert_eq!(tail, Some(preset));
+        }
         let (command, tail) = resolve_operator_input("/btw what is the plan").unwrap();
         assert_eq!(command.id, CommandId::Btw);
         assert_eq!(tail, Some("what is the plan"));

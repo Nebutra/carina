@@ -295,6 +295,19 @@ impl Client {
         self.call("agent.view", &json!({}))
     }
 
+    pub fn extension_list(
+        &mut self,
+        workspace_root: Option<&str>,
+    ) -> Result<ExtensionInventory, RpcError> {
+        let mut params = json!({});
+        if let Some(root) = workspace_root {
+            if !root.trim().is_empty() {
+                params["workspace_root"] = json!(root);
+            }
+        }
+        self.call("extension.list", &params)
+    }
+
     pub fn doctor(&mut self) -> Result<serde_json::Value, RpcError> {
         self.call("daemon.doctor", &json!({}))
     }

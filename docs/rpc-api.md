@@ -79,11 +79,12 @@ complete, authoritative registry. Groups not summarized here include `agent.*`,
 | `daemon.doctor` | independent health probes; `recover.recent` is the named recover journal; `resources.copies` splits checkpoint / heap / provider-cache and does not report PSS; `sandbox` reports requested/available/applied and fails closed if a helper is missing; `gateway.workspace_pin` is a local workspace bind, not multi-tenant SaaS |
 | `daemon.remote.disable` | remote kill-switch: disable remote-exposed method dispatch |
 | `daemon.reload` | reload daemon configuration |
-| `daemon.set_interactive_approval` | set product HITL mode (`ask` \| `always-approve` \| `dont-ask` \| `accept-edits`). TUI: `/approval-mode`, `/always-approve`, `/dont-ask`, `/accept-edits` |
-| `context.status` | local-only native context engine status |
-| `context.doctor` | local-only context engine health probe |
-| `context.stats` | local-only compression counters |
-| `context.compress` | local-only diagnostic compression call |
+| `daemon.set_interactive_approval` | set product HITL mode (`ask` \| `always-approve` \| `dont-ask` \| `accept-edits`) or named presets `read-only` / `agent` / `accept-edits` (labels only; session profile unchanged). TUI: `/approval-mode`, `/always-approve`, `/dont-ask`, `/accept-edits`. `/always-approve` is not a cycle preset |
+| `context.status` | local-only no-op adapter status (`engine=noop`; product compressor is `Transcript.compact`) |
+| `context.doctor` | local-only no-op adapter health probe |
+| `context.stats` | local-only no-op counters |
+| `context.compress` | local-only identity diagnostic; reports that no bytes were transformed |
+| `context.summary` | model-visible prompt ledger; `ledger.cache` is `anthropic` only for Messages-API cache breakpoints, otherwise `none` |
 
 Carina's daemon now registers RPC methods through a descriptor catalog. The
 descriptor is the authority for remote exposure and future Gateway

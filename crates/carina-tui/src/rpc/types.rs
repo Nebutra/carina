@@ -480,6 +480,64 @@ pub struct AgentView {
     pub completed: Vec<AgentViewEntry>,
 }
 
+impl AgentView {
+    pub fn entries(&self) -> impl Iterator<Item = &AgentViewEntry> {
+        self.needs_input
+            .iter()
+            .chain(self.working.iter())
+            .chain(self.completed.iter())
+    }
+
+    pub fn roster_entries(&self, parent_session: &str) -> Vec<&AgentViewEntry> {
+        if parent_session.is_empty() {
+            return self.entries().collect();
+        }
+        self.entries()
+            .filter(|entry| entry.parent_id == parent_session)
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ExtensionInventory {
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub plugins: Vec<ExtensionInventoryEntry>,
+    #[serde(default)]
+    pub safe_mode: bool,
+    #[serde(default)]
+    pub total_prompt_tokens: i64,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ExtensionInventoryEntry {
+    #[serde(default)]
+    pub manifest: ExtensionManifest,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub trusted: bool,
+    #[serde(default)]
+    pub effective_enabled: bool,
+    #[serde(default)]
+    pub enable_provenance: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ExtensionManifest {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub components: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub permissions: Vec<String>,
+}
+
 fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -492,8 +550,10 @@ where
 pub struct AgentViewEntry {
     #[serde(default)]
     pub session_id: String,
-    #[serde(default)]
+    #[serde(default, alias = "run_id")]
     pub task_id: String,
+    #[serde(default)]
+    pub parent_id: String,
     #[serde(default)]
     pub title: String,
     #[serde(default)]
@@ -508,6 +568,10 @@ pub struct AgentViewEntry {
     pub agent: String,
     #[serde(default)]
     pub model: String,
+    #[serde(default)]
+    pub profile: String,
+    #[serde(default)]
+    pub worktree_id: String,
     #[serde(default)]
     pub workspace: String,
     #[serde(default)]
@@ -1125,6 +1189,8 @@ pub struct InteractiveApprovalState {
     pub disable_always_approve: bool,
     #[serde(default)]
     pub warning: String,
+    #[serde(default)]
+    pub preset: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
@@ -2053,7 +2119,7 @@ mod tests {
             "queued_executions": 2,
             "active_workers": 3,
             "uptime_seconds": 42,
-            "context_engine": {"effective_engine": "native", "phase": "ready"}
+            "context_engine": {"effective_engine": "noop", "phase": "ready"}
         }))
         .unwrap();
         assert_eq!(runtime.queued_executions, 2);
@@ -2071,6 +2137,24 @@ mod tests {
         .unwrap();
         assert_eq!(agents.needs_input.len() + agents.working.len(), 1);
         assert_eq!(agents.working[0].summary, "Editing");
+        assert_eq!(agents.working[0].task_id, "run_2");
+        let child = AgentViewEntry {
+            parent_id: "sess_parent".into(),
+            task_id: "run_child".into(),
+            ..AgentViewEntry::default()
+        };
+        let sibling = AgentViewEntry {
+            parent_id: "other".into(),
+            task_id: "run_other".into(),
+            ..AgentViewEntry::default()
+        };
+        let roster = AgentView {
+            working: vec![child, sibling],
+            ..AgentView::default()
+        };
+        let kids = roster.roster_entries("sess_parent");
+        assert_eq!(kids.len(), 1);
+        assert_eq!(kids[0].task_id, "run_child");
 
         let usage: UsageCostReport = serde_json::from_value(json!({
             "totals": {"requests": 4, "input_tokens": 120, "output_tokens": 30, "cost_usd": 0.25}
@@ -2154,6 +2238,41 @@ mod tests {
         }))
         .unwrap();
         assert!(recap.recent_events.is_empty());
+    }
+
+    #[test]
+    fn extension_inventory_decodes_caps_and_safe_mode() {
+        let empty: ExtensionInventory = serde_json::from_value(json!({
+            "plugins": [],
+            "safe_mode": true
+        }))
+        .unwrap();
+        assert!(empty.plugins.is_empty());
+        assert!(empty.safe_mode);
+
+        let listed: ExtensionInventory = serde_json::from_value(json!({
+            "plugins": [{
+                "manifest": {
+                    "name": "hello",
+                    "version": "1.0.0",
+                    "components": ["wasm"],
+                    "permissions": ["FileRead", "FileWrite"]
+                },
+                "source": "/trusted/hello",
+                "enabled": true,
+                "effective_enabled": false,
+                "enable_provenance": "safe_mode"
+            }],
+            "safe_mode": false
+        }))
+        .unwrap();
+        assert_eq!(listed.plugins[0].manifest.name, "hello");
+        assert_eq!(
+            listed.plugins[0].manifest.permissions,
+            ["FileRead", "FileWrite"]
+        );
+        assert_eq!(listed.plugins[0].manifest.components, ["wasm"]);
+        assert!(!listed.plugins[0].effective_enabled);
     }
 
     #[test]

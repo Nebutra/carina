@@ -75,6 +75,7 @@ pub enum Action {
     OpenStatus,
     OpenHelp,
     OpenQueue,
+    OpenPlugins,
     OpenAgents,
     OpenChanges,
     RefreshAgents,

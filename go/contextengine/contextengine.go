@@ -17,6 +17,10 @@ const (
 	ModeNoop = "noop"
 
 	PhaseReady = "ready"
+
+	// NoopIdentityReason is the operator-facing sentence for identity
+	// compress. Transcript.compact is the product compressor.
+	NoopIdentityReason = "no bytes were transformed; Transcript.compact is the product compressor"
 )
 
 type Config struct {
@@ -45,6 +49,8 @@ type CompressResponse struct {
 	CompressedTokens int      `json:"compressed_tokens,omitempty"`
 	SavingsPercent   float64  `json:"savings_percent,omitempty"`
 	Transforms       []string `json:"transforms,omitempty"`
+	Transformed      bool     `json:"transformed"`
+	Reason           string   `json:"reason,omitempty"`
 }
 
 type Stats struct {
@@ -107,11 +113,11 @@ func buildStatus(cfg Config) Status {
 	}
 	switch cfg.ContextEngine {
 	case ModeOff:
-		st.Reason = "context engine disabled"
+		st.Reason = "context engine disabled; " + NoopIdentityReason
 	case ModeNoop:
-		st.Reason = "local no-op context engine selected"
+		st.Reason = "local no-op context engine selected; " + NoopIdentityReason
 	default:
-		st.Reason = "no external context engine is bundled; auto uses the local no-op engine"
+		st.Reason = "no external context engine is bundled; auto uses the local no-op engine; " + NoopIdentityReason
 	}
 	return st
 }
@@ -141,9 +147,13 @@ func (m *Manager) Status() Status {
 }
 
 func (m *Manager) Doctor() map[string]any {
+	st := m.Status()
 	return map[string]any{
-		"ok":     true,
-		"status": m.Status(),
+		"ok":          true,
+		"engine":      st.EffectiveEngine,
+		"transformed": false,
+		"reason":      st.Reason,
+		"status":      st,
 	}
 }
 
@@ -156,5 +166,7 @@ func noopCompressResponse(content, engine string) CompressResponse {
 		CompressedBytes: len(content),
 		Ratio:           1,
 		Engine:          engine,
+		Transformed:     false,
+		Reason:          NoopIdentityReason,
 	}
 }

@@ -1693,7 +1693,7 @@ func (d *Daemon) handleContextCompress(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if p.SessionID != "" && d.kern != nil {
+	if p.SessionID != "" && d.kern != nil && res.Transformed {
 		d.record(p.SessionID, "ContextCompacted", p.TaskID, "go", map[string]any{
 			"status": "context_compressed", "engine": res.Engine, "turn": p.Turn, "kind": p.Kind, "tool": p.Tool,
 			"original_bytes": res.OriginalBytes, "compressed_bytes": res.CompressedBytes,
@@ -1707,14 +1707,25 @@ func (d *Daemon) handleContextCompress(params json.RawMessage) (any, error) {
 
 func (d *Daemon) contextStatus() any {
 	if d.contextEng == nil {
-		return map[string]any{"configured_engine": "noop", "effective_engine": "noop", "phase": "unconfigured"}
+		return map[string]any{
+			"configured_engine": "noop",
+			"effective_engine":  "noop",
+			"phase":             "unconfigured",
+			"reason":            contextengine.NoopIdentityReason,
+		}
 	}
 	return d.contextEng.Status()
 }
 
 func (d *Daemon) contextDoctor() any {
 	if d.contextEng == nil {
-		return map[string]any{"ok": true, "status": d.contextStatus()}
+		return map[string]any{
+			"ok":          true,
+			"engine":      contextengine.ModeNoop,
+			"transformed": false,
+			"reason":      contextengine.NoopIdentityReason,
+			"status":      d.contextStatus(),
+		}
 	}
 	return d.contextEng.Doctor()
 }
@@ -3419,13 +3430,11 @@ func (d *Daemon) handleTaskInterrupt(params json.RawMessage) (any, error) {
 func (d *Daemon) handleTaskCancel(params json.RawMessage) (any, error) {
 	d.checkpointMu.Lock()
 	defer d.checkpointMu.Unlock()
-	var p struct {
-		RunID string `json:"run_id"`
+	runID, err := executionIDFromParams(params)
+	if err != nil {
+		return nil, err
 	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
-	}
-	task, err := d.sched.Cancel(p.RunID)
+	task, err := d.sched.Cancel(runID)
 	if err != nil {
 		return nil, err
 	}
@@ -3434,9 +3443,9 @@ func (d *Daemon) handleTaskCancel(params json.RawMessage) (any, error) {
 		"owner": "operator", "retryable": true,
 	}, "")
 	persistErr := d.runs.saveChecked(task)
-	controlErr := d.discardExecutionControl(p.RunID)
+	controlErr := d.discardExecutionControl(runID)
 	d.taskContextMu.Lock()
-	cancel := d.taskCancels[p.RunID]
+	cancel := d.taskCancels[runID]
 	d.taskContextMu.Unlock()
 	if cancel != nil {
 		cancel(context.Canceled)

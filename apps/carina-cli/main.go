@@ -112,11 +112,11 @@ Memory:
   carina memory projection-reseed <session_id> <document_id> --remote-quiesced
 	                                                   recover one ambiguous projection after external confirmation
 
-Context engine:
-  carina context status                             show the native context engine state
-  carina context doctor                             diagnose context engine health
-  carina context stats                              show local context-engine counters
-  carina context compress <content|->               compress content through the native context engine
+Context engine (local no-op; Transcript.compact is the product compressor):
+  carina context status                             show engine=noop and why no bytes change
+  carina context doctor                             diagnose the no-op context-engine boundary
+  carina context stats                              show local no-op counters
+  carina context compress <content|->               identity call; prints that no bytes were transformed
 
 Schedules:
   carina schedule list <session_id>                  list session-owned schedules
@@ -1036,17 +1036,17 @@ func cmdContext(c *rpcClient, args []string) error {
 		if len(args) != 1 {
 			return fmt.Errorf("usage: carina context status")
 		}
-		return call(c, "context.status", map[string]any{})
+		return callContext(c, "context.status", map[string]any{})
 	case "doctor":
 		if len(args) != 1 {
 			return fmt.Errorf("usage: carina context doctor")
 		}
-		return call(c, "context.doctor", map[string]any{})
+		return callContext(c, "context.doctor", map[string]any{})
 	case "stats":
 		if len(args) != 1 {
 			return fmt.Errorf("usage: carina context stats")
 		}
-		return call(c, "context.stats", map[string]any{})
+		return callContext(c, "context.stats", map[string]any{})
 	case "compress":
 		if len(args) != 2 {
 			return fmt.Errorf("usage: carina context compress <content|->")
@@ -1062,7 +1062,7 @@ func cmdContext(c *rpcClient, args []string) error {
 		if content == "" {
 			return fmt.Errorf("content is required")
 		}
-		return call(c, "context.compress", map[string]any{"content": content})
+		return callContext(c, "context.compress", map[string]any{"content": content})
 	default:
 		return fmt.Errorf("usage: carina context <status|doctor|stats|compress>")
 	}
@@ -1797,6 +1797,73 @@ func watch(c *rpcClient, sessionID string, jsonOut bool) error {
 			fmt.Println(string(out))
 		}
 	}
+}
+
+func callContext(c *rpcClient, method string, params any) error {
+	var result json.RawMessage
+	if err := c.Call(method, params, &result); err != nil {
+		return err
+	}
+	printContextHonesty(result)
+	pretty, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(pretty))
+	return nil
+}
+
+func printContextHonesty(raw json.RawMessage) {
+	var payload map[string]any
+	if json.Unmarshal(raw, &payload) != nil {
+		return
+	}
+	engine, reason, transformed, identity := contextHonestyFields(payload)
+	if engine == "" {
+		engine = "noop"
+		identity = true
+		transformed = false
+	}
+	fmt.Printf("engine=%s\n", engine)
+	if reason != "" {
+		fmt.Println(reason)
+	}
+	if (identity || !transformed) && !strings.Contains(reason, "no bytes were transformed") {
+		fmt.Println("no bytes were transformed")
+	}
+}
+
+func contextHonestyFields(payload map[string]any) (engine, reason string, transformed, identity bool) {
+	transformed = true
+	walk := []map[string]any{payload}
+	if nested, ok := payload["status"].(map[string]any); ok {
+		walk = append(walk, nested)
+	}
+	if nested, ok := payload["local"].(map[string]any); ok {
+		walk = append(walk, nested)
+	}
+	for _, item := range walk {
+		if engine == "" {
+			engine, _ = item["effective_engine"].(string)
+		}
+		if engine == "" {
+			engine, _ = item["engine"].(string)
+		}
+		if reason == "" {
+			reason, _ = item["reason"].(string)
+		}
+		if v, ok := item["transformed"].(bool); ok {
+			transformed = v
+		}
+		if ratio, ok := item["ratio"].(float64); ok && ratio == 1 {
+			identity = true
+		}
+	}
+	if engine == "noop" || engine == "off" {
+		identity = true
+		transformed = false
+	}
+	return engine, reason, transformed, identity
 }
 
 func call(c *rpcClient, method string, params any) error {

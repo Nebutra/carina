@@ -227,6 +227,10 @@ The default interaction loop is:
     directory prefix; no prompt; CI-friendly). Also `/dont-ask`
   - `accept-edits` — auto-allow `FileWrite`/`PatchApply` `requires_approval`;
     shell/network/secrets still prompt (`/accept-edits`)
+  Named `/approval-mode` presets `read-only`, `agent`, and `accept-edits`
+  only label those existing pairs. They do not change the session
+  permission profile. `/always-approve` stays an explicit verb and is not
+  a cycle stop.
   - Orgs can lock out YOLO with `"disable_always_approve": true` (manage-lock
     in `/etc/carina/managed.json`)
   - **Not the same axis as session/kernel approval:** session create still takes
@@ -411,11 +415,12 @@ opt-ins. Projection uses a durable desired-state outbox and requires
 `NetworkAccess` plus `MemoryExternalize` independently of `MemoryWrite`;
 Nebutra Cloud memory sync remains off.
 
-### Native Context Engine
+### Context engine (no-op boundary)
 
 Carina does not bundle or start an external context-compression runtime.
 `context_engine=auto` resolves deterministically to the local no-op engine;
-`off` disables the boundary explicitly.
+`off` disables the boundary explicitly. Long-session compaction is
+`Transcript.compact`, not this adapter.
 
 Inspect the integration:
 

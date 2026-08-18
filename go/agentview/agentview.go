@@ -76,19 +76,22 @@ type Metadata struct {
 }
 
 type Entry struct {
-	SessionID string    `json:"session_id"`
-	RunID     string    `json:"run_id,omitempty"`
-	ParentID  string    `json:"parent_id,omitempty"`
-	Workspace string    `json:"workspace"`
-	Status    string    `json:"status"`
-	Category  Category  `json:"category"`
-	Prompt    string    `json:"prompt,omitempty"`
-	Summary   string    `json:"summary,omitempty"`
-	Agent     string    `json:"agent,omitempty"`
-	Model     string    `json:"model,omitempty"`
-	Needs     string    `json:"needs,omitempty"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Metadata  Metadata  `json:"metadata,omitempty"`
+	SessionID  string    `json:"session_id"`
+	RunID      string    `json:"run_id,omitempty"`
+	TaskID     string    `json:"task_id,omitempty"`
+	ParentID   string    `json:"parent_id,omitempty"`
+	Workspace  string    `json:"workspace"`
+	Status     string    `json:"status"`
+	Category   Category  `json:"category"`
+	Prompt     string    `json:"prompt,omitempty"`
+	Summary    string    `json:"summary,omitempty"`
+	Agent      string    `json:"agent,omitempty"`
+	Model      string    `json:"model,omitempty"`
+	Profile    string    `json:"profile,omitempty"`
+	WorktreeID string    `json:"worktree_id,omitempty"`
+	Needs      string    `json:"needs,omitempty"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	Metadata   Metadata  `json:"metadata,omitempty"`
 }
 
 type Roster struct {
@@ -110,13 +113,14 @@ func Build(sessions []*sessionstore.Session, runs []*scheduler.ExecutionRun, pen
 			continue
 		}
 		list := bySession[session.SessionID]
+		meta := metadata[session.SessionID]
 		if len(list) == 0 {
-			e := Entry{SessionID: session.SessionID, ParentID: session.ParentID, Workspace: session.WorkspaceRoot, Status: session.Status, Category: classify(session.Status), UpdatedAt: session.CreatedAt, Metadata: metadata[session.SessionID]}
+			e := Entry{SessionID: session.SessionID, ParentID: session.ParentID, Workspace: session.WorkspaceRoot, Status: session.Status, Category: classify(session.Status), Profile: session.PermissionProfile, WorktreeID: meta.WorktreeID, UpdatedAt: session.CreatedAt, Metadata: meta}
 			appendEntry(&roster, e)
 			continue
 		}
 		for _, run := range list {
-			e := Entry{SessionID: session.SessionID, RunID: run.RunID, ParentID: session.ParentID, Workspace: session.WorkspaceRoot, Status: run.Status, Category: classify(run.Status), Prompt: run.UserPrompt, Summary: run.Summary, Agent: run.Agent, Model: run.Model, UpdatedAt: run.UpdatedAt, Metadata: metadata[session.SessionID]}
+			e := Entry{SessionID: session.SessionID, RunID: run.RunID, TaskID: run.RunID, ParentID: session.ParentID, Workspace: session.WorkspaceRoot, Status: run.Status, Category: classify(run.Status), Prompt: run.UserPrompt, Summary: run.Summary, Agent: run.Agent, Model: run.Model, Profile: session.PermissionProfile, WorktreeID: meta.WorktreeID, UpdatedAt: run.UpdatedAt, Metadata: meta}
 			if need := pendingQuestions[run.RunID]; need != "" {
 				e.Category, e.Needs = NeedsInput, need
 			}

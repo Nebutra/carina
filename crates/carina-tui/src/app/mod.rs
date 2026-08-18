@@ -1,5 +1,14 @@
+mod composer_draft;
+mod composer_paste;
 mod reading_state;
 mod render;
+mod slash_dispatch;
+
+use composer_draft::rewind_prime_window;
+#[cfg(test)]
+use composer_draft::{
+    rewind_escape_action, rewind_prime_window_from, RewindEscapeAction, DEFAULT_REWIND_PRIME_WINDOW,
+};
 
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -32,10 +41,7 @@ use xai_ratatui_inline::{
 };
 use xai_ratatui_textarea::{ElementId, TextArea, TextAreaState, TextElementEventKind};
 
-use crate::clipboard_image::{
-    PASTE_ELEMENT_KIND, paste_chip_line, paste_line_count, should_chip_paste,
-};
-use crate::command::{self, CommandId, CommandSuggestion, SuggestionExecution};
+use crate::command;
 use crate::component::{Action, InteractionMap};
 use crate::context_completion::ContextCompletion;
 use crate::context_completion::FILE_ELEMENT_KIND;
@@ -67,7 +73,8 @@ use crate::native_scrollback::{
 };
 use crate::overlay::{
     AgentDashboardOverlay, ApprovalScope, ChangesFocus, ChangesOverlay, HelpOverlay, Overlay,
-    OverlayStack, PRODUCT_MENU_ITEMS, PlanReviewOverlay, ProductMenuOverlay, QueueOverlay,
+    OverlayStack, PRODUCT_MENU_ITEMS, PlanReviewOverlay, PluginsOverlay, ProductMenuOverlay,
+    QueueOverlay,
     RetainedLoad, SettingsOverlay, SettingsPage, SideQueryOverlay, StatusOverlay,
     ToolOutputOverlay,
 };
@@ -96,10 +103,6 @@ const LOCALES: &[(&str, &str)] = &[
     ("es", "Español"),
     ("fr", "Français"),
 ];
-const DEFAULT_REWIND_PRIME_WINDOW: Duration = Duration::from_millis(800);
-const REWIND_GRACE_ENV: &str = "CARINA_ESC_GRACE_MS";
-const MIN_REWIND_GRACE_MS: u64 = 250;
-const MAX_REWIND_GRACE_MS: u64 = 2_000;
 const SETTINGS_ITEM_COUNT: usize = 10;
 const SETTINGS_SYMBOLS_INDEX: usize = 5;
 const PLAN_REVIEW_PAGE_LINES: usize = 8;
@@ -553,6 +556,14 @@ struct RuntimeReconnectOutcome {
     boundary: Option<ReplayBoundaryV1>,
 }
 
+struct PendingFileAttach {
+    generation: u64,
+    session_id: String,
+    path: String,
+    lines: std::ops::Range<usize>,
+    token: crate::context_completion::AtContext,
+}
+
 #[derive(Clone)]
 struct PendingSubmission {
     session_id: String,
@@ -619,6 +630,7 @@ pub struct App {
     persisted_prompt_history_unavailable: bool,
     history_search: Option<HistorySearchState>,
     context_completion: ContextCompletion,
+    pending_file_attach: Option<PendingFileAttach>,
     file_viewer_generation: u64,
     product_generation: u64,
     context_generation: u64,
@@ -1037,6 +1049,7 @@ impl App {
             persisted_prompt_history_unavailable: false,
             history_search: None,
             context_completion: ContextCompletion::default(),
+            pending_file_attach: None,
             file_viewer_generation: 0,
             product_generation: 0,
             context_generation: 0,
@@ -1793,6 +1806,7 @@ impl App {
             self.cancel_pending_pastes();
         }
         self.context_completion.reset_session();
+        self.pending_file_attach = None;
         self.sync_selection_from_session(&session);
         let hydrated_overlays = OverlayStack::hydrate_governance(&items);
         self.execution_lifecycle.clear();
@@ -2599,12 +2613,13 @@ impl App {
                         }
                         match result {
                             Ok(outcome) => {
-                                let selected_id = agent_entries(&agents.projection)
+                                let parent = agents.load.session_id.clone();
+                                let selected_id = agent_roster_entries(&agents.projection, &parent)
                                     .get(agents.selected)
                                     .map(|agent| agent.task_id.as_str());
                                 agents.selected = selected_id
                                     .and_then(|selected_id| {
-                                        agent_entries(&outcome.projection)
+                                        agent_roster_entries(&outcome.projection, &parent)
                                             .iter()
                                             .position(|agent| agent.task_id == selected_id)
                                     })
@@ -2943,6 +2958,18 @@ impl App {
                     path,
                     result,
                 } => {
+                    if self
+                        .pending_file_attach
+                        .as_ref()
+                        .is_some_and(|pending| {
+                            pending.generation == generation
+                                && pending.session_id == session_id
+                                && pending.path == path
+                        })
+                    {
+                        self.finish_ranged_file_attach(result);
+                        continue;
+                    }
                     let Some(Overlay::FileViewer(viewer)) = self.overlays.active_mut() else {
                         continue;
                     };
@@ -3663,34 +3690,6 @@ impl App {
         );
     }
 
-    fn resolve_clipboard_image(
-        &mut self,
-        request: &crate::clipboard_image::PendingPaste,
-        image: crate::clipboard_image::TemporaryImage,
-    ) -> bool {
-        let Some(range) = request.range(&self.composer) else {
-            return false;
-        };
-        let cursor_before = self.composer.cursor();
-        let start = range.start;
-        let end = range.end;
-        self.composer.replace_range(range, "");
-        let cursor_without_placeholder = self.composer.cursor();
-        self.composer.set_cursor(start);
-        if !self.attach_image(image.into_path(), true) {
-            self.composer.set_cursor(cursor_without_placeholder);
-            return false;
-        }
-        let cursor_after_image = self.composer.cursor();
-        if cursor_before <= start {
-            self.composer.set_cursor(cursor_before);
-        } else if cursor_before > end {
-            self.composer
-                .set_cursor(cursor_without_placeholder.saturating_add(cursor_after_image - start));
-        }
-        true
-    }
-
     fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
         let key = normalize_shift_tab(key);
         if self.keybindings.hard_cancel.matches(key) {
@@ -4132,10 +4131,6 @@ impl App {
                     self.accept_context_completion();
                     return Ok(());
                 }
-                KeyCode::Char(':') => {
-                    self.open_selected_file_viewer();
-                    return Ok(());
-                }
                 KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     self.open_selected_file_viewer();
                     return Ok(());
@@ -4560,6 +4555,21 @@ impl App {
     }
 
     fn accept_context_completion(&mut self) {
+        match self.context_completion.typed_line_range() {
+            Ok(Some(lines)) => {
+                self.start_ranged_file_attach(lines);
+                return;
+            }
+            Err(_) => {
+                let query = self.context_completion.query().to_owned();
+                self.notice = Notice::localized_with(
+                    MessageId::FileRangeAttachFailed,
+                    [("path", query), ("lines", String::new())],
+                );
+                return;
+            }
+            Ok(None) => {}
+        }
         if self.context_completion.accept(&mut self.composer) {
             self.composer_state = TextAreaState::default();
             self.media.reconcile(&self.composer);
@@ -4567,6 +4577,99 @@ impl App {
             self.slash_selected_id = None;
             self.slash_dismissed_input = None;
         }
+    }
+
+    fn start_ranged_file_attach(&mut self, lines: std::ops::Range<usize>) {
+        let Some((context, candidate)) = self.context_completion.viewer_target() else {
+            return;
+        };
+        if candidate.binary {
+            self.notice = Notice::localized_with(
+                MessageId::FileBinaryPreviewUnavailable,
+                [("path", candidate.path)],
+            );
+            return;
+        }
+        if candidate.large || candidate.size > MAX_PREVIEW_BYTES as u64 {
+            self.notice = Notice::localized_with(
+                MessageId::FileTooLargePreview,
+                [
+                    ("path", candidate.path),
+                    ("bytes", candidate.size.to_string()),
+                    ("limit", MAX_PREVIEW_BYTES.to_string()),
+                ],
+            );
+            return;
+        }
+        let Some(session_id) = self
+            .active_session
+            .as_ref()
+            .map(|session| session.session_id.clone())
+        else {
+            self.notice = Notice::localized(MessageId::WorkspaceConversationRequired);
+            return;
+        };
+        self.file_viewer_generation = self.file_viewer_generation.saturating_add(1);
+        let generation = self.file_viewer_generation;
+        self.pending_file_attach = Some(PendingFileAttach {
+            generation,
+            session_id: session_id.clone(),
+            path: candidate.path.clone(),
+            lines,
+            token: context,
+        });
+        self.load_file_viewer(generation, session_id, candidate.path);
+    }
+
+    fn finish_ranged_file_attach(
+        &mut self,
+        result: Result<crate::rpc::WorkspaceFileContent, String>,
+    ) -> bool {
+        let Some(pending) = self.pending_file_attach.take() else {
+            return false;
+        };
+        let label = if pending.lines.end == pending.lines.start + 1 {
+            pending.lines.start.to_string()
+        } else {
+            format!("{}-{}", pending.lines.start, pending.lines.end - 1)
+        };
+        match result {
+            Ok(file) => match self.context_completion.accept_with_content(
+                &mut self.composer,
+                &pending.token,
+                &pending.path,
+                pending.lines,
+                &file.content,
+            ) {
+                Ok(true) => {
+                    self.composer_state = TextAreaState::default();
+                    self.media.reconcile(&self.composer);
+                    self.slash_selected = 0;
+                    self.slash_selected_id = None;
+                    self.slash_dismissed_input = None;
+                    self.notice.clear();
+                }
+                Ok(false) => {
+                    self.notice = Notice::localized_with(
+                        MessageId::FileRangeAttachFailed,
+                        [("path", pending.path), ("lines", label)],
+                    );
+                }
+                Err(_) => {
+                    self.notice = Notice::localized_with(
+                        MessageId::FileRangeAttachFailed,
+                        [("path", pending.path), ("lines", label)],
+                    );
+                }
+            },
+            Err(_) => {
+                self.notice = Notice::localized_with(
+                    MessageId::FileRangeAttachFailed,
+                    [("path", pending.path), ("lines", label)],
+                );
+            }
+        }
+        true
     }
 
     fn open_selected_file_viewer(&mut self) {
@@ -4591,12 +4694,17 @@ impl App {
             );
             return;
         }
+        let initial_range = self
+            .context_completion
+            .typed_line_range()
+            .ok()
+            .flatten();
         self.open_file_viewer(
             candidate.path,
             FileViewerOrigin::Completion {
                 range: context.range,
             },
-            None,
+            initial_range,
         );
     }
 
@@ -4667,213 +4775,6 @@ impl App {
                 result,
             });
         });
-    }
-
-    fn capture_clipboard(&mut self, mode: crate::clipboard_image::PasteMode) {
-        self.clipboard_generation = self.clipboard_generation.saturating_add(1);
-        let generation = self.clipboard_generation;
-        let session_id = self
-            .active_session
-            .as_ref()
-            .map(|session| session.session_id.clone());
-        let locale = self.ui_locale();
-        let paste_label = tr(locale, MessageId::ClipboardPasteLabel);
-        let reading_label = tr(locale, MessageId::ClipboardReadingLabel);
-        let pending = crate::clipboard_image::PendingPaste::insert(
-            &mut self.composer,
-            generation,
-            session_id,
-            paste_label,
-            reading_label,
-        );
-        self.pending_pastes.insert(generation, pending);
-        self.notice = match mode {
-            crate::clipboard_image::PasteMode::Rich => {
-                Notice::localized(MessageId::ReadingClipboard)
-            }
-            crate::clipboard_image::PasteMode::Text => {
-                Notice::localized(MessageId::ReadingClipboardText)
-            }
-        };
-        let tx = self.async_tx.clone();
-        std::thread::spawn(move || {
-            let result = crate::clipboard_image::capture(mode);
-            let _ = tx.send(AsyncMessage::ClipboardCaptured { generation, result });
-        });
-    }
-
-    fn cancel_pending_pastes(&mut self) {
-        for (_, request) in self.pending_pastes.drain() {
-            let _ = request.remove(&mut self.composer);
-        }
-        self.submit_after_paste = false;
-    }
-
-    fn insert_composer_paste(&mut self, text: &str) {
-        if should_chip_paste(text) {
-            self.insert_paste_chip(text);
-        } else {
-            self.composer.insert_str(text);
-        }
-        self.media.reconcile(&self.composer);
-        self.sync_context_completion();
-    }
-
-    fn insert_paste_chip(&mut self, text: &str) {
-        let display = self.paste_chip_display(text);
-        self.composer.begin_undo_group();
-        self.composer
-            .insert_element(text, PASTE_ELEMENT_KIND, Some(display));
-        self.composer.insert_str(" ");
-        self.composer.end_undo_group();
-    }
-
-    fn resolve_clipboard_text(
-        &mut self,
-        request: &crate::clipboard_image::PendingPaste,
-        text: &str,
-    ) -> bool {
-        if should_chip_paste(text) {
-            let display = self.paste_chip_display(text);
-            request.resolve_chip(&mut self.composer, text, display)
-        } else {
-            request.resolve_text(&mut self.composer, text)
-        }
-    }
-
-    fn paste_chip_display(&self, text: &str) -> Line<'static> {
-        let locale = self.ui_locale();
-        let lines = paste_line_count(text);
-        let size = if lines >= crate::clipboard_image::PASTE_CHIP_MIN_LINES {
-            tr_format(
-                locale,
-                MessageId::PasteChipLines,
-                &[("count", &lines.to_string())],
-            )
-        } else {
-            tr_format(
-                locale,
-                MessageId::PasteChipChars,
-                &[("count", &text.chars().count().to_string())],
-            )
-        };
-        paste_chip_line(tr(locale, MessageId::ClipboardPasteLabel), &size)
-    }
-
-    fn remember_submitted_draft(&mut self, prompt: &str) {
-        let trimmed = prompt.trim();
-        if trimmed.is_empty() {
-            return;
-        }
-        self.last_submitted_draft = Some(trimmed.to_owned());
-    }
-
-    fn restore_submitted_draft_if_pristine(&mut self) -> bool {
-        if !self.composer_is_pristine() {
-            return false;
-        }
-        let Some(draft) = self.last_submitted_draft.take() else {
-            return false;
-        };
-        self.composer.set_text(&draft);
-        self.composer.set_cursor(self.composer.text().len());
-        self.composer_state = TextAreaState::default();
-        self.media.reconcile(&self.composer);
-        self.context_completion.update_context(&self.composer);
-        true
-    }
-
-    fn composer_is_pristine(&self) -> bool {
-        self.composer.text().trim().is_empty()
-            && self.media.is_empty()
-            && self.pending_pastes.is_empty()
-    }
-
-    fn slash_suggestions(&self) -> Vec<CommandSuggestion> {
-        let input = self.composer.text().trim();
-        if self.slash_dismissed_input.as_deref() == Some(input) {
-            return Vec::new();
-        }
-        let mut suggestions = command::palette_matching(
-            input,
-            self.has_retained_run(),
-            &self.command_registry.commands,
-            &self.command_registry.revision,
-            &self.command_mru,
-        );
-        command::apply_registry_state(&mut suggestions, &self.command_registry.state);
-        suggestions
-    }
-
-    fn sync_slash_selection(&mut self) {
-        let suggestions = self.slash_suggestions();
-        self.slash_selected = command::selected_index(
-            &suggestions,
-            self.slash_selected_id.as_deref(),
-            self.slash_selected,
-        );
-        self.slash_selected_id = suggestions
-            .get(self.slash_selected)
-            .map(|command| command.id.clone());
-    }
-
-    fn remember_command_use(&mut self, id: String) {
-        self.command_mru.retain(|candidate| candidate != &id);
-        self.command_mru.insert(0, id);
-        self.command_mru.truncate(command::COMMAND_MRU_LIMIT);
-        command::persist_command_mru(&self.command_mru);
-    }
-
-    fn execute_slash_suggestion(
-        &mut self,
-        id: &str,
-        expected_registry_revision: Option<&str>,
-    ) -> Result<()> {
-        let Some(command) = self
-            .slash_suggestions()
-            .into_iter()
-            .find(|command| command.id == id)
-        else {
-            return Ok(());
-        };
-        if matches!(
-            &command.execution,
-            SuggestionExecution::PromptTemplate { .. }
-        ) && expected_registry_revision != Some(self.command_registry.revision.as_str())
-        {
-            self.notice = Notice::localized(MessageId::CommandRegistryChanged);
-            return Ok(());
-        }
-        if let Some(reason) = command.unavailable_reason {
-            self.notice = Notice::localized(reason);
-            return Ok(());
-        }
-        let is_prompt = matches!(
-            &command.execution,
-            SuggestionExecution::PromptTemplate { .. }
-        );
-        let text = if is_prompt {
-            let completed = command::complete_prompt_token(self.composer.text(), &command.name);
-            if completed == command.name {
-                format!("{completed} ")
-            } else {
-                completed
-            }
-        } else {
-            command.name
-        };
-        self.composer.set_text(&text);
-        self.composer.set_cursor(self.composer.text().len());
-        self.composer_state = TextAreaState::default();
-        self.slash_selected_id = Some(command.id.clone());
-        self.slash_dismissed_input = None;
-        self.focus = Focus::Composer;
-        if is_prompt {
-            Ok(())
-        } else {
-            self.remember_command_use(command.id);
-            self.submit_prompt()
-        }
     }
 
     fn prompt_history(&self) -> Vec<String> {
@@ -5360,120 +5261,6 @@ impl App {
         Ok(())
     }
 
-    fn handle_slash_command(&mut self, prompt: &str) -> Option<bool> {
-        if let Some(reason) = command::withdrawn_operator(prompt) {
-            self.notice = Notice::localized(reason);
-            return Some(false);
-        }
-        let (command, tail) = command::resolve_operator_input(prompt)?;
-        if let Some(reason) = command::command_unavailable_reason(command, self.has_retained_run())
-        {
-            self.notice = Notice::localized(reason);
-            return Some(false);
-        }
-        if tail.is_some() && !command::accepts_arguments(command.id) {
-            self.notice = Notice::localized(MessageId::CommandArgumentsNotAccepted);
-            return Some(false);
-        }
-        self.remember_command_use(command::operator_id(command.id));
-        match command.id {
-            CommandId::Settings => {
-                self.open_settings();
-            }
-            CommandId::Density => self.apply_action(Action::ToggleDensity),
-            CommandId::Symbols => self.apply_action(Action::OpenGlyphPreview),
-            CommandId::Status => self.apply_action(Action::OpenStatus),
-            CommandId::Context => {
-                self.request_context_summary();
-                self.overlays.replace(Overlay::Context(
-                    self.context_summary.clone().unwrap_or_default(),
-                ));
-            }
-            CommandId::Changes => self.apply_action(Action::OpenChanges),
-            CommandId::Provider => {
-                self.provider_index = self
-                    .inventory
-                    .providers
-                    .iter()
-                    .position(|provider| {
-                        provider
-                            .models
-                            .iter()
-                            .any(|model| model.id == self.selected_model)
-                    })
-                    .unwrap_or(self.provider_index);
-                self.phase = Phase::Provider;
-                self.focus = Focus::Scene;
-            }
-            CommandId::Model => self.open_models(),
-            CommandId::Plan => self.request_conversation_mode(true),
-            CommandId::Build => self.request_conversation_mode(false),
-            CommandId::ViewPlan => self.open_plan_review(),
-            CommandId::ApprovePlan => self.approve_plan(),
-            CommandId::AlwaysApprove => {
-                return Some(self.set_product_approval_mode("always-approve"));
-            }
-            CommandId::DontAsk => return Some(self.set_product_approval_mode("dont-ask")),
-            CommandId::AcceptEdits => {
-                return Some(self.set_product_approval_mode("accept-edits"));
-            }
-            CommandId::ApprovalMode => {
-                return Some(self.handle_approval_mode_command(tail.unwrap_or("")));
-            }
-            CommandId::Sessions => self.open_session_browser(),
-            CommandId::Import => {
-                self.open_session_browser();
-                self.begin_conversation_import();
-            }
-            CommandId::Resume => {
-                let paused = self
-                    .active_session
-                    .as_ref()
-                    .is_some_and(|session| session.execution_status == "paused");
-                if paused {
-                    self.resume_paused_execution();
-                } else {
-                    self.open_session_browser();
-                }
-            }
-            CommandId::New => self.start_new_conversation(),
-            CommandId::Fork => self.fork_current_conversation(),
-            CommandId::Compact => self.compact_current_checkpoint(),
-            CommandId::Goal => self.handle_goal_command(tail.unwrap_or("")),
-            CommandId::Btw => return Some(self.handle_btw_command(tail.unwrap_or(""))),
-            CommandId::Cancel => {
-                if let Some(run_id) = self.retained_run_id().map(str::to_owned) {
-                    self.cancel_execution(&run_id);
-                } else {
-                    self.notice = Notice::localized(MessageId::NoActiveExecutionRun);
-                }
-            }
-            CommandId::Minimal => self.request_screen_mode(ScreenMode::Minimal),
-            CommandId::Fullscreen => self.request_screen_mode(ScreenMode::Fullscreen),
-            CommandId::Inline => self.request_screen_mode(ScreenMode::Inline),
-            CommandId::Queue => self.apply_action(Action::OpenQueue),
-            CommandId::Quit => self.quit = true,
-            CommandId::Doctor => {
-                self.composer.set_text("");
-                self.composer_state = TextAreaState::default();
-                self.slash_selected = 0;
-                self.slash_selected_id = None;
-                self.slash_dismissed_input = None;
-                self.open_doctor_overlay();
-            }
-            CommandId::Keymap | CommandId::Help => {
-                // Issue #22: real help surface, not a composer re-trigger of "/".
-                self.composer.set_text("");
-                self.composer_state = TextAreaState::default();
-                self.slash_selected = 0;
-                self.slash_selected_id = None;
-                self.slash_dismissed_input = None;
-                self.open_help_overlay();
-            }
-        }
-        Some(true)
-    }
-
     fn request_screen_mode(&mut self, mode: ScreenMode) {
         self.composer.set_text("");
         self.composer_state = TextAreaState::default();
@@ -5488,6 +5275,32 @@ impl App {
         );
         self.relaunch_screen_mode = Some(mode);
         self.quit = true;
+    }
+
+    fn open_plugins_overlay(&mut self) {
+        self.slash_selected = 0;
+        self.slash_selected_id = None;
+        self.slash_dismissed_input = None;
+        let workspace = self
+            .active_session
+            .as_ref()
+            .map(|session| session.workspace_root.as_str());
+        match self.rpc.extension_list(workspace) {
+            Ok(inventory) => {
+                self.overlays
+                    .replace(Overlay::Plugins(PluginsOverlay {
+                        inventory,
+                        selected: 0,
+                        error: String::new(),
+                    }));
+            }
+            Err(error) => {
+                self.notice = Notice::localized_with(
+                    MessageId::LoadPluginsFailed,
+                    [("error", error.to_string())],
+                );
+            }
+        }
     }
 
     fn open_queue_overlay(&mut self) {
@@ -5639,7 +5452,37 @@ impl App {
                 .map(|config| config.approval_mode.as_str())
                 .filter(|value| !value.is_empty())
                 .unwrap_or("unknown");
-            self.notice = Notice::localized_with(MessageId::ApprovalModeCurrent, [("mode", mode)]);
+            let profile = self
+                .security_context
+                .as_ref()
+                .map(|config| config.permission_profile.as_str())
+                .or_else(|| {
+                    self.active_session
+                        .as_ref()
+                        .map(|session| session.permission_profile.as_str())
+                })
+                .unwrap_or("");
+            let preset = match (mode, profile) {
+                ("ask", "read-only") => "read-only",
+                ("ask", "safe-edit") | ("ask", "") => "agent",
+                ("accept-edits", _) => "accept-edits",
+                _ => "",
+            };
+            self.notice = Notice::localized_with(
+                MessageId::ApprovalModePresets,
+                [
+                    ("mode", mode),
+                    (
+                        "preset",
+                        if preset.is_empty() {
+                            "none"
+                        } else {
+                            preset
+                        },
+                    ),
+                    ("presets", "read-only, agent, accept-edits"),
+                ],
+            );
             return true;
         }
         if tail.split_whitespace().nth(1).is_some() {
@@ -5672,11 +5515,16 @@ impl App {
                         });
                     }
                 }
-                self.notice = Notice::localized(match result.approval_mode.as_str() {
-                    "always-approve" => MessageId::ApprovalNowAlwaysApprove,
-                    "dont-ask" => MessageId::ApprovalNowDontAsk,
+                self.notice = Notice::localized(match result.preset.as_str() {
+                    "read-only" => MessageId::ApprovalNowPresetReadOnly,
+                    "agent" => MessageId::ApprovalNowPresetAgent,
                     "accept-edits" => MessageId::ApprovalNowAcceptEdits,
-                    _ => MessageId::ApprovalNowAsk,
+                    _ => match result.approval_mode.as_str() {
+                        "always-approve" => MessageId::ApprovalNowAlwaysApprove,
+                        "dont-ask" => MessageId::ApprovalNowDontAsk,
+                        "accept-edits" => MessageId::ApprovalNowAcceptEdits,
+                        _ => MessageId::ApprovalNowAsk,
+                    },
                 });
                 true
             }
@@ -6346,9 +6194,11 @@ impl App {
                     deferred = Some(Action::SelectAgent(agents.selected.saturating_sub(1)))
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    let count = agents.projection.agents.needs_input.len()
-                        + agents.projection.agents.working.len()
-                        + agents.projection.agents.completed.len();
+                    let count = agent_roster_entries(
+                        &agents.projection,
+                        &agents.load.session_id,
+                    )
+                    .len();
                     deferred = Some(Action::SelectAgent(
                         (agents.selected + 1).min(count.saturating_sub(1)),
                     ));
@@ -6519,6 +6369,19 @@ impl App {
                 }
                 KeyCode::Home => output.scroll = 0,
                 KeyCode::End => output.scroll = self.tool_output_max_scroll,
+                KeyCode::Esc | KeyCode::Char('q') => deferred = Some(Action::CloseOverlay),
+                _ => {}
+            },
+            Some(Overlay::Plugins(plugins)) => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    plugins.selected = plugins.selected.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if !plugins.inventory.plugins.is_empty() {
+                        plugins.selected = (plugins.selected + 1)
+                            .min(plugins.inventory.plugins.len().saturating_sub(1));
+                    }
+                }
                 KeyCode::Esc | KeyCode::Char('q') => deferred = Some(Action::CloseOverlay),
                 _ => {}
             },
@@ -6889,45 +6752,6 @@ impl App {
         }
         self.overlays.resolve_active();
         true
-    }
-
-    fn handle_rewind_escape(&mut self) {
-        let eligible = self.eligible_history_indices();
-        let now = Instant::now();
-        match rewind_escape_action(
-            self.has_retained_run(),
-            !eligible.is_empty(),
-            self.rewind_primed_at,
-            now,
-            self.rewind_prime_window,
-        ) {
-            RewindEscapeAction::Busy => {
-                self.notice = Notice::localized(MessageId::HistoryBusy);
-                self.rewind_primed_at = None;
-            }
-            RewindEscapeAction::Unavailable => {
-                self.notice = Notice::localized(MessageId::HistoryNoEarlierPrompt);
-                self.rewind_primed_at = None;
-            }
-            RewindEscapeAction::Prime => {
-                self.rewind_primed_at = Some(now);
-                self.notice = Notice::localized(MessageId::HistoryPrime);
-            }
-            RewindEscapeAction::Open => {
-                self.history_generation = self.history_generation.saturating_add(1);
-                self.history_branch_request_id = None;
-                self.history_branch_pending = false;
-                self.history_stashed_draft = Some(self.composer.text().to_owned());
-                self.history_original_scroll =
-                    Some((self.transcript_scroll, self.transcript_follow_bottom));
-                self.composer.set_text("");
-                self.composer_state = TextAreaState::default();
-                self.history_selected = eligible.last().copied();
-                self.rewind_primed_at = None;
-                self.sync_history_selection();
-                self.notice = Notice::localized(MessageId::HistoryChoosePrompt);
-            }
-        }
     }
 
     fn handle_history_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -7579,9 +7403,12 @@ impl App {
 
     fn select_agent(&mut self, index: usize) {
         let task_id = match self.overlays.active() {
-            Some(Overlay::Agents(agents)) => agent_entries(&agents.projection)
-                .get(index)
-                .map(|agent| agent.task_id.clone()),
+            Some(Overlay::Agents(agents)) => agent_roster_entries(
+                &agents.projection,
+                &agents.load.session_id,
+            )
+            .get(index)
+            .map(|agent| agent.task_id.clone()),
             _ => None,
         };
         let Some(task_id) = task_id else {
@@ -7806,6 +7633,7 @@ impl App {
             Action::CancelGlyphPreview => self.cancel_glyph_preview(),
             Action::ToggleDensity => self.toggle_density(),
             Action::OpenQueue => self.open_queue_overlay(),
+            Action::OpenPlugins => self.open_plugins_overlay(),
             Action::OpenStatus => {
                 if matches!(self.overlays.active(), Some(Overlay::ProductMenu(_))) {
                     self.close_top_non_governance();
@@ -7926,9 +7754,12 @@ impl App {
             Action::SelectAgent(index) => self.select_agent(index),
             Action::OpenSelectedAgentSession => {
                 let session_id = match self.overlays.active() {
-                    Some(Overlay::Agents(agents)) => agent_entries(&agents.projection)
-                        .get(agents.selected)
-                        .map(|agent| agent.session_id.clone()),
+                    Some(Overlay::Agents(agents)) => agent_roster_entries(
+                        &agents.projection,
+                        &agents.load.session_id,
+                    )
+                    .get(agents.selected)
+                    .map(|agent| agent.session_id.clone()),
                     _ => None,
                 };
                 if let Some(session_id) = session_id {
@@ -7948,7 +7779,7 @@ impl App {
             }
             Action::BeginStopAgent => {
                 if let Some(Overlay::Agents(agents)) = self.overlays.active_mut()
-                    && agent_entries(&agents.projection)
+                    && agent_roster_entries(&agents.projection, &agents.load.session_id)
                         .get(agents.selected)
                         .is_some_and(|agent| agent.category != "completed")
                 {
@@ -7958,7 +7789,7 @@ impl App {
             Action::ConfirmStopAgent => {
                 let task_id = match self.overlays.active() {
                     Some(Overlay::Agents(agents)) if agents.confirm_stop => {
-                        agent_entries(&agents.projection)
+                        agent_roster_entries(&agents.projection, &agents.load.session_id)
                             .get(agents.selected)
                             .map(|agent| agent.task_id.clone())
                     }
@@ -8398,13 +8229,14 @@ fn combined_prompt_history(
 }
 
 fn agent_entries(projection: &ProductProjection) -> Vec<&crate::rpc::AgentViewEntry> {
-    projection
-        .agents
-        .needs_input
-        .iter()
-        .chain(projection.agents.working.iter())
-        .chain(projection.agents.completed.iter())
-        .collect()
+    agent_roster_entries(projection, "")
+}
+
+fn agent_roster_entries<'a>(
+    projection: &'a ProductProjection,
+    parent_session: &str,
+) -> Vec<&'a crate::rpc::AgentViewEntry> {
+    projection.agents.roster_entries(parent_session)
 }
 
 fn startup_phase(
@@ -9734,46 +9566,6 @@ fn inline_force_reason(policy: AltScreenPolicy) -> &'static str {
     match policy {
         AltScreenPolicy::Never => "alt-screen-never",
         _ => "capability-fallback",
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RewindEscapeAction {
-    Busy,
-    Unavailable,
-    Prime,
-    Open,
-}
-
-fn rewind_prime_window() -> Duration {
-    rewind_prime_window_from(std::env::var(REWIND_GRACE_ENV).ok().as_deref())
-}
-
-fn rewind_prime_window_from(value: Option<&str>) -> Duration {
-    value
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .filter(|millis| (MIN_REWIND_GRACE_MS..=MAX_REWIND_GRACE_MS).contains(millis))
-        .map(Duration::from_millis)
-        .unwrap_or(DEFAULT_REWIND_PRIME_WINDOW)
-}
-
-fn rewind_escape_action(
-    active_run: bool,
-    has_eligible_history: bool,
-    primed_at: Option<Instant>,
-    now: Instant,
-    grace: Duration,
-) -> RewindEscapeAction {
-    if active_run {
-        return RewindEscapeAction::Busy;
-    }
-    if !has_eligible_history {
-        return RewindEscapeAction::Unavailable;
-    }
-    if primed_at.is_some_and(|primed| now.saturating_duration_since(primed) <= grace) {
-        RewindEscapeAction::Open
-    } else {
-        RewindEscapeAction::Prime
     }
 }
 

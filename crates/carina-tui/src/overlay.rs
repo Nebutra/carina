@@ -28,6 +28,7 @@ pub enum Overlay {
     FileViewer(FileViewer),
     ToolOutput(ToolOutputOverlay),
     Queue(QueueOverlay),
+    Plugins(PluginsOverlay),
 }
 
 impl Overlay {
@@ -139,7 +140,8 @@ impl Overlay {
             | Self::Changes(_)
             | Self::FileViewer(_)
             | Self::ToolOutput(_)
-            | Self::Queue(_) => None,
+            | Self::Queue(_)
+            | Self::Plugins(_) => None,
         }
     }
 }
@@ -574,6 +576,13 @@ pub enum ChangesFocus {
     #[default]
     Transactions,
     Files,
+}
+
+#[derive(Debug, Clone)]
+pub struct PluginsOverlay {
+    pub inventory: crate::rpc::ExtensionInventory,
+    pub selected: usize,
+    pub error: String,
 }
 
 #[derive(Debug, Clone)]

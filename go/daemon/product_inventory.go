@@ -98,13 +98,16 @@ func (d *Daemon) handleConfigInventory(params json.RawMessage) (any, error) {
 	choices := map[string]any{
 		"interaction_mode": []string{"build", "plan"},
 		"approval_mode":    []string{approvalModeAsk, approvalModeAlwaysApprove, approvalModeDontAsk, approvalModeAcceptEdits},
+		"approval_preset":  hitlPresetIDs(),
 		"reasoning_effort": []string{"default", "low", "medium", "high", "max", "auto"},
 		"sandbox":          []string{"on", "off (daemon policy may forbid)"},
 	}
 	return map[string]any{
-		"effective": effective,
-		"sources":   map[string]any{"session": "session store", "runtime": "daemon config/env/CLI (effective value shown)"},
-		"choices":   choices,
-		"mutation":  "use dedicated governed commands (/mode, /model, /always-approve, /approval-mode, /dont-ask, /permissions new …); this inventory endpoint never mutates configuration",
+		"effective":    effective,
+		"hitl_presets": hitlPresetCatalog(),
+		"hitl_preset":  matchHITLPreset(mode, sess.PermissionProfile),
+		"sources":      map[string]any{"session": "session store", "runtime": "daemon config/env/CLI (effective value shown)"},
+		"choices":      choices,
+		"mutation":     "use dedicated governed commands (/mode, /model, /always-approve, /approval-mode, /dont-ask, /permissions new …); named presets only set product HITL mode and do not change the session profile",
 	}, nil
 }

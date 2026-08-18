@@ -309,7 +309,7 @@ func TestCmdResumeSubmitsTaskToExistingSession(t *testing.T) {
 func TestCmdContextStatus(t *testing.T) {
 	s := rpc.NewServer()
 	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "context.status", Scope: rpc.ScopeRead, Remote: true}, func(params json.RawMessage) (any, error) {
-		return map[string]any{"effective_engine": "noop"}, nil
+		return map[string]any{"effective_engine": "noop", "reason": "no bytes were transformed; Transcript.compact is the product compressor"}, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -329,8 +329,45 @@ func TestCmdContextStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, `"effective_engine": "noop"`) {
+	if !strings.Contains(out, `"effective_engine": "noop"`) || !strings.Contains(out, "engine=noop") {
 		t.Fatalf("context status output missing engine:\n%s", out)
+	}
+	if !strings.Contains(out, "no bytes were transformed") {
+		t.Fatalf("context status output missing identity sentence:\n%s", out)
+	}
+}
+
+func TestCmdContextDoctor(t *testing.T) {
+	s := rpc.NewServer()
+	if err := s.RegisterMethod(rpc.MethodDescriptor{Method: "context.doctor", Scope: rpc.ScopeRead, Remote: true}, func(params json.RawMessage) (any, error) {
+		return map[string]any{
+			"ok": true, "engine": "noop", "transformed": false,
+			"reason": "no bytes were transformed; Transcript.compact is the product compressor",
+		}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	addr := freeTCPAddr(t)
+	go func() { _ = s.ListenTCP(addr) }()
+	defer s.Close()
+	waitTCP(t, addr)
+	c, err := rpc.DialTCP(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	out, err := captureStdout(t, func() error {
+		return cmdContext(c, []string{"doctor"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "engine=noop") || !strings.Contains(out, "no bytes were transformed") {
+		t.Fatalf("context doctor output missing identity honesty:\n%s", out)
+	}
+	if strings.Count(out, "no bytes were transformed") != 2 {
+		t.Fatalf("context doctor should print identity once as prose plus once in JSON:\n%s", out)
 	}
 }
 
@@ -348,7 +385,10 @@ func TestCmdContextStatsAndCompress(t *testing.T) {
 			return nil, err
 		}
 		compressed, _ = p["content"].(string)
-		return map[string]any{"content": compressed}, nil
+		return map[string]any{
+			"content": compressed, "engine": "noop", "ratio": 1, "transformed": false,
+			"reason": "no bytes were transformed; Transcript.compact is the product compressor",
+		}, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -367,8 +407,10 @@ func TestCmdContextStatsAndCompress(t *testing.T) {
 	} else if !strings.Contains(out, `"engine": "noop"`) {
 		t.Fatalf("context stats output missing engine:\n%s", out)
 	}
-	if _, err := captureStdout(t, func() error { return cmdContext(c, []string{"compress", "hello"}) }); err != nil {
+	if out, err := captureStdout(t, func() error { return cmdContext(c, []string{"compress", "hello"}) }); err != nil {
 		t.Fatal(err)
+	} else if !strings.Contains(out, "engine=noop") || !strings.Contains(out, "no bytes were transformed") {
+		t.Fatalf("compress output missing identity honesty:\n%s", out)
 	}
 	if compressed != "hello" {
 		t.Fatalf("compress params = %q", compressed)
