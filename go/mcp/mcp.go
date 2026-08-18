@@ -25,6 +25,10 @@ import (
 const (
 	protocolVersion = "2024-11-05"
 	callTimeout     = 30 * time.Second
+
+	InventoryReady   = "ready"
+	InventoryProbing = "probing"
+	InventoryOffline = "offline"
 )
 
 // Server is one configured MCP server (mcpServers entry in mcp.json).
@@ -372,13 +376,24 @@ type config struct {
 	MCPServers map[string]Server `json:"mcpServers"`
 }
 
+// InventorySnapshot is the operator-visible registry readiness. Missing
+// mcp.json and safe-mode stay ready with generation 0 — never a fake probe.
+type InventorySnapshot struct {
+	State      string `json:"state"`
+	Generation uint64 `json:"generation"`
+}
+
 // Manager owns the set of connected MCP servers.
 type Manager struct {
-	mu      sync.Mutex
-	clients map[string]*Client
-	hidden  map[string]bool
-	failed  map[string]bool
-	closed  bool
+	mu           sync.Mutex
+	clients      map[string]*Client
+	hidden       map[string]bool
+	failed       map[string]bool
+	closed       bool
+	state        string
+	generation   uint64
+	loadPending  bool
+	loadExpected int
 }
 
 func NewManager() *Manager {
@@ -432,6 +447,12 @@ func (m *Manager) connect(name string, srv Server, hidden bool) error {
 	m.clients[name] = c
 	m.hidden[name] = hidden
 	delete(m.failed, name)
+	if !hidden && !m.loadPending {
+		m.generation++
+		if m.state == InventoryOffline {
+			m.state = InventoryReady
+		}
+	}
 	m.mu.Unlock()
 	return nil
 }
@@ -454,9 +475,98 @@ func (m *Manager) Disconnect(name string) {
 	}
 }
 
+// Snapshot returns registry readiness. Empty state serializes as ready.
+func (m *Manager) Snapshot() InventorySnapshot {
+	if m == nil {
+		return InventorySnapshot{State: InventoryReady}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.state
+	if state == "" {
+		state = InventoryReady
+	}
+	return InventorySnapshot{State: state, Generation: m.generation}
+}
+
+func publicServerCount(paths ...string) int {
+	n := 0
+	for _, p := range paths {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var cfg config
+		if json.Unmarshal(raw, &cfg) != nil {
+			continue
+		}
+		n += len(cfg.MCPServers)
+	}
+	return n
+}
+
+// BeginDeferredLoad marks the registry probing when mcp.json names at least
+// one public server. Missing or empty configs stay quiet. Returns whether a
+// probe is now in flight so ListenUnix can precede the actual handshake.
+func (m *Manager) BeginDeferredLoad(paths ...string) bool {
+	if m == nil {
+		return false
+	}
+	n := publicServerCount(paths...)
+	if n == 0 {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return false
+	}
+	m.loadPending = true
+	m.loadExpected = n
+	m.state = InventoryProbing
+	return true
+}
+
+func (m *Manager) finishPublicLoad() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.loadPending {
+		return
+	}
+	connected := 0
+	for name := range m.clients {
+		if !m.hidden[name] {
+			connected++
+		}
+	}
+	m.loadPending = false
+	if connected > 0 {
+		m.state = InventoryReady
+	} else if m.loadExpected > 0 {
+		m.state = InventoryOffline
+	} else {
+		m.state = InventoryReady
+	}
+	m.generation++
+}
+
 // LoadAndConnect reads mcp.json config files and connects each server (best
-// effort — a server that fails to start is skipped, not fatal).
+// effort — a server that fails to start is skipped, not fatal). A configured
+// file starts as probing (via BeginDeferredLoad) and settles to ready or
+// offline when every handshake has finished.
 func (m *Manager) LoadAndConnect(paths ...string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	pending := m.loadPending
+	m.mu.Unlock()
+	if !pending && !m.BeginDeferredLoad(paths...) {
+		return
+	}
 	for _, p := range paths {
 		raw, err := os.ReadFile(p)
 		if err != nil {
@@ -470,6 +580,7 @@ func (m *Manager) LoadAndConnect(paths ...string) {
 			_ = m.Connect(name, srv)
 		}
 	}
+	m.finishPublicLoad()
 }
 
 // Tools returns every connected server's tools, namespaced for the agent.
@@ -670,4 +781,7 @@ func (m *Manager) Close() {
 	}
 	m.clients = map[string]*Client{}
 	m.failed = map[string]bool{}
+	m.loadPending = false
+	m.loadExpected = 0
+	m.state = InventoryReady
 }

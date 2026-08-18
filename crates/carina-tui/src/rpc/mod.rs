@@ -1231,6 +1231,7 @@ mod tests {
                     ..PromptCommand::default()
                 },
             ],
+            ..CommandRegistry::default()
         });
         assert_eq!(registry.commands.len(), 1);
         assert_eq!(registry.commands[0].id, "prompt:project:review");
@@ -1262,6 +1263,7 @@ mod tests {
                     ..PromptCommand::default()
                 },
             ],
+            ..CommandRegistry::default()
         });
         assert_eq!(registry.commands.len(), 1);
         assert_eq!(registry.commands[0].name, "between");

@@ -893,6 +893,13 @@ func (d *Daemon) startDeferredStartup() {
 	offline := d.offline
 	safeMode := d.safeMode
 	grokDisabled := d.disabledProviders[provider.GrokBuildProviderID]
+	mcpPath := ""
+	if !safeMode {
+		if home, err := os.UserHomeDir(); err == nil {
+			mcpPath = filepath.Join(home, ".carina", "mcp.json")
+			d.mcp.BeginDeferredLoad(mcpPath)
+		}
+	}
 	d.loopWG.Add(1)
 	go func() {
 		defer d.loopWG.Done()
@@ -902,11 +909,9 @@ func (d *Daemon) startDeferredStartup() {
 		if safeMode {
 			return
 		}
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return
+		if mcpPath != "" {
+			d.mcp.LoadAndConnect(mcpPath)
 		}
-		d.mcp.LoadAndConnect(filepath.Join(home, ".carina", "mcp.json"))
 		select {
 		case <-d.stopCh:
 			d.mcp.Close()
@@ -1379,10 +1384,18 @@ func (d *Daemon) handleCommandList(params json.RawMessage) (any, error) {
 		specs = builtinCommandSpecs()
 	}
 	infos := sortedCommandInfos(specs)
-	return map[string]any{
-		"revision": commandRegistryRevision(infos),
-		"commands": infos,
-	}, nil
+	out := map[string]any{
+		"revision":   commandRegistryRevision(infos),
+		"commands":   infos,
+		"state":      mcp.InventoryReady,
+		"generation": uint64(0),
+	}
+	if d.mcp != nil {
+		snap := d.mcp.Snapshot()
+		out["state"] = snap.State
+		out["generation"] = snap.Generation
+	}
+	return out, nil
 }
 
 // handleWorkspaceTrust marks a workspace root trusted/untrusted for command

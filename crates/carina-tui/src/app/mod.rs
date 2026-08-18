@@ -2018,6 +2018,12 @@ impl App {
             let result = Client::connect(&socket)
                 .and_then(|mut rpc| rpc.command_registry(&session_id))
                 .map_err(|error| error.to_string());
+            if result
+                .as_ref()
+                .is_ok_and(|registry| registry.state == "probing")
+            {
+                std::thread::sleep(Duration::from_millis(400));
+            }
             let _ = tx.send(AsyncMessage::CommandRegistryLoaded {
                 generation,
                 session_id,
@@ -2769,10 +2775,14 @@ impl App {
                     }
                     match result {
                         Ok(registry) => {
+                            let probing = registry.state == "probing";
                             self.command_registry = registry;
                             self.command_registry_session = session_id;
                             self.command_registry_stale = false;
                             self.sync_slash_selection();
+                            if probing {
+                                self.request_command_registry();
+                            }
                         }
                         Err(error) => {
                             self.command_registry_stale = true;
@@ -3101,6 +3111,20 @@ impl App {
                                 || lifecycle.is_some_and(ExecutionLifecycle::is_terminal)
                             {
                                 self.request_context_summary();
+                            }
+                            if event.kind == "ContextCompacted" {
+                                self.request_context_summary();
+                                let circuit_open = event.projected_status()
+                                    == "summarizer_circuit_open"
+                                    || event
+                                        .payload
+                                        .get("summarizer_circuit")
+                                        .and_then(serde_json::Value::as_str)
+                                        == Some("open");
+                                if circuit_open {
+                                    self.notice = Notice::localized(MessageId::SummarizerCircuitOpen);
+                                    visual_changed = true;
+                                }
                             }
                             let plan_review = self.active_session.as_ref().and_then(|session| {
                                 plan_review_overlay(session).filter(|review| {
@@ -4770,13 +4794,15 @@ impl App {
         if self.slash_dismissed_input.as_deref() == Some(input) {
             return Vec::new();
         }
-        command::palette_matching(
+        let mut suggestions = command::palette_matching(
             input,
             self.has_retained_run(),
             &self.command_registry.commands,
             &self.command_registry.revision,
             &self.command_mru,
-        )
+        );
+        command::apply_registry_state(&mut suggestions, &self.command_registry.state);
+        suggestions
     }
 
     fn sync_slash_selection(&mut self) {
@@ -4991,6 +5017,12 @@ impl App {
         self.media.reconcile(&self.composer);
         let prompt = self.media.prompt_text(&self.composer);
         if prompt.is_empty() && self.media.is_empty() {
+            return Ok(());
+        }
+        if let Some(reason) =
+            command::mcp_slash_unready(&prompt, &self.command_registry.state)
+        {
+            self.notice = Notice::localized(reason);
             return Ok(());
         }
         if let Some(Err(error)) =

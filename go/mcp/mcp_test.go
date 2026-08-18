@@ -88,6 +88,59 @@ func writeMockConfig(t *testing.T) string {
 	return cfg
 }
 
+func TestInventoryStaysQuietWithoutConfig(t *testing.T) {
+	m := NewManager()
+	defer m.Close()
+	if m.BeginDeferredLoad(filepath.Join(t.TempDir(), "missing-mcp.json")) {
+		t.Fatal("missing mcp.json must not start a probe")
+	}
+	snap := m.Snapshot()
+	if snap.State != InventoryReady || snap.Generation != 0 {
+		t.Fatalf("empty manager snapshot = %+v", snap)
+	}
+	empty := filepath.Join(t.TempDir(), "mcp.json")
+	if err := os.WriteFile(empty, []byte(`{"mcpServers":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.LoadAndConnect(empty)
+	snap = m.Snapshot()
+	if snap.State != InventoryReady || snap.Generation != 0 {
+		t.Fatalf("empty mcp.json must stay quiet: %+v", snap)
+	}
+}
+
+func TestDeferredLoadProbesThenBumpsGeneration(t *testing.T) {
+	cfg := writeMockConfig(t)
+	m := NewManager()
+	defer m.Close()
+	if !m.BeginDeferredLoad(cfg) {
+		t.Fatal("configured mcp.json must start probing")
+	}
+	before := m.Snapshot()
+	if before.State != InventoryProbing || before.Generation != 0 {
+		t.Fatalf("pre-connect snapshot = %+v", before)
+	}
+	m.LoadAndConnect(cfg)
+	after := m.Snapshot()
+	if after.State != InventoryReady || after.Generation != before.Generation+1 {
+		t.Fatalf("post-connect snapshot = %+v (was %+v)", after, before)
+	}
+}
+
+func TestLoadAndConnectAllFailuresAreOffline(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "mcp.json")
+	if err := os.WriteFile(cfg, []byte(`{"mcpServers":{"gone":{"command":"carina-mcp-missing-binary"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager()
+	defer m.Close()
+	m.LoadAndConnect(cfg)
+	snap := m.Snapshot()
+	if snap.State != InventoryOffline || snap.Generation != 1 {
+		t.Fatalf("failed handshake snapshot = %+v", snap)
+	}
+}
+
 func TestMCPClientLifecycle(t *testing.T) {
 	cfg := writeMockConfig(t)
 	m := NewManager()

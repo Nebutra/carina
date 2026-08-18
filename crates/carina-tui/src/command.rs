@@ -345,6 +345,48 @@ pub fn command_unavailable_reason(
     }
 }
 
+pub fn registry_state_notice(state: &str) -> Option<MessageId> {
+    match state {
+        "probing" => Some(MessageId::CommandRegistryProbing),
+        "offline" => Some(MessageId::CommandRegistryStale),
+        _ => None,
+    }
+}
+
+pub fn is_mcp_slash(input: &str) -> bool {
+    let (head, _) = split_prompt_command(input.trim());
+    head.trim_start_matches('/')
+        .to_ascii_lowercase()
+        .starts_with("mcp.")
+}
+
+pub fn mcp_slash_unready(input: &str, registry_state: &str) -> Option<MessageId> {
+    if !is_mcp_slash(input) {
+        return None;
+    }
+    match registry_state {
+        "probing" => Some(MessageId::CommandMcpProbingDraftKept),
+        "offline" => Some(MessageId::CommandRegistryStale),
+        _ => None,
+    }
+}
+
+pub fn apply_registry_state(suggestions: &mut [CommandSuggestion], registry_state: &str) {
+    let reason = match registry_state {
+        "probing" => Some(MessageId::CommandRegistryProbing),
+        "offline" => Some(MessageId::CommandRegistryStale),
+        _ => None,
+    };
+    let Some(reason) = reason else {
+        return;
+    };
+    for suggestion in suggestions {
+        if suggestion.source == "mcp" {
+            suggestion.unavailable_reason = Some(reason);
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SuggestionDescription {
     Localized(MessageId),
@@ -951,8 +993,18 @@ mod tests {
             source: "mcp".into(),
             ..PromptCommand::default()
         }];
-        let matches = palette_matching("/mcp.g", false, &namespaced, "revision", &[]);
+        let mut matches = palette_matching("/mcp.g", false, &namespaced, "revision", &[]);
         assert_eq!(matches[0].namespace.as_deref(), Some("mcp.github"));
+        apply_registry_state(&mut matches, "probing");
+        assert_eq!(
+            matches[0].unavailable_reason,
+            Some(MessageId::CommandRegistryProbing)
+        );
+        assert_eq!(
+            mcp_slash_unready("/mcp.mock.review parser", "probing"),
+            Some(MessageId::CommandMcpProbingDraftKept)
+        );
+        assert!(mcp_slash_unready("/review", "probing").is_none());
 
         let shadow = vec![PromptCommand {
             id: "prompt:project:status".into(),

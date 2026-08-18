@@ -3681,6 +3681,15 @@ impl App {
                         self.theme.glyphs.separator(),
                         tr(locale, MessageId::CommandRegistryStale)
                     )
+                } else if let Some(reason) =
+                    crate::command::registry_state_notice(&self.command_registry.state)
+                {
+                    format!(
+                        "{} {} {}",
+                        tr(locale, MessageId::Commands),
+                        self.theme.glyphs.separator(),
+                        tr(locale, reason)
+                    )
                 } else {
                     tr(locale, MessageId::Commands).to_owned()
                 }
@@ -4893,14 +4902,20 @@ impl App {
             }
             Overlay::Help(help) => {
                 // Issue #22: real /help surface from the command + keybinding registry.
-                let commands = crate::command::palette_matching(
+                let mut discovered = crate::command::palette_matching(
                     "/",
                     self.active_run_id.is_some(),
                     &self.command_registry.commands,
                     &self.command_registry.revision,
                     &self.command_mru,
-                )
+                );
+                crate::command::apply_registry_state(
+                    &mut discovered,
+                    &self.command_registry.state,
+                );
+                let commands = discovered
                 .into_iter()
+                .filter(|command| command.unavailable_reason.is_none())
                 .map(|command| crate::help::HelpEntry {
                     key: command.name,
                     description: match command.description {
@@ -4917,6 +4932,18 @@ impl App {
                 .collect();
                 let surface =
                     crate::help::build_help_surface(self.keybindings, commands, self.ui_locale());
+                let help_title = if let Some(reason) =
+                    crate::command::registry_state_notice(&self.command_registry.state)
+                {
+                    format!(
+                        "{} {} {}",
+                        surface.title,
+                        self.theme.glyphs.separator(),
+                        tr(self.ui_locale(), reason)
+                    )
+                } else {
+                    surface.title.clone()
+                };
                 let popup = centered(
                     area,
                     layout_contract::APPROVAL_POPUP.0,
@@ -4927,7 +4954,7 @@ impl App {
                     .borders(Borders::ALL)
                     .border_type(self.theme.glyphs.outer_border_type())
                     .border_style(self.theme.focus())
-                    .title(format!(" {} ", surface.title))
+                    .title(format!(" {help_title} "))
                     .style(Style::default());
                 let inner = block.inner(popup).inner(Margin::new(2, 1));
                 frame.render_widget(block, popup);
@@ -5253,6 +5280,19 @@ impl App {
                         )),
                         Line::from(format!("key files  {}", receipt.key_files.join(", "))),
                     ]);
+                    if receipt.summarizer_failures > 0 {
+                        let circuit = if receipt.summarizer_failures >= 3
+                            || ledger.summarizer_circuit == "open"
+                        {
+                            "  circuit open"
+                        } else {
+                            ""
+                        };
+                        body.push(Line::from(format!(
+                            "summarizer  {} fail(s){}",
+                            receipt.summarizer_failures, circuit
+                        )));
+                    }
                 }
                 body.push(Line::from(""));
                 body.push(Line::from(Span::styled(

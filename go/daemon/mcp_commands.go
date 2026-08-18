@@ -44,6 +44,24 @@ func (d *Daemon) commandSpecs(workspaceRoot string) map[string]*CommandSpec {
 	return specs
 }
 
+func mcpSlashName(name string) bool {
+	return strings.HasPrefix(strings.TrimSpace(name), "mcp.")
+}
+
+func (d *Daemon) mcpSlashReadiness(name string) error {
+	if !mcpSlashName(name) || d == nil || d.mcp == nil || d.safeMode {
+		return nil
+	}
+	switch d.mcp.Snapshot().State {
+	case mcp.InventoryProbing:
+		return fmt.Errorf("mcp registry is still probing; wait and retry")
+	case mcp.InventoryOffline:
+		return fmt.Errorf("mcp registry is offline")
+	default:
+		return nil
+	}
+}
+
 func mcpPromptCommandName(server, prompt string) string {
 	server = strings.TrimSpace(server)
 	prompt = strings.TrimSpace(prompt)
@@ -85,6 +103,9 @@ func (d *Daemon) expandTaskSlashCommand(input, workspaceRoot string) (*ExpandedC
 	name, args, ok, err := parseSlashCommand(input)
 	if err != nil || !ok {
 		return nil, ok, err
+	}
+	if err := d.mcpSlashReadiness(name); err != nil {
+		return nil, true, err
 	}
 	spec := specs[name]
 	if spec == nil {

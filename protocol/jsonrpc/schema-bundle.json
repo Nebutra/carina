@@ -47,7 +47,7 @@
     "schedule.resume": {"params":{"$ref":"#/$defs/schedule_session_params"},"result":{"type":"object"}},
     "schedule.delete": {"params":{"$ref":"#/$defs/schedule_session_params"},"result":{"type":"object"}},
     "workspace.diff": {"params":{"$ref":"#/$defs/goal_session_params"},"result":{"type":"object","required":["files","truncated","total_bytes","limits"],"properties":{"files":{"type":"array","items":{"$ref":"#/$defs/workspace_diff_file"}},"truncated":{"type":"boolean"},"total_bytes":{"type":"integer","minimum":0},"limits":{"type":"object"}},"additionalProperties":false}},
-    "mcp.inventory": {"params":{"type":"object","properties":{"verbose":{"type":"boolean"}},"additionalProperties":false},"result":{"type":"object","required":["servers","count"],"properties":{"servers":{"type":"array","items":{"$ref":"#/$defs/mcp_inventory_server"}},"count":{"type":"integer","minimum":0}},"additionalProperties":false}},
+    "mcp.inventory": {"params":{"type":"object","properties":{"verbose":{"type":"boolean"}},"additionalProperties":false},"result":{"type":"object","required":["servers","count"],"properties":{"servers":{"type":"array","items":{"$ref":"#/$defs/mcp_inventory_server"}},"count":{"type":"integer","minimum":0},"state":{"enum":["ready","probing","offline"]},"generation":{"type":"integer","minimum":0}},"additionalProperties":false}},
     "profile.inventory": {"params":{"$ref":"#/$defs/goal_session_params"},"result":{"type":"object"}},
     "config.inventory": {"params":{"$ref":"#/$defs/goal_session_params"},"result":{"type":"object"}},
     "skill.inventory": {"params":{"$ref":"#/$defs/goal_session_params"},"result":{"type":"object"}},

@@ -9,6 +9,10 @@ pub struct CommandRegistry {
     pub revision: String,
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub commands: Vec<PromptCommand>,
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub generation: u64,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
@@ -131,6 +135,10 @@ pub struct ContextLedger {
     pub pinned_turns: Vec<usize>,
     #[serde(default)]
     pub receipts: Vec<ContextCompactionReceipt>,
+    #[serde(default)]
+    pub summarizer_failures: u32,
+    #[serde(default)]
+    pub summarizer_circuit: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
@@ -412,6 +420,8 @@ pub struct ContextCompactionReceipt {
     pub transforms: Vec<String>,
     #[serde(default)]
     pub pressure_after: f64,
+    #[serde(default)]
+    pub summarizer_failures: u32,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
