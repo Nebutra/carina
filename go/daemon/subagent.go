@@ -278,7 +278,7 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 		if receipt := tr.compact(func(head string) (string, error) {
 			return thinkWithRetry(ctx, d.summarizeReasoner(), "Summarize concisely:\n"+head)
 		}); receipt != nil {
-			d.record(sess.SessionID, "ContextCompacted", task.RunID, "go", map[string]any{"receipt": receipt}, "")
+			d.record(sess.SessionID, "ContextCompacted", task.RunID, "go", contextCompactedPayload(receipt, nil), "")
 		}
 		seg := buildPromptSegmentsFromLayers(layers, task.UserPrompt, tr.render(), "Next action as one JSON object.")
 

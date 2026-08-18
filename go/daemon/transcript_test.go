@@ -577,6 +577,148 @@ func TestCompactionAllUserHeadSkipsSummarize(t *testing.T) {
 	}
 }
 
+func summarizerBreakerPolicy() CompactionPolicy {
+	return CompactionPolicy{MaxChars: 800, KeepRecent: 2, ToolOutputMax: 400, SummarizeAfter: 4, VerbatimUserMaxChars: 4000}
+}
+
+func inflateTranscriptForSummarizer(tr *Transcript, cycle int, userConstraint string) {
+	if userConstraint != "" && (cycle == 0 || !transcriptHasUserConstraint(tr, userConstraint)) {
+		tr.addTurn(Turn{Tool: "user", ActionBrief: "steer", Obs: Observation{Content: userConstraint, Pinned: true}})
+	}
+	for i := 0; i < 10; i++ {
+		tr.addTurn(Turn{
+			Tool:        "read",
+			ActionBrief: fmt.Sprintf("read f%d_%d", cycle, i),
+			Obs:         Observation{Content: strings.Repeat("data ", 60)},
+		})
+	}
+}
+
+func transcriptHasUserConstraint(tr *Transcript, constraint string) bool {
+	for _, turn := range tr.Turns {
+		if turn.Tool == "user" && strings.Contains(turn.Obs.Content, constraint) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestCompactionSummarizerCircuitBreakerFallsBackAndStopsCalling is the
+// ISSUE-021 / #30 contract: a flaky summarizer must not wipe the head or
+// keep burning tokens. Three consecutive errors collapse locally and stamp
+// the failure count; the fourth compact stays collapse_only and does not
+// call summarize. "don't use X" survives in the model-visible render.
+func TestCompactionSummarizerCircuitBreakerFallsBackAndStopsCalling(t *testing.T) {
+	constraint := "don't use X"
+	tr := newTranscript("fix the bug")
+	tr.policy = summarizerBreakerPolicy()
+	calls := 0
+	summarize := func(string) (string, error) {
+		calls++
+		return "", fmt.Errorf("summarizer down")
+	}
+	var last *CompactionReceipt
+	for i := 0; i < 4; i++ {
+		inflateTranscriptForSummarizer(tr, i, constraint)
+		if !tr.shouldCompact() {
+			t.Fatalf("cycle %d must start over budget", i)
+		}
+		last = tr.compact(summarize)
+		if last == nil {
+			t.Fatalf("cycle %d: expected a collapse receipt after summarizer failure, got nil", i)
+		}
+		if strings.TrimSpace(tr.Summary) == "" {
+			t.Fatalf("cycle %d wrote an empty Summary over a non-empty head", i)
+		}
+		if last.Mode != compactionModeCollapseOnly {
+			t.Fatalf("cycle %d receipt mode = %q, want collapse_only", i, last.Mode)
+		}
+		if !strings.Contains(tr.render(), constraint) {
+			t.Fatalf("cycle %d dropped %q from the model-visible render:\n%s", i, constraint, tr.render())
+		}
+	}
+	if calls != 3 {
+		t.Fatalf("summarizer calls = %d, want 3 (fourth compact must not invoke)", calls)
+	}
+	if last.SummarizerFailures != 3 {
+		t.Fatalf("open-circuit receipt failures = %d, want 3: %+v", last.SummarizerFailures, last)
+	}
+	if !reflect.DeepEqual(last.Transforms, []string{"elide_tool_output", "collapse_action_skeleton", "summarizer_circuit_open"}) {
+		t.Fatalf("open-circuit transforms = %v", last.Transforms)
+	}
+	if tr.SummarizerFailures != 3 || !tr.summarizerCircuitOpen() {
+		t.Fatalf("transcript breaker = %d open=%v", tr.SummarizerFailures, tr.summarizerCircuitOpen())
+	}
+	payload := contextCompactedPayload(last, nil)
+	if payload["status"] != "summarizer_circuit_open" || payload["summarizer_circuit"] != "open" {
+		t.Fatalf("chrome payload missing circuit notice: %#v", payload)
+	}
+}
+
+func TestCompactionEmptySummarizerCountsAsFailureAndKeepsHead(t *testing.T) {
+	tr := newTranscript("fix the bug")
+	tr.policy = summarizerBreakerPolicy()
+	inflateTranscriptForSummarizer(tr, 0, "don't use X")
+	receipt := tr.compact(func(string) (string, error) { return "  \n", nil })
+	if receipt == nil || receipt.Mode != compactionModeCollapseOnly || receipt.SummarizerFailures != 1 {
+		t.Fatalf("empty model summary must fail closed onto collapse: %+v", receipt)
+	}
+	if !reflect.DeepEqual(receipt.Transforms, []string{"elide_tool_output", "collapse_action_skeleton", "summarizer_failed"}) {
+		t.Fatalf("empty-summary transforms = %v", receipt.Transforms)
+	}
+	if strings.TrimSpace(tr.Summary) == "" || !strings.Contains(tr.render(), "don't use X") {
+		t.Fatalf("empty model summary must not replace the head: summary=%q render=%q", tr.Summary, tr.render())
+	}
+}
+
+func TestCompactionSuccessfulSummaryResetsBreaker(t *testing.T) {
+	tr := newTranscript("fix the bug")
+	tr.policy = summarizerBreakerPolicy()
+	fail := func(string) (string, error) { return "", fmt.Errorf("down") }
+	for i := 0; i < 2; i++ {
+		inflateTranscriptForSummarizer(tr, i, "don't use X")
+		if receipt := tr.compact(fail); receipt == nil || receipt.SummarizerFailures != i+1 {
+			t.Fatalf("warmup failure %d: %+v", i+1, receipt)
+		}
+	}
+	inflateTranscriptForSummarizer(tr, 2, "don't use X")
+	ok := tr.compact(func(string) (string, error) { return "SUMMARY: recovered", nil })
+	if ok == nil || ok.Mode != compactionModeSummary || ok.SummarizerFailures != 0 || tr.SummarizerFailures != 0 {
+		t.Fatalf("successful summary must reset the breaker: receipt=%+v failures=%d", ok, tr.SummarizerFailures)
+	}
+	inflateTranscriptForSummarizer(tr, 3, "don't use X")
+	again := tr.compact(fail)
+	if again == nil || again.SummarizerFailures != 1 || tr.summarizerCircuitOpen() {
+		t.Fatalf("failures after reset must start at 1: %+v transcript=%d", again, tr.SummarizerFailures)
+	}
+}
+
+func TestCompactionSummarizerFailuresSurviveCheckpoint(t *testing.T) {
+	tr := newTranscript("task")
+	tr.policy = summarizerBreakerPolicy()
+	inflateTranscriptForSummarizer(tr, 0, "don't use X")
+	if receipt := tr.compact(func(string) (string, error) { return "", fmt.Errorf("down") }); receipt == nil || receipt.SummarizerFailures != 1 {
+		t.Fatal("fixture must record one summarizer failure")
+	}
+	runs := newRunStore(filepath.Join(t.TempDir(), "state"))
+	if err := runs.saveCheckpointChecked("task-breaker", &runCheckpoint{Turn: 1, Transcript: tr}); err != nil {
+		t.Fatal(err)
+	}
+	loaded := runs.loadCheckpoint("task-breaker")
+	if loaded == nil || loaded.Transcript == nil {
+		t.Fatal("checkpoint missing transcript")
+	}
+	if loaded.Transcript.SummarizerFailures != 1 {
+		t.Fatalf("summarizer failure count did not round-trip: %d", loaded.Transcript.SummarizerFailures)
+	}
+	if len(loaded.Transcript.CompactionReceipts) != 1 || loaded.Transcript.CompactionReceipts[0].SummarizerFailures != 1 {
+		t.Fatalf("receipt failure count did not round-trip: %+v", loaded.Transcript.CompactionReceipts)
+	}
+	if !strings.Contains(loaded.Transcript.render(), "don't use X") {
+		t.Fatalf("user constraint missing after checkpoint: %q", loaded.Transcript.render())
+	}
+}
+
 // TestKeyFilesTopKFrequencyOrdering proves keyFiles is a pure, deterministic
 // selector: patch/edit-turn paths counted, ordered by edit count descending
 // with first-seen order breaking ties, deduplicated, capped at k, and blind

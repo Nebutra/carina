@@ -199,9 +199,17 @@ func (d *Daemon) contextLedger(sess *sessionstore.Session, task *scheduler.Execu
 			layer("trailer", seg.taskTrailer, "none"),
 			layer("transcript", visible, "none"),
 		},
-		"elided_turns": transcriptTurnIndices(tr, func(turn Turn) bool { return turn.Obs.Elided }),
-		"pinned_turns": transcriptTurnIndices(tr, func(turn Turn) bool { return turn.Obs.Pinned }),
-		"receipts":     []CompactionReceipt{},
+		"elided_turns":        transcriptTurnIndices(tr, func(turn Turn) bool { return turn.Obs.Elided }),
+		"pinned_turns":        transcriptTurnIndices(tr, func(turn Turn) bool { return turn.Obs.Pinned }),
+		"receipts":            []CompactionReceipt{},
+		"summarizer_failures": 0,
+		"summarizer_circuit":  "closed",
+	}
+	if tr != nil {
+		ledger["summarizer_failures"] = tr.SummarizerFailures
+		if tr.summarizerCircuitOpen() {
+			ledger["summarizer_circuit"] = "open"
+		}
 	}
 	if tr == nil {
 		ledger["reason"] = "latest task has no persisted checkpoint; layers are the next-turn prefix only"

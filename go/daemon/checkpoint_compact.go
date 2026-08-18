@@ -147,7 +147,7 @@ func (d *Daemon) handleCheckpointCompact(params json.RawMessage) (any, error) {
 	if err = d.runs.commitCompact(task.RunID, j); err != nil {
 		return nil, fmt.Errorf("compact commit (retry is idempotent): %w", err)
 	}
-	if err = d.recordChecked(task.SessionID, "ContextCompacted", task.RunID, "operator", map[string]any{"status": "checkpoint_compacted", "operation_id": operationID, "source_checkpoint_id": j.SourceCheckpointID, "target_checkpoint_id": j.Target.CheckpointID, "receipt": receipt, "phase": "completion"}, ""); err != nil {
+	if err = d.recordChecked(task.SessionID, "ContextCompacted", task.RunID, "operator", contextCompactedPayload(receipt, map[string]any{"status": "checkpoint_compacted", "operation_id": operationID, "source_checkpoint_id": j.SourceCheckpointID, "target_checkpoint_id": j.Target.CheckpointID, "phase": "completion"}), ""); err != nil {
 		return nil, fmt.Errorf("compact committed but completion audit failed: %w", err)
 	}
 	cleanup := d.runs.clearCompactJournal(task.RunID) != nil

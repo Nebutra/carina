@@ -373,7 +373,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 
 		// Bound the model view (audit log keeps everything).
 		if receipt := tr.compact(summarize); receipt != nil {
-			d.record(sess.SessionID, "ContextCompacted", task.RunID, "go", map[string]any{"receipt": receipt}, "")
+			d.record(sess.SessionID, "ContextCompacted", task.RunID, "go", contextCompactedPayload(receipt, nil), "")
 		}
 		nativeEligible := d.nativeToolsEligible(d.reasoner, task.Model)
 		turnLayers := layers
@@ -500,9 +500,9 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 				}
 				if namedRecoverFromProvider(info.Code) == recoverPromptTooLong && requery < maxRequeries {
 					if receipt := tr.compact(summarize); receipt != nil {
-						d.record(sess.SessionID, "ContextCompacted", task.RunID, "go", map[string]any{
-							"receipt": receipt, "reason_code": recoverPromptTooLong,
-						}, "")
+						d.record(sess.SessionID, "ContextCompacted", task.RunID, "go", contextCompactedPayload(receipt, map[string]any{
+							"reason_code": recoverPromptTooLong,
+						}), "")
 						outcome["status"] = recoverPromptTooLong
 						outcome["reason_code"] = recoverPromptTooLong
 						outcome["recover"] = true

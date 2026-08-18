@@ -67,6 +67,7 @@ type Transcript struct {
 	Turns              []Turn
 	CompactionReceipts []CompactionReceipt      `json:"compaction_receipts,omitempty"`
 	CompactionBudget   CompactionBudgetSnapshot `json:"compaction_budget,omitempty"`
+	SummarizerFailures int                      `json:"summarizer_failures,omitempty"`
 	policy             CompactionPolicy
 	artifacts          *artifact.Store
 	artifactScope      artifact.Scope
@@ -120,30 +121,32 @@ const (
 //     folded head is represented by a deterministic local action skeleton
 //     instead of a model-written summary. Mode and Transforms disclose which
 //     path produced every new receipt; their absence remains valid for old
-//     v1/v2 checkpoints.
+//     v1/v2 checkpoints. SummarizerFailures is the consecutive empty/error
+//     count after this fold (0 after a successful model summary).
 type CompactionReceipt struct {
-	Version         int            `json:"version"`
-	CreatedAt       time.Time      `json:"created_at"`
-	FirstTurn       int            `json:"first_turn"`
-	LastTurn        int            `json:"last_turn"`
-	RemovedTurns    int            `json:"removed_turns"`
-	PreimageSHA256  string         `json:"preimage_sha256"`
-	SummarySHA256   string         `json:"summary_sha256"`
-	KeptTurnIndices []int          `json:"kept_turn_indices,omitempty"`
-	KeptSHA256      string         `json:"kept_sha256,omitempty"`
-	KeyFiles        []string       `json:"key_files,omitempty"`
-	PolicyVersion   string         `json:"policy_version,omitempty"`
-	WindowTokens    int            `json:"window_tokens,omitempty"`
-	ReserveTokens   int            `json:"reserve_tokens,omitempty"`
-	MetadataSource  string         `json:"metadata_source,omitempty"`
-	PressureBefore  float64        `json:"pressure_before,omitempty"`
-	PressureAfter   float64        `json:"pressure_after,omitempty"`
-	CharsBefore     int            `json:"chars_before,omitempty"`
-	CharsAfter      int            `json:"chars_after,omitempty"`
-	TokensBefore    int            `json:"tokens_before,omitempty"`
-	TokensAfter     int            `json:"tokens_after,omitempty"`
-	Mode            CompactionMode `json:"mode,omitempty"`
-	Transforms      []string       `json:"transforms,omitempty"`
+	Version            int            `json:"version"`
+	CreatedAt          time.Time      `json:"created_at"`
+	FirstTurn          int            `json:"first_turn"`
+	LastTurn           int            `json:"last_turn"`
+	RemovedTurns       int            `json:"removed_turns"`
+	PreimageSHA256     string         `json:"preimage_sha256"`
+	SummarySHA256      string         `json:"summary_sha256"`
+	KeptTurnIndices    []int          `json:"kept_turn_indices,omitempty"`
+	KeptSHA256         string         `json:"kept_sha256,omitempty"`
+	KeyFiles           []string       `json:"key_files,omitempty"`
+	PolicyVersion      string         `json:"policy_version,omitempty"`
+	WindowTokens       int            `json:"window_tokens,omitempty"`
+	ReserveTokens      int            `json:"reserve_tokens,omitempty"`
+	MetadataSource     string         `json:"metadata_source,omitempty"`
+	PressureBefore     float64        `json:"pressure_before,omitempty"`
+	PressureAfter      float64        `json:"pressure_after,omitempty"`
+	CharsBefore        int            `json:"chars_before,omitempty"`
+	CharsAfter         int            `json:"chars_after,omitempty"`
+	TokensBefore       int            `json:"tokens_before,omitempty"`
+	TokensAfter        int            `json:"tokens_after,omitempty"`
+	Mode               CompactionMode `json:"mode,omitempty"`
+	Transforms         []string       `json:"transforms,omitempty"`
+	SummarizerFailures int            `json:"summarizer_failures,omitempty"`
 }
 
 // CompactionPolicy bounds the model view. Provider-neutral preflight
@@ -430,6 +433,57 @@ func (t *Transcript) compactionMode(pressure float64) CompactionMode {
 	return compactionModeSummary
 }
 
+func (t *Transcript) summarizerCircuitOpen() bool {
+	return t != nil && t.SummarizerFailures >= compactionFailureThreshold
+}
+
+func (t *Transcript) noteSummarizerSuccess() {
+	if t != nil {
+		t.SummarizerFailures = 0
+	}
+}
+
+func (t *Transcript) noteSummarizerFailure() {
+	if t != nil {
+		t.SummarizerFailures++
+	}
+}
+
+// invokeSummarizer runs the model summary once. A nil summarizer or an
+// already-open breaker is not an attempt. Empty text and errors both count
+// as a consecutive failure so we never write an empty Summary over a
+// non-empty head.
+func (t *Transcript) invokeSummarizer(summarize func(string) (string, error), head string) (string, bool) {
+	if t == nil || t.summarizerCircuitOpen() || summarize == nil {
+		return "", false
+	}
+	text, err := summarize(head)
+	if err != nil || strings.TrimSpace(text) == "" {
+		t.noteSummarizerFailure()
+		return "", false
+	}
+	t.noteSummarizerSuccess()
+	return text, true
+}
+
+func contextCompactedPayload(receipt *CompactionReceipt, extra map[string]any) map[string]any {
+	payload := map[string]any{}
+	for k, v := range extra {
+		payload[k] = v
+	}
+	if receipt == nil {
+		return payload
+	}
+	payload["receipt"] = receipt
+	if receipt.SummarizerFailures >= compactionFailureThreshold {
+		payload["summarizer_circuit"] = "open"
+		if _, exists := payload["status"]; !exists {
+			payload["status"] = "summarizer_circuit_open"
+		}
+	}
+	return payload
+}
+
 // compact enforces the char budget as a cheap-first cascade. Step 1: elide
 // old, non-pinned observations (keeping the most recent KeepRecent turns
 // verbatim). Step 2: if still over budget, partition the head (all but the
@@ -438,10 +492,13 @@ func (t *Transcript) compactionMode(pressure float64) CompactionMode {
 // everything else. Fold only the latter into the rolling Summary: first a
 // local action skeleton when post-elision pressure is modest; if that
 // projection is still over budget, escalate to the provided summarizer in
-// the same call. User turns are preserved structurally rather than trusted
-// to survive a model-written summary: a compaction that folds "don't use X"
-// into prose loses the correction and the model cannot know what it forgot.
-// The audit log is untouched. MiniLM / semantic compact stays off.
+// the same call. Three consecutive empty or failed summaries open a
+// circuit: later calls stay on collapse_only and do not invoke the
+// summarizer. A later successful summary resets the counter. User turns
+// are preserved structurally rather than trusted to survive a model-written
+// summary: a compaction that folds "don't use X" into prose loses the
+// correction and the model cannot know what it forgot. The audit log is
+// untouched. MiniLM / semantic compact stays off.
 func (t *Transcript) compact(summarize func(head string) (string, error)) *CompactionReceipt {
 	if !t.shouldCompact() {
 		return nil
@@ -505,30 +562,44 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 	var summary string
 	var transforms []string
 	receiptVersion := 2
+	escalate := mode == compactionModeSummary
 	if mode == compactionModeCollapseOnly {
 		summary = collapseActionSkeleton(preCompactionSummary, folded)
 		transforms = []string{"elide_tool_output", "collapse_action_skeleton"}
 		receiptVersion = 3
 		projectedKept := applyVerbatimUserBudget(append([]Turn(nil), kept...), t.policy.VerbatimUserMaxChars)
 		projected := append(projectedKept, t.Turns[headEnd:]...)
-		if t.compactionMode(t.projectedPressure(summary, projected)) == compactionModeSummary && summarize != nil {
-			modelSummary, err := summarize(head.String())
-			if err == nil && strings.TrimSpace(modelSummary) != "" {
-				summary = modelSummary
-				transforms = append(transforms, "model_summary")
-				receiptVersion = 2
-				mode = compactionModeSummary
-			}
+		if t.compactionMode(t.projectedPressure(summary, projected)) == compactionModeSummary {
+			escalate = true
 		}
-	} else if summarize != nil {
-		var err error
-		summary, err = summarize(head.String())
-		if err != nil {
-			return nil
-		}
-		transforms = []string{"elide_tool_output", "model_summary"}
 	}
-	if summary != "" {
+	if escalate {
+		if t.summarizerCircuitOpen() {
+			if summary == "" {
+				summary = collapseActionSkeleton(preCompactionSummary, folded)
+			}
+			transforms = []string{"elide_tool_output", "collapse_action_skeleton", "summarizer_circuit_open"}
+			receiptVersion = 3
+			mode = compactionModeCollapseOnly
+		} else if modelSummary, ok := t.invokeSummarizer(summarize, head.String()); ok {
+			summary = modelSummary
+			if mode == compactionModeCollapseOnly {
+				transforms = append([]string{"elide_tool_output", "collapse_action_skeleton"}, "model_summary")
+			} else {
+				transforms = []string{"elide_tool_output", "model_summary"}
+			}
+			receiptVersion = 2
+			mode = compactionModeSummary
+		} else if summarize != nil {
+			if summary == "" {
+				summary = collapseActionSkeleton(preCompactionSummary, folded)
+			}
+			transforms = []string{"elide_tool_output", "collapse_action_skeleton", "summarizer_failed"}
+			receiptVersion = 3
+			mode = compactionModeCollapseOnly
+		}
+	}
+	if strings.TrimSpace(summary) != "" {
 		preimageHash := compactionPreimageHash(preCompactionSummary, foldedPre)
 		firstTurn, lastTurn := folded[0].Index, folded[len(folded)-1].Index
 		t.Summary = summary
@@ -544,7 +615,7 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 			PressureBefore: pressureBefore, PressureAfter: t.compactionPressure(),
 			CharsBefore: charsBefore, CharsAfter: len(afterRender),
 			TokensBefore: tokensBefore, TokensAfter: estimateTokens(afterRender),
-			Mode: mode, Transforms: transforms,
+			Mode: mode, Transforms: transforms, SummarizerFailures: t.SummarizerFailures,
 		}
 		if len(kept) > 0 {
 			receipt.KeptSHA256 = turnsSHA256(kept)

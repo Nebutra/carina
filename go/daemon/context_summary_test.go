@@ -195,6 +195,41 @@ func TestContextSummaryLedgerMatchesRenderedTranscriptAfterElide(t *testing.T) {
 	if len(receipts[0].KeptTurnIndices) != 1 || receipts[0].KeptTurnIndices[0] != tr.Turns[1].Index {
 		t.Fatalf("kept user turn missing from receipt: %#v", receipts[0].KeptTurnIndices)
 	}
+	if ledger["summarizer_failures"] != 0 || ledger["summarizer_circuit"] != "closed" {
+		t.Fatalf("idle ledger must report a closed summarizer circuit: %#v", ledger)
+	}
+}
+
+func TestContextSummaryLedgerReportsOpenSummarizerCircuit(t *testing.T) {
+	d, workspace := newLoopDaemon(t)
+	defer d.Close()
+	sess, err := d.store.CreateSession(workspace, "safe-edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "inspect context")
+	tr := newTranscript("inspect context")
+	tr.addTurn(Turn{Thought: "steer", Tool: "user", ActionBrief: "don't use X", Obs: Observation{Content: "don't use X", Pinned: true}})
+	tr.SummarizerFailures = compactionFailureThreshold
+	tr.CompactionReceipts = []CompactionReceipt{{
+		Version: 3, Mode: compactionModeCollapseOnly,
+		Transforms:         []string{"elide_tool_output", "collapse_action_skeleton", "summarizer_circuit_open"},
+		SummarizerFailures: compactionFailureThreshold,
+	}}
+	if err := d.runs.saveCheckpointChecked(task.RunID, &runCheckpoint{Turn: 1, Transcript: tr}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := d.handleContextSummary(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := result.(map[string]any)["ledger"].(map[string]any)
+	if ledger["summarizer_failures"] != compactionFailureThreshold || ledger["summarizer_circuit"] != "open" {
+		t.Fatalf("open circuit missing from ledger: %#v", ledger)
+	}
+	if !strings.Contains(ledger["model_visible"].(string), "don't use X") {
+		t.Fatalf("user constraint missing from model-visible ledger: %q", ledger["model_visible"])
+	}
 }
 
 func TestContextSummaryLedgerLabelsGrokCacheNone(t *testing.T) {
