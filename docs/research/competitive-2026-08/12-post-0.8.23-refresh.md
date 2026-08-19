@@ -1,8 +1,8 @@
 # Post-0.8.23 Harness Audit Refresh
 
 > **取证日期**：2026-08-19  
-> **产品锚点**：`go/product/version.go` → **0.8.23**（`670e5c5` 已上 main）  
-> **工作树**：未提交 — Compact 一等 cell + Grok 过期 `models_cache` 跳过隔离失败  
+> **产品锚点**：`go/product/version.go` → **0.8.24**  
+> **工作树**：干净 — Compact cell / Grok stale cache / Goal disarm 已随 0.8.24 发版  
 > **方法**：本仓库源码 + `crates/carina-tui/CAPABILITIES.md` + GitHub ISSUE-019…040 closed + 本机竞品树抽查 + DeepSeek 公开 README（**本机无 clone**）  
 > **前序**：`07-post-0.8-gap-refresh.md`（0.8.0）已过时，**以本文为现状真相**  
 > **未做**：并排 PTY、同机 RAM PSS、DeepSeek 本地行号级 DNA
@@ -13,7 +13,7 @@
 
 Carina 0.8.23 已经不是「内核强、壳弱」。ISSUE-001…018、视觉密度 V001–V011、queue inspect、以及 0.8.22–23 的 **harness honesty**（#28–#39 / epic #40）都已合入。竞品树相对 2026-08-02 **几乎无漂移**（Jcode 仍 0.64.2；Grok `SOURCE_REV` 仍 `8d69c91f…`）。
 
-**功能清单债已还完。** 握手/503 计数在 `670e5c5`。工作树里还有三刀未提交：Compact 一等 cell、Grok 过期模型缓存不再挡会话、Goal activation 进程内（重启不续跑）。剩下的用户可感债是：**TUI 巨石回潮、上游 503、失败格中英混排（隔离文案已补）**。
+**功能清单债已还完。** 握手/503 计数、Compact 一等 cell、Grok 过期缓存跳过、Goal disarm 均随 **0.8.24** 发版。剩下的用户可感债是：**TUI 巨石回潮、上游 503、失败格中英混排（隔离文案已补）**。
 
 DeepSeek Harness（Cordis「一切皆插件」）**不得**作为 day-one 架构。可偷 Trajectory 不变量、Goal 激活语义、会话内 Schedule；不可偷插件核。
 
@@ -23,9 +23,9 @@ DeepSeek Harness（Cordis「一切皆插件」）**不得**作为 day-one 架构
 |---|------|----------|------|
 | 1 | Isolated CLI 握手 + 503 文案 | 首轮不再被误判 safety/protocol | **SHIPPED** `670e5c5` |
 | 2 | `provider_attempts` 投影到失败格 | 4 次 503 显示尝试 4 次 | **SHIPPED** `670e5c5` |
-| 3 | Compact 一等 transcript cell | 长会话压缩可看见、可回放 | **WT 未提交** |
-| 4 | Grok 过期 `models_cache` 跳过 | `hi` 不再 23ms 死于隔离准备 | **WT 未提交** |
-| 5 | **Goal/续跑 disarm + R-01 铁门** | 重启不偷跑；防巨石回潮 | **WT：Goal activation 进程内** |
+| 3 | Compact 一等 transcript cell | 长会话压缩可看见、可回放 | **SHIPPED** 0.8.24 |
+| 4 | Grok 过期 `models_cache` 跳过 | `hi` 不再 23ms 死于隔离准备 | **SHIPPED** 0.8.24 |
+| 5 | **Goal/续跑 disarm + R-01 铁门** | 重启不偷跑；防巨石回潮 | **SHIPPED** Goal activation；R-01 持续 |
 
 **明确不做（仍有效）**：默认 yolo · snapcompact 默认 · MiniLM-on · 3D/Buddy · 整包 Grok pager · Cordis 一切皆插件 · MCP passthrough · git-only rollback · hashline/Codex fuzzy 换掉 `carina-patch` · ACP 当交互协议 · SaaS 多租户 day-one。
 
@@ -170,7 +170,7 @@ Zig: scan · grep · diff · patch-native · run · pty
 - **路径**：投影已有 receipt → SemanticCellKind，禁止假装 contextengine 压缩。  
 - **验收**：live=replay；`engine=noop` 不出现假 savings。
 
-### P1 · Goal disarm · **SHIPPED**（工作树）
+### P1 · Goal disarm · **SHIPPED** 0.8.24
 
 - **价值**：重启不会偷偷续跑。  
 - **参考**：DSH goal activation 不持久化。  
