@@ -373,6 +373,75 @@ func TestSoftInterruptWithoutGoalStillPausesRun(t *testing.T) {
 	}
 }
 
+func TestHardCancelPausesActiveSessionGoalAndDoesNotContinue(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	if err := d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.handleGoalSet(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID, "objective": "keep going", "auto_continue": true,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "cancel me")
+	d.goals.mu.Lock()
+	if current := d.goals.goals[sess.SessionID]; current != nil {
+		current.Goal.LastTaskID = task.RunID
+	}
+	d.goals.mu.Unlock()
+	if _, err := d.handleTaskCancel(mustJSON(t, map[string]any{"run_id": task.RunID})); err != nil {
+		t.Fatal(err)
+	}
+	current, _ := d.sched.Get(task.RunID)
+	if current.Status != "cancelled" {
+		t.Fatalf("run status=%s, want cancelled", current.Status)
+	}
+	result, err := d.handleGoalGet(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	goal := result.(map[string]any)["goal"].(sessionGoal)
+	if goal.Status != "paused" {
+		t.Fatalf("goal status=%s, want paused", goal.Status)
+	}
+	d.reconcileGoalTask(current)
+	if n := len(d.sched.List()); n != 1 {
+		t.Fatalf("cancel launched a continuation: %d tasks", n)
+	}
+}
+
+func TestReconcileIgnoresCancelledRunEvenIfGoalStaysActive(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	if err := d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "cancelled")
+	d.sched.SetStatus(task.RunID, "cancelled")
+	cancelled, _ := d.sched.Get(task.RunID)
+	d.goals.mu.Lock()
+	d.goals.goals[sess.SessionID] = &goalRecord{Goal: &sessionGoal{
+		SessionID: sess.SessionID, Objective: "x", Status: "active", AutoContinue: true,
+		LastTaskID: task.RunID, CreatedAt: now, UpdatedAt: now, MaxContinuations: 8, ActiveSince: now,
+	}}
+	d.goals.mu.Unlock()
+	d.reconcileGoalTask(cancelled)
+	d.goals.mu.Lock()
+	status := d.goals.goals[sess.SessionID].Goal.Status
+	used := d.goals.goals[sess.SessionID].Goal.ContinuationsUsed
+	d.goals.mu.Unlock()
+	if status != "active" || used != 0 {
+		t.Fatalf("cancelled run mutated goal: status=%s continuations=%d", status, used)
+	}
+	if n := len(d.sched.List()); n != 1 {
+		t.Fatalf("cancelled run launched a continuation: %d tasks", n)
+	}
+}
+
 // TestTaskMailboxDrainOrdersUrgentBeforeNormal: the taskMailbox primitive
 // itself must always yield urgent messages first, each tier preserving its
 // own FIFO arrival order.

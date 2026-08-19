@@ -26,6 +26,8 @@ validates:
   online mode may fetch that exact Go module when the binary is absent);
 - product/package/workflow version agreement and workflow lint;
 - Go app builds, vet, application tests, and runtime race tests;
+- named residual UX (`make residual-ux-gate`) and visual density
+  (`make visual-density-gate`) iron gates;
 - Rust workspace and release kernel builds/tests;
 - Go, Python, and TypeScript SDK conformance;
 - VS Code, web, npm launcher, native acceptance, and benchmark gates;

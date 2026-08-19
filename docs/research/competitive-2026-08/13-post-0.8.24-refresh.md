@@ -23,7 +23,7 @@ Carina 0.8.24 已经不是「内核强、壳弱」。ISSUE-001…018、V001–V0
 | 2 | `provider_attempts` 投影到失败格 | 4 次 503 显示尝试 4 次 | **SHIPPED** 0.8.24 |
 | 3 | Compact 一等 transcript cell | 长会话压缩可看见、可回放 | **SHIPPED** 0.8.24 |
 | 4 | Grok 过期 `models_cache` 跳过 + Goal disarm | `hi` 不 23ms 死；重启不偷跑 | **SHIPPED** 0.8.24 |
-| 5 | **Esc/interrupt 暂停 session Goal** | 文档已承诺；实现只暂停 execution | **WT G24-01** |
+| 5 | **Esc/interrupt 暂停 session Goal** | 文档已承诺；实现只暂停 execution | **SHIPPED** G24-01；**WT G24-02** 硬取消 |
 
 **明确不做（仍有效）**：默认 yolo · snapcompact 默认 · MiniLM-on · 3D/Buddy · 整包 Grok pager · Cordis 一切皆插件 · MCP passthrough · git-only rollback · hashline/Codex fuzzy 换掉 `carina-patch` · ACP 当交互协议 · SaaS 多租户 day-one。
 
@@ -121,24 +121,21 @@ Zig: scan · grep · diff · patch-native · run · pty
 
 | ID | 项 | P | 证据 |
 |----|----|---|------|
-| **G24-01** | Esc / `execution.interrupt` 不暂停 session Goal | **SHIPPED**（WT：`pauseForSoftInterrupt` → `pauseActiveGoal`） |
+| **G24-01** | Esc / `execution.interrupt` 不暂停 session Goal | **SHIPPED** `4a8acb1` |
+| **G24-02** | Ctrl-C / `execution.cancel` 把 cancelled 当失败续跑 | **SHIPPED**（WT：cancel → `pauseActiveGoal`；`reconcileGoalTask` 忽略 cancelled） |
 
 ### WIP
 
 - Native scrollback **partial**（`CAPABILITIES.md` #11）
 - Semantic memory / HMS：默认 off，BYOK 才有
-- `make residual-ux-gate` / `visual-density-gate` 存在，**未**进入 `scripts/release-check.sh` 或 `.github` workflow
 
 ### TODO
 
-- G24-01：daemon 在 soft-interrupt 落地时 pause 该 session 的 active Goal（或撤回文档）
-- R-01 铁门挂进 release companion / `release-check`
 - 可选：DeepSeek clone 后再写 `01-dna-deepseek.md`
 
 ### BUG
 
 - 无未修运行时产品 bug 挂账；Mox 503 是上游环境
-- G24-01 是契约谎言，按诚实度记 GAP 不记 crash
 
 ### LEGACY
 
@@ -167,14 +164,16 @@ Zig: scan · grep · diff · patch-native · run · pty
 
 握手、`provider_attempts`、Compact cell、stale Grok cache、`auto_continue` 进程内。TUI 需重开。
 
-### P1 · G24-01 Esc 暂停 Goal · **SHIPPED**（工作树）
+### P1 · G24-01 Esc 暂停 Goal · **SHIPPED** `4a8acb1`
 
-- **价值**：Esc 之后 Goal 不再在本进程里武装续跑；文档与产品一致。  
-- **路径**：`pauseForSoftInterrupt` 在把 run 标 paused 之前调用 `pauseActiveGoal`（与 `goal.pause` 同一 WAL）。无 Goal / 非 active 为 no-op。Goal persist 失败则 disarm `auto_continue` 再 degrade，避免失败续跑。TUI 不双写。
+### P1 · G24-02 硬取消暂停 Goal · **SHIPPED**（工作树）
 
-### P1 · R-01 铁门进 companion（持续 M）
+- **价值**：Ctrl-C 之后 Goal 不得把 cancelled 当失败并再交任务。  
+- **路径**：`handleTaskCancel` 成功后 `pauseActiveGoal(..., "operator_cancelled")`；`reconcileGoalTask` 直接忽略 `cancelled`。
 
-- golden 80/120/160+CJK + ScreenMode + steer 长工具。`make residual-ux-gate` / `visual-density-gate` 已能跑，缺的是挂进 `release-check`。不重开 ISSUE-001…018。
+### P1 · R-01 铁门进 companion · **SHIPPED**（工作树）
+
+- `release-preflight` 具名门 `residual_ux` / `visual_density`；CI 在 kernel 构建后跑 `make residual-ux-gate`（visual-density 已有）。不重开 ISSUE-001…018。
 
 ### P2 · 巨石拆分 / RAM 文化
 

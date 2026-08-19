@@ -133,6 +133,8 @@ if [[ "$mode" == "full" ]]; then
   run_gate native_build build "Go/Rust/Zig native build" make all
   run_gate rust_runtime build "release Rust runtime build" cargo build --release -p carina-kernel --bin carina-kernel-service -p carina-tui --bin carina-ui
   run_gate go_vet test "Go static analysis" go vet ./...
+  run_gate residual_ux test "steer/interrupt/cancel and screen-mode residual iron gate" make residual-ux-gate
+  run_gate visual_density test "production-renderer visual density contract" make visual-density-gate
   run_gate rust_tests test "Rust workspace tests" cargo test --workspace
   run_gate go_race test "Go runtime race suite" bash -c 'CARINA_KERNEL_BIN="$PWD/target/release/carina-kernel-service" go test -race ./go/...'
   run_gate go_apps test "Go application tests" bash -c 'CARINA_KERNEL_BIN="$PWD/target/release/carina-kernel-service" go test ./apps/...'

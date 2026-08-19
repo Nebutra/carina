@@ -108,6 +108,11 @@ jobs:
       - name: Build Rust runtime components
         run: cargo build --release -p carina-kernel --bin carina-kernel-service -p carina-tui --bin carina-ui
 
+      - name: Residual UX iron gate
+        env:
+          CARINA_KERNEL_BIN: ${{ github.workspace }}/target/release/carina-kernel-service
+        run: make residual-ux-gate
+
       - name: Install PTY test dependency
         run: sudo apt-get update && sudo apt-get install -y tmux
 

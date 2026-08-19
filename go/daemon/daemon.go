@@ -3458,6 +3458,14 @@ func (d *Daemon) handleTaskCancel(params json.RawMessage) (any, error) {
 	if controlErr != nil {
 		return nil, fmt.Errorf("task_cancel_pending: task is cancelled but queued follow-ups could not be discarded durably: %w", controlErr)
 	}
+	if err := d.pauseActiveGoal(task.SessionID, "operator_cancelled"); err != nil {
+		d.goals.mu.Lock()
+		if r := d.goals.goals[task.SessionID]; r != nil {
+			disarmGoalActivation(r.Goal)
+		}
+		d.goals.mu.Unlock()
+		return nil, fmt.Errorf("task_cancel_pending: task is cancelled but the session goal could not be paused: %w", err)
+	}
 	return d.taskWithControl(task, task.RunID), nil
 }
 

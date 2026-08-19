@@ -873,7 +873,7 @@ func (d *Daemon) pauseForSoftInterrupt(sess *sessionstore.Session, task *schedul
 		d.degrade(sess, task, tr, "soft interrupt audit persistence failed: "+err.Error())
 		return true
 	}
-	if err := d.pauseActiveGoal(sess.SessionID); err != nil {
+	if err := d.pauseActiveGoal(sess.SessionID, "soft_interrupt"); err != nil {
 		d.goals.mu.Lock()
 		if r := d.goals.goals[sess.SessionID]; r != nil {
 			disarmGoalActivation(r.Goal)

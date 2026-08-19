@@ -330,7 +330,7 @@ func (d *Daemon) handleGoalPause(p json.RawMessage) (any, error) {
 // pauseActiveGoal pauses a session's active goal using the same WAL as
 // goal.pause. Missing or non-active goals are a no-op so interrupt can land
 // on sessions that never set a goal.
-func (d *Daemon) pauseActiveGoal(sessionID string) error {
+func (d *Daemon) pauseActiveGoal(sessionID, reason string) error {
 	d.goals.mu.Lock()
 	defer d.goals.mu.Unlock()
 	r := d.goals.goals[sessionID]
@@ -339,7 +339,10 @@ func (d *Daemon) pauseActiveGoal(sessionID string) error {
 	}
 	now := time.Now().UTC()
 	before := *r.Goal
-	if err := d.auditGoalChange(sessionID, "paused", before.Status, "paused", map[string]any{"reason": "soft_interrupt"}); err != nil {
+	if reason == "" {
+		reason = "operator_stop"
+	}
+	if err := d.auditGoalChange(sessionID, "paused", before.Status, "paused", map[string]any{"reason": reason}); err != nil {
 		return fmt.Errorf("goal audit WAL: %w", err)
 	}
 	snapshotGoal(r.Goal, now)
@@ -502,7 +505,7 @@ func (d *Daemon) handleGoalContinue(params json.RawMessage) (any, error) {
 }
 
 func (d *Daemon) reconcileGoalTask(task *scheduler.ExecutionRun) {
-	if task == nil {
+	if task == nil || task.Status == "cancelled" {
 		return
 	}
 	d.goals.mu.Lock()

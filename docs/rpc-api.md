@@ -37,7 +37,8 @@ restart cannot mark a goal complete or submit another continuation. Re-arm with
 Ordinary task completion without that hook does not mark a goal complete or
 launch another task. `goal.continue` fails closed while a session has an
 in-flight task, after the configured continuation limit, or once the goal token
-budget is exhausted. Interrupting an active TUI task pauses the goal.
+budget is exhausted. Interrupting or cancelling an active TUI task pauses the
+goal. Operator-cancelled runs never auto-continue.
 
 The returned `SessionGoal` includes `objective`, `status` (`active`, `paused`,
 `blocked`, `budget_limited`, `usage_limited`, or `complete`), `token_budget`,

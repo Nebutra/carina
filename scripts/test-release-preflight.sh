@@ -163,4 +163,13 @@ assert gates["apple_credentials"] == "BLOCKED", gates
 assert gates["npm_bootstrap"] == "PASS", gates
 assert gates["npm_trusted_publisher"] == "PASS", gates
 PY
+grep -Fq 'run_gate residual_ux' "$ROOT/scripts/release-preflight.sh" || {
+  echo "test-release-preflight: residual_ux gate missing from release-preflight" >&2
+  exit 1
+}
+grep -Fq 'run_gate visual_density' "$ROOT/scripts/release-preflight.sh" || {
+  echo "test-release-preflight: visual_density gate missing from release-preflight" >&2
+  exit 1
+}
+
 echo "test-release-preflight: ok"

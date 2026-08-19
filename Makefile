@@ -103,10 +103,12 @@ zig:
 sdk-ts:
 	cd sdk/typescript && npm install && npm run build
 
-# Post-0.8 residual iron gate: durable steer/interrupt + screen-mode units.
+# Post-0.8 residual iron gate: durable steer/interrupt/cancel + screen-mode units.
 # PTY matrix is host-gated separately via carina-tui terminal_microinteractions.
+# Kernel-backed daemon tests skip if carina-kernel-service is not built.
 residual-ux-gate:
-	go test ./go/daemon -run 'Steer|Interrupt|Cancel|LongTool|ExecutionQueueList|TruncateSteer|CarinaToolCatalogAdvertisesEdit|CompactionCascade|KeyFilesTopK' -count=1
+	CARINA_KERNEL_BIN=$(PWD)/target/release/carina-kernel-service \
+		go test ./go/daemon -run 'Steer|Interrupt|Cancel|LongTool|ExecutionQueueList|TruncateSteer|CarinaToolCatalogAdvertisesEdit|CompactionCascade|KeyFilesTopK|PausesActive|ReconcileIgnores' -count=1
 	go test ./go/toolchain -run 'Cancellation|ProcessGroup' -count=1
 	cargo test -p carina-tui --lib screen_mode -- --nocapture
 	cargo test -p carina-tui --lib keybinding -- --nocapture
