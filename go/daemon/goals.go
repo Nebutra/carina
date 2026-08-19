@@ -326,6 +326,38 @@ func (d *Daemon) transitionGoal(params json.RawMessage, status string) (any, err
 func (d *Daemon) handleGoalPause(p json.RawMessage) (any, error) {
 	return d.transitionGoal(p, "paused")
 }
+
+// pauseActiveGoal pauses a session's active goal using the same WAL as
+// goal.pause. Missing or non-active goals are a no-op so interrupt can land
+// on sessions that never set a goal.
+func (d *Daemon) pauseActiveGoal(sessionID string) error {
+	d.goals.mu.Lock()
+	defer d.goals.mu.Unlock()
+	r := d.goals.goals[sessionID]
+	if r == nil || r.Goal == nil || r.Goal.Status != "active" {
+		return nil
+	}
+	now := time.Now().UTC()
+	before := *r.Goal
+	if err := d.auditGoalChange(sessionID, "paused", before.Status, "paused", map[string]any{"reason": "soft_interrupt"}); err != nil {
+		return fmt.Errorf("goal audit WAL: %w", err)
+	}
+	snapshotGoal(r.Goal, now)
+	r.Goal.Status = "paused"
+	r.Goal.UpdatedAt = now
+	if err := d.goals.persistLocked(); err != nil {
+		*r.Goal = before
+		return err
+	}
+	if err := d.recordGoalChanged(sessionID, "paused", r.Goal); err != nil {
+		*r.Goal = before
+		if rollbackErr := d.goals.persistLocked(); rollbackErr != nil {
+			return fmt.Errorf("goal commit audit failed: %v (rollback failed: %v)", err, rollbackErr)
+		}
+		return fmt.Errorf("goal commit audit: %w", err)
+	}
+	return nil
+}
 func (d *Daemon) handleGoalResume(p json.RawMessage) (any, error) {
 	return d.transitionGoal(p, "active")
 }

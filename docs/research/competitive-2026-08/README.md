@@ -1,9 +1,9 @@
 # Competitive Research 2026-08 — Artifact Index
 
 > 取证日期：2026-08-02  
-> **现状刷新：2026-08-18 @ Carina v0.8.23** — 见 **[12-post-0.8.23-refresh.md](./12-post-0.8.23-refresh.md)**  
+> **现状刷新：2026-08-19 @ Carina v0.8.24** — 见 **[13-post-0.8.24-refresh.md](./13-post-0.8.24-refresh.md)**  
 > 范围：Carina vs Jcode / Grok Build / Claude Code (notes) / Codex / Oh My Pi (OMP) / DeepSeek Harness（公开文档，本机无 clone）  
-> 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图 → **post-0.8.23 诚实刷新**
+> 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图 → **post-0.8.24 诚实刷新**
 
 ---
 
@@ -11,8 +11,9 @@
 
 | 文件 | 角色 |
 |------|------|
-| **[12-post-0.8.23-refresh.md](./12-post-0.8.23-refresh.md)** | **现状真相**：0.8.23 模块图 / 六家抽查 / 真缺口 / 下一刀 |
-| [07-post-0.8-gap-refresh.md](./07-post-0.8-gap-refresh.md) | 历史：0.8.0 SHIPPED 表（R-02/V00x 已被 12  supersede） |
+| **[13-post-0.8.24-refresh.md](./13-post-0.8.24-refresh.md)** | **现状真相**：0.8.24 模块图 / 六家复验 / G24-01 / 下一刀 |
+| [12-post-0.8.23-refresh.md](./12-post-0.8.23-refresh.md) | 历史：0.8.23→0.8.24 工作树（已被 13 supersede） |
+| [07-post-0.8-gap-refresh.md](./07-post-0.8-gap-refresh.md) | 历史：0.8.0 SHIPPED 表（R-02/V00x 已被 12/13 supersede） |
 | **[00-MASTER-REPORT.md](./00-MASTER-REPORT.md)** | 08-02 主方案（战略/non-goals 仍有效；分数以 12 为准） |
 | **[05-implementation-roadmap.md](./05-implementation-roadmap.md)** | Phase A/B/C 历史路线；执行态见 12 §6 |
 
@@ -39,7 +40,8 @@
 | 9 | [09-steer-queue-residual-slice.md](./09-steer-queue-residual-slice.md) | Residual | Steer/interrupt 铁门 + queue inspect 面板 |
 | 10 | [10-visual-density-program.md](./10-visual-density-program.md) | **UX** | TUI 视觉密度总规划 vs OMP/Jcode/Grok |
 | 11 | [11-visual-density-trellis-index.md](./11-visual-density-trellis-index.md) | **UX** | V001–V012 Trellis 索引 |
-| 12 | [12-post-0.8.23-refresh.md](./12-post-0.8.23-refresh.md) | **0.8.23** | 六家刷新 + 真缺口 + P0 握手/诚实 |
+| 12 | [12-post-0.8.23-refresh.md](./12-post-0.8.23-refresh.md) | 0.8.23 | 历史：握手/compact/Goal disarm |
+| 13 | [13-post-0.8.24-refresh.md](./13-post-0.8.24-refresh.md) | **0.8.24** | 发版后复验 + G24-01 Esc×Goal |
 
 ---
 

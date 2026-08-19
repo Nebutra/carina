@@ -302,6 +302,77 @@ func TestSoftInterruptWaitsForLongToolAndLeavesNoOrphanLifecycle(t *testing.T) {
 	}
 }
 
+func TestSoftInterruptPausesActiveSessionGoal(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	if err := d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.handleGoalSet(mustJSON(t, map[string]any{
+		"session_id": sess.SessionID, "objective": "keep going", "auto_continue": true,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "interrupt me")
+	if _, _, err := d.requestSoftInterrupt(task.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if !d.pauseForSoftInterrupt(sess, task, &Transcript{}, 0, "") {
+		t.Fatal("soft interrupt did not land")
+	}
+	current, _ := d.sched.Get(task.RunID)
+	if current.Status != "paused" {
+		t.Fatalf("run status=%s, want paused", current.Status)
+	}
+	result, err := d.handleGoalGet(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	goal := result.(map[string]any)["goal"].(sessionGoal)
+	if goal.Status != "paused" {
+		t.Fatalf("goal status=%s, want paused", goal.Status)
+	}
+	d.reconcileGoalTask(current)
+	after, err := d.handleGoalGet(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.(map[string]any)["goal"].(sessionGoal).Status != "paused" {
+		t.Fatal("paused goal resumed after reconcile")
+	}
+	if n := len(d.sched.List()); n != 1 {
+		t.Fatalf("interrupt launched a continuation: %d tasks", n)
+	}
+}
+
+func TestSoftInterruptWithoutGoalStillPausesRun(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	if err := d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil); err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "no goal")
+	if _, _, err := d.requestSoftInterrupt(task.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if !d.pauseForSoftInterrupt(sess, task, &Transcript{}, 0, "") {
+		t.Fatal("soft interrupt did not land")
+	}
+	current, _ := d.sched.Get(task.RunID)
+	if current.Status != "paused" {
+		t.Fatalf("run status=%s, want paused", current.Status)
+	}
+	result, err := d.handleGoalGet(mustJSON(t, map[string]any{"session_id": sess.SessionID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.(map[string]any)["goal"] != nil {
+		t.Fatalf("missing goal was created: %#v", result)
+	}
+}
+
 // TestTaskMailboxDrainOrdersUrgentBeforeNormal: the taskMailbox primitive
 // itself must always yield urgent messages first, each tier preserving its
 // own FIFO arrival order.
