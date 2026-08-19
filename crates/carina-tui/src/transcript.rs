@@ -547,6 +547,7 @@ impl TranscriptReducer {
                     .unwrap_or(false);
                 settled || projected
             }
+            "GoalChanged" => false,
             "ContextCompacted" => compact_block(
                 event.event_id.clone(),
                 event.run_id.clone(),
@@ -1568,6 +1569,13 @@ fn compact_request_only(payload: &BTreeMap<String, Value>) -> bool {
             detail(payload, "status").as_deref(),
             Some("checkpoint_compact_requested")
         )
+}
+
+pub(crate) fn live_goal_paused(event: &WireEvent, replayed: bool) -> bool {
+    !replayed
+        && event.kind == "GoalChanged"
+        && event.payload.get("action").and_then(Value::as_str) == Some("paused")
+        && event.payload.get("status").and_then(Value::as_str) == Some("paused")
 }
 
 fn compact_block(
@@ -5657,6 +5665,26 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
             live[0].localized_title(Locale::ZhHans),
             i18n::text(Locale::ZhHans, MessageId::CompactCellTitle)
         );
+    }
+
+    #[test]
+    fn goal_changed_pause_is_a_notice_not_a_transcript_cell() {
+        let paused = wire(
+            "GoalChanged",
+            json!({"action": "paused", "status": "paused", "tokens_used": 0}),
+        );
+        assert!(crate::transcript::live_goal_paused(&paused, false));
+        assert!(!crate::transcript::live_goal_paused(&paused, true));
+        assert!(!crate::transcript::live_goal_paused(
+            &wire(
+                "GoalChanged",
+                json!({"action": "set", "status": "active"}),
+            ),
+            false,
+        ));
+        let mut blocks = Vec::new();
+        assert!(!TranscriptReducer::default().reduce_event(&mut blocks, paused));
+        assert!(blocks.is_empty());
     }
 
     #[test]

@@ -3153,6 +3153,24 @@ impl App {
                                     visual_changed = true;
                                 }
                             }
+                            if crate::transcript::live_goal_paused(&event, replayed)
+                                && event.session_id
+                                    == self
+                                        .active_session
+                                        .as_ref()
+                                        .map(|session| session.session_id.as_str())
+                                        .unwrap_or_default()
+                            {
+                                self.notice = Notice::localized(MessageId::GoalPaused);
+                                visual_changed = true;
+                                if matches!(self.overlays.active(), Some(Overlay::Goal(_)))
+                                    && let Ok(got) = self.rpc.goal_get(&event.session_id)
+                                {
+                                    self.overlays.replace(Overlay::Goal(
+                                        crate::overlay::GoalOverlay { goal: got.goal },
+                                    ));
+                                }
+                            }
                             let plan_review = self.active_session.as_ref().and_then(|session| {
                                 plan_review_overlay(session).filter(|review| {
                                     review.run_id == event.run_id
