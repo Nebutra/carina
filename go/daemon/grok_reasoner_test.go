@@ -650,6 +650,8 @@ func TestGrokACPPreflightPushesRequireExactSafePayloads(t *testing.T) {
 	}{
 		{method: "x.ai/settings/update", raw: json.RawMessage(`{}`)},
 		{method: "_x.ai/settings/update", raw: json.RawMessage(`{"method":"x.ai/settings/update","params":{"sharing_enabled":false,"auto_permission_mode_enabled":false,"permission_mode":"always-approve"}}`)},
+		{method: "_x.ai/settings/update", raw: json.RawMessage(`{"method":"x.ai/settings/update","params":{"show_resolved_model":null,"sharing_enabled":null,"privacy_notice_rollout":null,"privacy_banner_reshow_days":null,"session_picker_grouped":null,"tips":null,"slash_command_tags":null,"announcements":null,"campaigns":null,"gate_message":null,"gate_url":null,"gate_label":null,"allow_access":null,"consent_gate":null,"subscription_tier_display":null,"auto_permission_mode_enabled":null,"permission_mode":null,"group_tool_verbs":null,"collapsed_edit_blocks":null,"subscription_watch_interval_secs":null}}`)},
+		{method: "x.ai/settings/update", raw: json.RawMessage(`{"consent_gate":false}`)},
 		{method: "x.ai/announcements/update", raw: json.RawMessage(`{"gen":1,"announcements":[]}`)},
 		{method: "_x.ai/announcements/update", raw: json.RawMessage(`{"method":"x.ai/announcements/update","params":{"gen":2,"announcements":[]}}`)},
 	} {
@@ -663,6 +665,7 @@ func TestGrokACPPreflightPushesRequireExactSafePayloads(t *testing.T) {
 		raw    json.RawMessage
 	}{
 		{name: "settings extra field", method: "x.ai/settings/update", raw: json.RawMessage(`{"futureCapability":true}`)},
+		{name: "settings consent object", method: "x.ai/settings/update", raw: json.RawMessage(`{"consent_gate":{"accept_label":"ok"}}`)},
 		{name: "settings auto mode", method: "x.ai/settings/update", raw: json.RawMessage(`{"auto_permission_mode_enabled":true}`)},
 		{name: "wrapped settings extra field", method: "_x.ai/settings/update", raw: json.RawMessage(`{"method":"x.ai/settings/update","params":{},"tool":"read_file"}`)},
 		{name: "announcements extra field", method: "x.ai/announcements/update", raw: json.RawMessage(`{"gen":1,"announcements":[],"tool":"read_file"}`)},

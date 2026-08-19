@@ -81,6 +81,40 @@ func TestDecodeClaudeCLIStreamPublishesOnlyDoneSummary(t *testing.T) {
 	}
 }
 
+func TestDecodeClaudeCLIStreamAllowsThinkingThenTextAssistantSnapshots(t *testing.T) {
+	stream, err := decodeClaudeCLIStream(strings.NewReader(strings.Join([]string{
+		`{"type":"system","subtype":"init","tools":[]}`,
+		`{"type":"stream_event","event":{"type":"content_block_start","content_block":{"type":"thinking","thinking":""}}}`,
+		`{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":""}}}`,
+		`{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"signature_delta","signature":"sig"}}}`,
+		`{"type":"assistant","message":{"model":"claude-opus-5","content":[{"type":"thinking","thinking":"","signature":"sig"}]}}`,
+		`{"type":"stream_event","event":{"type":"content_block_start","content_block":{"type":"text","text":""}}}`,
+		`{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"{\"tool\":\"done\",\"summary\":\"ok\"}"}}}`,
+		`{"type":"assistant","message":{"model":"claude-opus-5","content":[{"type":"text","text":"{\"tool\":\"done\",\"summary\":\"ok\"}"}]}}`,
+		`{"type":"result","subtype":"success","is_error":false,"result":"{\"tool\":\"done\",\"summary\":\"ok\"}","usage":{"input_tokens":2,"output_tokens":4}}`,
+	}, "\n")), nil)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	result, err := finishClaudeCLIStream(stream, "", nil, "sonnet")
+	if err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if result.Text != `{"tool":"done","summary":"ok"}` || result.Usage.Model != "claude-opus-5" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestDecodeClaudeCLIStreamRejectsConflictingAssistantSnapshots(t *testing.T) {
+	_, err := decodeClaudeCLIStream(strings.NewReader(strings.Join([]string{
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"first"}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"second"}]}}`,
+	}, "\n")), nil)
+	if info := classifyProviderError(err); err == nil || info.Code != "reasoner_protocol_error" {
+		t.Fatalf("error = %v classification = %+v", err, info)
+	}
+}
+
 func TestDecodeClaudeCLIStreamRejectsToolsHooksSubagentsAndUnknownEvents(t *testing.T) {
 	tests := []struct {
 		name string

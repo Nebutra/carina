@@ -97,6 +97,34 @@ type providerErrorInfo struct {
 	Code, Category, UserAction, CorrelationID, Provider string
 	HTTPStatus                                          int
 	Retryable                                           bool
+	Attempts, MaxAttempts                               int
+}
+
+type retryExhaustedError struct {
+	err      error
+	attempts int
+	max      int
+}
+
+func (e retryExhaustedError) Error() string {
+	if e.err != nil {
+		return e.err.Error()
+	}
+	return "reasoner failed"
+}
+
+func (e retryExhaustedError) Unwrap() error { return e.err }
+
+func peelRetryExhausted(err error) (attempts, maxAttempts int, cause error) {
+	var exhausted retryExhaustedError
+	if errors.As(err, &exhausted) {
+		cause = exhausted.err
+		if cause == nil {
+			cause = err
+		}
+		return exhausted.attempts, exhausted.max, cause
+	}
+	return 0, 0, err
 }
 
 type providerErrorClassifier interface{ ProviderError() providerErrorInfo }
@@ -266,7 +294,9 @@ func thinkWithRetryPolicy(ctx context.Context, r Reasoner, model, prompt, stable
 	started := policy.Now()
 	delay := policy.BaseDelay
 	var lastErr error
+	used := 0
 	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
+		used = attempt
 		if stream := reasonerStreamFrom(ctx); stream != nil {
 			stream.reset()
 		}
@@ -311,7 +341,10 @@ func thinkWithRetryPolicy(ctx context.Context, r Reasoner, model, prompt, stable
 			delay = policy.MaxDelay
 		}
 	}
-	return ReasonerResult{}, fmt.Errorf("reasoner failed: %w", lastErr)
+	if lastErr == nil {
+		return ReasonerResult{}, errors.New("reasoner failed")
+	}
+	return ReasonerResult{}, fmt.Errorf("reasoner failed: %w", retryExhaustedError{err: lastErr, attempts: used, max: policy.MaxAttempts})
 }
 
 func retryAfterFromError(err error) (time.Duration, bool) {
@@ -323,6 +356,16 @@ func retryAfterFromError(err error) (time.Duration, bool) {
 }
 
 func classifyProviderError(err error) providerErrorInfo {
+	attempts, maxAttempts, cause := peelRetryExhausted(err)
+	info := classifyProviderCause(cause)
+	if attempts > 0 {
+		info.Attempts = attempts
+		info.MaxAttempts = maxAttempts
+	}
+	return info
+}
+
+func classifyProviderCause(err error) providerErrorInfo {
 	if err == nil {
 		return providerErrorInfo{}
 	}
@@ -405,7 +448,7 @@ func operatorFacingReasonerError(err error) string {
 	switch info.Code {
 	case "provider_stream_budget_exceeded":
 		return "The model stream stopped before finishing. Not auto-retried. Check the proxy and network, then retry explicitly if needed."
-	case "provider_stream_unavailable", "provider_transport_error":
+	case "provider_stream_unavailable", "provider_transport_error", "provider_unavailable", "provider_timeout":
 		return joinOperatorSentence("The model provider was temporarily unavailable", info.UserAction)
 	case "provider_stream_request_failed", "provider_stream_failed":
 		return joinOperatorSentence("The model stream request failed", info.UserAction)
@@ -437,6 +480,11 @@ func operatorFacingReasonerError(err error) string {
 		return "The prompt is too long for this model. Compact the conversation or start a new session."
 	}
 	if info.UserAction != "" {
+		if detail := operatorFacingCLIDetail(err); detail != "" &&
+			!strings.EqualFold(detail, info.UserAction) &&
+			!strings.Contains(strings.ToLower(info.UserAction), strings.ToLower(detail)) {
+			return joinOperatorSentence("The model could not complete this turn. "+detail, info.UserAction)
+		}
 		return joinOperatorSentence("The model could not complete this turn", info.UserAction)
 	}
 	// Last resort: strip internal prefixes without dumping multi-hop stacks.
@@ -459,6 +507,32 @@ func operatorFacingReasonerError(err error) string {
 		msg = msg[:217] + "..."
 	}
 	return "The model could not complete this turn. " + msg
+}
+
+func operatorFacingCLIDetail(err error) string {
+	var ge grokCLIError
+	if errors.As(err, &ge) {
+		return boundedMetadata(strings.TrimSpace(ge.message), 180)
+	}
+	var ce claudeCLIError
+	if errors.As(err, &ce) {
+		message := strings.TrimSpace(ce.message)
+		if message == "" {
+			message = strings.TrimSpace(ce.subtype)
+		}
+		return boundedMetadata(message, 180)
+	}
+	return ""
+}
+
+func routingFailureMessage(err error, info providerErrorInfo) string {
+	if detail := operatorFacingCLIDetail(err); detail != "" {
+		return detail
+	}
+	if info.Code == "provider_unavailable" || info.Code == "provider_timeout" {
+		return "provider temporarily unavailable"
+	}
+	return "provider request failed"
 }
 
 func joinOperatorSentence(what, action string) string {
@@ -1054,10 +1128,11 @@ func (e claudeCLIError) ProviderError() providerErrorInfo {
 	case strings.Contains(message, "overloaded"),
 		strings.Contains(message, "temporarily unavailable"):
 		return providerErrorInfo{
-			Code:      "provider_unavailable",
-			Category:  "unavailable",
-			Provider:  "anthropic",
-			Retryable: true,
+			Code:       "provider_unavailable",
+			Category:   "unavailable",
+			Provider:   "anthropic",
+			Retryable:  true,
+			UserAction: "retry or choose another provider",
 		}
 	default:
 		return providerErrorInfo{

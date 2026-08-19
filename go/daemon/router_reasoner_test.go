@@ -86,6 +86,9 @@ func TestRetryPolicyUsesFullJitterAndBoundedAttempts(t *testing.T) {
 	if attempts[0].Delay != 500*time.Microsecond || attempts[1].Delay != time.Millisecond {
 		t.Fatalf("delays=%s,%s", attempts[0].Delay, attempts[1].Delay)
 	}
+	if info := classifyProviderError(err); info.Attempts != 3 || info.MaxAttempts != 3 || info.Code != "provider_unavailable" {
+		t.Fatalf("retry exhaustion classification = %+v", info)
+	}
 }
 
 func TestRetryPolicyHonorsRetryAfterWithoutJitter(t *testing.T) {

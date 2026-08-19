@@ -315,11 +315,11 @@ func (e providerStatusError) ProviderError() providerErrorInfo {
 	case e.status == http.StatusTooManyRequests:
 		info.Code, info.Category, info.Retryable, info.UserAction = "provider_rate_limited", "rate_limit", true, "wait or choose another provider"
 	case e.status == http.StatusRequestTimeout || e.status == http.StatusTooEarly:
-		info.Code, info.Category, info.Retryable = "provider_timeout", "timeout", true
+		info.Code, info.Category, info.Retryable, info.UserAction = "provider_timeout", "timeout", true, "retry or choose another provider"
 	case e.status == http.StatusConflict:
-		info.Code, info.Category, info.Retryable = "provider_conflict", "conflict", true
+		info.Code, info.Category, info.Retryable, info.UserAction = "provider_conflict", "conflict", true, "retry or choose another provider"
 	case e.status >= 500:
-		info.Code, info.Category, info.Retryable = "provider_unavailable", "unavailable", true
+		info.Code, info.Category, info.Retryable, info.UserAction = "provider_unavailable", "unavailable", true, "retry or choose another provider"
 	case e.status >= 400:
 		info.Code, info.Category, info.UserAction = "provider_invalid_request", "invalid_input", "check the model and request configuration"
 	}

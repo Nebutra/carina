@@ -431,7 +431,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 				}
 				errEnv := runtimecontract.ErrorEnvelope{
 					Code: retry.Error.Code, Category: runtimecontract.ErrorCategory(retry.Error.Category),
-					Message: "provider request failed", UserAction: retry.Error.UserAction,
+					Message: routingFailureMessage(nil, retry.Error), UserAction: retry.Error.UserAction,
 					CorrelationID: retry.Error.CorrelationID,
 					Retry:         runtimecontract.RetryAfter(retry.Delay, retry.Attempt, retry.MaxAttempts, time.Now()),
 					Metadata:      map[string]any{"provider": retry.Error.Provider, "http_status": retry.Error.HTTPStatus, "governance": governance},
@@ -522,7 +522,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 				if named := namedRecoverFromProvider(info.Code); named != "" {
 					outcome["reason_code"] = named
 				}
-				outcome["error"] = runtimecontract.ErrorEnvelope{Code: info.Code, Category: runtimecontract.ErrorCategory(info.Category), Message: "provider request failed", UserAction: info.UserAction, CorrelationID: info.CorrelationID, Retry: runtimecontract.NoRetry(), Metadata: map[string]any{"provider": info.Provider, "http_status": info.HTTPStatus}}
+				outcome["error"] = runtimecontract.ErrorEnvelope{Code: info.Code, Category: runtimecontract.ErrorCategory(info.Category), Message: routingFailureMessage(err, info), UserAction: info.UserAction, CorrelationID: info.CorrelationID, Retry: runtimecontract.NoRetry(), Metadata: map[string]any{"provider": info.Provider, "http_status": info.HTTPStatus}}
 			} else {
 				outcome["status"] = "succeeded"
 				outcome["provider"] = result.Usage.Provider
@@ -1060,6 +1060,10 @@ func (d *Daemon) finishFailedExecution(sess *sessionstore.Session, task *schedul
 		payload["provider"] = providerFailure.Provider
 		payload["user_action"] = providerFailure.UserAction
 		payload["same_route_retryable"] = providerFailure.Retryable
+		if providerFailure.Attempts > 0 {
+			payload["provider_attempts"] = providerFailure.Attempts
+			payload["provider_max_attempts"] = providerFailure.MaxAttempts
+		}
 	}
 	if isNamedRecoverReason(reasonCode) {
 		d.noteRecover(reasonCode, recoverPhaseTerminal, task.RunID, len(tr.Turns))

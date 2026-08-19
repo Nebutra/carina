@@ -1641,8 +1641,9 @@ func grokACPSettingsUpdateValid(method string, raw json.RawMessage) bool {
 	if json.Unmarshal(raw, &settings) != nil || !grokACPObjectKeyShape(settings, nil, []string{
 		"show_resolved_model", "sharing_enabled", "privacy_notice_rollout", "privacy_banner_reshow_days",
 		"session_picker_grouped", "tips", "slash_command_tags", "announcements", "campaigns", "gate_message",
-		"gate_url", "gate_label", "allow_access", "subscription_tier_display", "auto_permission_mode_enabled",
-		"permission_mode", "group_tool_verbs", "collapsed_edit_blocks", "subscription_watch_interval_secs",
+		"gate_url", "gate_label", "allow_access", "consent_gate", "subscription_tier_display",
+		"auto_permission_mode_enabled", "permission_mode", "group_tool_verbs", "collapsed_edit_blocks",
+		"subscription_watch_interval_secs",
 	}) {
 		return false
 	}
@@ -1680,6 +1681,14 @@ func grokACPSettingsUpdateValid(method string, raw json.RawMessage) bool {
 	if modeRaw, exists := settings["permission_mode"]; exists && rawJSONPresent(modeRaw) {
 		var mode string
 		if json.Unmarshal(modeRaw, &mode) != nil || mode != "always-approve" && mode != "ask" && mode != "default" {
+			return false
+		}
+	}
+	if gateRaw, exists := settings["consent_gate"]; exists && rawJSONPresent(gateRaw) {
+		// Grok 1.0.5 always includes the key. A boolean display flag is safe;
+		// any object/array would be an unknown capability surface.
+		var enabled bool
+		if json.Unmarshal(gateRaw, &enabled) != nil {
 			return false
 		}
 	}

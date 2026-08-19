@@ -805,6 +805,7 @@ pub enum MessageId {
     FailureReasonStreamStopped,
     FailureReasonCredential,
     FailureReasonRateLimited,
+    FailureReasonProviderUnavailable,
     FailureReasonCircuitOpen,
     FailureReasonEffortUnsupported,
     FailureReasonGenericTurn,
@@ -1488,6 +1489,7 @@ impl MessageId {
         Self::FailureReasonStreamStopped,
         Self::FailureReasonCredential,
         Self::FailureReasonRateLimited,
+        Self::FailureReasonProviderUnavailable,
         Self::FailureReasonCircuitOpen,
         Self::FailureReasonEffortUnsupported,
         Self::FailureReasonGenericTurn,
@@ -1832,6 +1834,12 @@ fn trailing_operator_clause(reason: &str, lead: &str) -> Option<String> {
     Some(rest.to_owned())
 }
 
+fn generic_grok_update_clause(rest: &str) -> bool {
+    let rest = rest.trim().trim_end_matches('.').trim();
+    rest == "update grok build or choose another provider"
+        || rest == "run `grok doctor`, then refresh providers"
+}
+
 /// Map daemon/operator English failure copy (and residual stacks) to locale text.
 pub fn localize_operator_failure_reason(locale: Locale, reason: &str) -> String {
     let trimmed = reason.trim();
@@ -1853,6 +1861,11 @@ pub fn localize_operator_failure_reason(locale: Locale, reason: &str) -> String 
         || lower.contains("quota")
     {
         MessageId::FailureReasonRateLimited
+    } else if lower.contains("temporarily unavailable")
+        || lower.contains("provider_unavailable")
+        || lower.contains("status 503")
+    {
+        MessageId::FailureReasonProviderUnavailable
     } else if lower.contains("circuit") {
         MessageId::FailureReasonCircuitOpen
     } else if lower.contains("reasoning effort") {
@@ -1867,8 +1880,6 @@ pub fn localize_operator_failure_reason(locale: Locale, reason: &str) -> String 
         || (lower.contains("reply with json") && lower.contains("calling tools"))
     {
         MessageId::FailureReasonGrokNativeTool
-    } else if lower.contains("grok doctor") || lower.contains("update grok") {
-        MessageId::FailureReasonGrokDoctor
     } else if lower.contains("modelrouter")
         || lower.starts_with("reasoner error:")
         || lower.starts_with("reasoner failed:")
@@ -1877,15 +1888,22 @@ pub fn localize_operator_failure_reason(locale: Locale, reason: &str) -> String 
         if let Some(rest) = trailing_operator_clause(trimmed, "The model could not complete this turn")
         {
             let rest_l = rest.to_ascii_lowercase();
-            if !rest_l.contains("check the provider and network") {
+            if rest_l.contains("check the provider and network") {
+                MessageId::FailureReasonGenericTurn
+            } else if generic_grok_update_clause(&rest_l) {
+                MessageId::FailureReasonGrokDoctor
+            } else {
                 return format!(
                     "{} {}",
                     text(locale, MessageId::FailureReasonGenericTurn),
                     rest
                 );
             }
+        } else {
+            MessageId::FailureReasonGenericTurn
         }
-        MessageId::FailureReasonGenericTurn
+    } else if lower.contains("grok doctor") || lower.contains("update grok") {
+        MessageId::FailureReasonGrokDoctor
     } else if lower.contains("requires an explicit profile")
         || lower.contains("exceeds profile ceiling")
         || lower.contains("risk level")
@@ -7386,6 +7404,15 @@ fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
             "El proveedor limitó la tasa o el cupo de la solicitud. Espera o elige otro proveedor.",
             "Le fournisseur a limité le débit ou le quota. Attendez ou choisissez un autre fournisseur.",
         ],
+        FailureReasonProviderUnavailable => [
+            "The model provider was temporarily unavailable. Retry or choose another provider.",
+            "模型服务暂时不可用。请重试，或换一个服务商。",
+            "模型服務暫時不可用。請重試，或換一個服務商。",
+            "モデル提供者が一時的に利用できません。再試行するか別のプロバイダーを選んでください。",
+            "모델 제공자를 일시적으로 사용할 수 없습니다. 다시 시도하거나 다른 제공자를 선택하세요.",
+            "El proveedor no estuvo disponible temporalmente. Reintenta o elige otro proveedor.",
+            "Le fournisseur était temporairement indisponible. Réessayez ou choisissez un autre fournisseur.",
+        ],
         FailureReasonCircuitOpen => [
             "The model provider circuit is open. Wait for the probe or choose another provider.",
             "模型服务商熔断已打开。请等待探测恢复或更换服务商。",
@@ -7972,6 +7999,20 @@ mod tests {
             grok_doctor,
             text(Locale::ZhHans, MessageId::FailureReasonGenericTurn)
         );
+        let grok_detail = localize_operator_failure_reason(
+            Locale::ZhHans,
+            "The model could not complete this turn. authenticate: Grok Build emitted an unsafe settings update. update Grok Build or choose another provider.",
+        );
+        assert!(
+            grok_detail.contains("unsafe settings update"),
+            "grok_detail={grok_detail}"
+        );
+        let unavailable = localize_operator_failure_reason(
+            Locale::ZhHans,
+            "The model provider was temporarily unavailable. retry or choose another provider.",
+        );
+        assert!(unavailable.contains("不可用"), "unavailable={unavailable}");
+        assert!(!unavailable.contains("temporarily unavailable"), "unavailable={unavailable}");
     }
 
     #[test]

@@ -70,7 +70,6 @@ type claudeCLIStreamResult struct {
 	streamedText  strings.Builder
 	model         string
 	usage         claudeCLIUsage
-	assistantSeen bool
 	completed     bool
 }
 
@@ -213,10 +212,6 @@ func (r *claudeCLIStreamResult) consume(event claudeCLIEvent, onText func(string
 	case "stream_event":
 		return r.consumeStreamEvent(event.Event, onText)
 	case "assistant":
-		if r.assistantSeen {
-			return claudeCLIError{message: "Claude CLI emitted multiple assistant messages", kind: "protocol"}
-		}
-		r.assistantSeen = true
 		return r.consumeAssistant(event.Message)
 	case "rate_limit_event":
 		return nil
@@ -307,7 +302,22 @@ func (r *claudeCLIStreamResult) consumeAssistant(raw json.RawMessage) error {
 	if text.Len() > maxProviderResponseBytes {
 		return claudeCLIError{message: "Claude response exceeds size limit", kind: "protocol"}
 	}
-	r.assistantText = text.String()
+	snapshot := text.String()
+	if snapshot == "" {
+		// --include-partial-messages emits a thinking-only assistant snapshot
+		// before the text snapshot. That is not a second answer.
+		if message.Model != "" {
+			r.model = message.Model
+		}
+		return nil
+	}
+	if r.assistantText != "" && r.assistantText != snapshot &&
+		!strings.HasPrefix(snapshot, r.assistantText) && !strings.HasPrefix(r.assistantText, snapshot) {
+		return claudeCLIError{message: "Claude CLI emitted multiple assistant messages", kind: "protocol"}
+	}
+	if len(snapshot) >= len(r.assistantText) {
+		r.assistantText = snapshot
+	}
 	if message.Model != "" {
 		r.model = message.Model
 	}

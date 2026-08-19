@@ -278,6 +278,7 @@ struct RunMetadata {
     effective_model: String,
     model: String,
     retry_of_run_id: String,
+    provider_attempts: usize,
 }
 
 impl RunMetadata {
@@ -364,6 +365,9 @@ impl TranscriptReducer {
         if let Some(value) = detail(details, "retry_of_run_id") {
             metadata.retry_of_run_id = value;
         }
+        if let Some(value) = detail_usize(details, "provider_attempts") {
+            metadata.provider_attempts = value;
+        }
     }
 
     fn failure_context(&self, run_id: &str) -> FailureContext {
@@ -378,10 +382,15 @@ impl TranscriptReducer {
             .map(RunMetadata::actual_model)
             .unwrap_or_default();
         let (retry_root_run_id, attempt_count) = self.retry_lineage(run_id);
+        let provider_attempts = self
+            .run_metadata
+            .get(run_id)
+            .map(|metadata| metadata.provider_attempts)
+            .unwrap_or(0);
         FailureContext {
             model,
             retry_root_run_id,
-            attempt_count,
+            attempt_count: attempt_count.max(provider_attempts),
         }
     }
 
@@ -2445,6 +2454,15 @@ fn net_diff_is_represented(
 
 fn detail(details: &BTreeMap<String, Value>, key: &str) -> Option<String> {
     details.get(key).and_then(safe_value)
+}
+
+fn detail_usize(details: &BTreeMap<String, Value>, key: &str) -> Option<usize> {
+    details.get(key).and_then(|value| {
+        value
+            .as_u64()
+            .map(|n| n as usize)
+            .or_else(|| value.as_str().and_then(|raw| raw.parse().ok()))
+    })
 }
 
 fn raw_string<'a>(details: &'a BTreeMap<String, Value>, key: &str) -> Option<&'a str> {
@@ -5458,6 +5476,29 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         assert_eq!(failure.retry_root_run_id, "run-1");
         assert_eq!(failure.attempt_count, 1);
         assert_eq!(blocks[0].body, "legacy failure");
+    }
+
+    #[test]
+    fn provider_retry_exhaustion_raises_failure_attempt_count() {
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        assert!(reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "ExecutionFailed",
+                json!({
+                    "reason": "The model provider was temporarily unavailable. retry or choose another provider.",
+                    "reason_code": "provider_unavailable",
+                    "retryable": true,
+                    "provider_attempts": 4,
+                    "provider_max_attempts": 4,
+                    "model": "ccswitch-codex/gpt-5.6-sol"
+                }),
+            ),
+        ));
+        let failure = blocks[0].failure.as_ref().unwrap();
+        assert_eq!(failure.attempt_count, 4);
+        assert_eq!(failure.retry_root_run_id, "run-1");
     }
 
     #[test]
