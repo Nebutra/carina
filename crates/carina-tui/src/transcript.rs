@@ -164,6 +164,9 @@ impl TranscriptBlock {
                 if let Some(failure) = self.failure.as_ref() {
                     return i18n::text(locale, failure_kind_message_id(failure.kind)).to_owned();
                 }
+                if self.id.starts_with("compact:") {
+                    return i18n::text(locale, MessageId::CompactCellTitle).to_owned();
+                }
                 self.title.clone()
             }
         }
@@ -181,6 +184,12 @@ impl TranscriptBlock {
         self.failure
             .as_ref()
             .map(|failure| i18n::localize_operator_failure_reason(locale, &failure.reason))
+    }
+
+    pub fn localized_compact_body(&self, locale: Locale) -> Option<String> {
+        self.id
+            .starts_with("compact:")
+            .then(|| i18n::localize_compact_cell_body(locale, &self.body))
     }
 
     fn tool_group_state(&self) -> Option<(ToolKind, usize, bool, usize)> {
@@ -538,6 +547,13 @@ impl TranscriptReducer {
                     .unwrap_or(false);
                 settled || projected
             }
+            "ContextCompacted" => compact_block(
+                event.event_id.clone(),
+                event.run_id.clone(),
+                &event.payload,
+            )
+            .map(|block| upsert_block(blocks, block))
+            .unwrap_or(false),
             "assistant.message.reset"
             | "assistant.message.delta"
             | "assistant.message.completed"
@@ -929,6 +945,7 @@ impl TranscriptReducer {
             self.reduce_turn_item(blocks, event);
             return;
         };
+        let source_event_id = event.source_event_id.clone();
         let item_id = if item.id.is_empty() {
             first_non_empty([
                 event.item_id,
@@ -1108,6 +1125,16 @@ impl TranscriptReducer {
                         display_status(&item.status),
                     );
                     block.assistant_phase = Some(AssistantMessagePhase::FinalAnswer);
+                    upsert_block(blocks, block);
+                }
+            }
+            "context_compacted" => {
+                let id = first_non_empty([
+                    source_event_id,
+                    item.id.clone(),
+                    item_id,
+                ]);
+                if let Some(block) = compact_block(id, item.run_id, &item.details) {
                     upsert_block(blocks, block);
                 }
             }
@@ -1533,6 +1560,85 @@ fn tool_display_status(kind: ToolKind, status: &str) -> String {
         "completed" => "applied".into(),
         other => display_status(other),
     }
+}
+
+fn compact_request_only(payload: &BTreeMap<String, Value>) -> bool {
+    matches!(detail(payload, "phase").as_deref(), Some("requested"))
+        || matches!(
+            detail(payload, "status").as_deref(),
+            Some("checkpoint_compact_requested")
+        )
+}
+
+fn compact_block(
+    source_id: String,
+    run_id: String,
+    payload: &BTreeMap<String, Value>,
+) -> Option<TranscriptBlock> {
+    if compact_request_only(payload) {
+        return None;
+    }
+    let receipt = payload.get("receipt")?.as_object()?;
+    let mode = receipt
+        .get("mode")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let removed = receipt
+        .get("removed_turns")
+        .and_then(value_as_usize)
+        .unwrap_or(0);
+    let before = receipt
+        .get("chars_before")
+        .and_then(value_as_usize)
+        .unwrap_or(0);
+    let after = receipt
+        .get("chars_after")
+        .and_then(value_as_usize)
+        .unwrap_or(0);
+    let circuit = detail(payload, "summarizer_circuit").as_deref() == Some("open")
+        || detail(payload, "status").as_deref() == Some("summarizer_circuit_open");
+    let body = if circuit {
+        "Summarizer failed 3 times; staying on local collapse. User turns stay verbatim.".into()
+    } else if mode == "summary" {
+        format!("Summarized {removed} turns. {before} → {after} characters.")
+    } else {
+        format!("Collapsed {removed} turns with collapse_only. {before} → {after} characters.")
+    };
+    let id = first_non_empty([source_id]);
+    Some(TranscriptBlock {
+        id: format!("compact:{id}"),
+        run_id,
+        kind: BlockKind::Diagnostic,
+        assistant_phase: None,
+        user_kind: UserBlockKind::Prompt,
+        tool_kind: None,
+        tool_members: Vec::new(),
+        todo_items: Vec::new(),
+        failure: None,
+        title: "Context compacted".into(),
+        body,
+        body_kind: BlockBodyKind::Plain,
+        additions: 0,
+        deletions: 0,
+        status: if circuit {
+            "summarizer_circuit_open".into()
+        } else {
+            "compacted".into()
+        },
+        collapsible: true,
+        expanded: false,
+        selected: false,
+        source_prompt: String::new(),
+        branchable: false,
+        layout_revision: 1,
+    })
+}
+
+fn value_as_usize(value: &Value) -> Option<usize> {
+    value
+        .as_u64()
+        .map(|n| n as usize)
+        .or_else(|| value.as_str().and_then(|raw| raw.parse().ok()))
 }
 
 fn simple_block_from_event(event: WireEvent) -> Option<TranscriptBlock> {
@@ -5499,6 +5605,58 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         let failure = blocks[0].failure.as_ref().unwrap();
         assert_eq!(failure.attempt_count, 4);
         assert_eq!(failure.retry_root_run_id, "run-1");
+    }
+
+    #[test]
+    fn context_compacted_receipt_is_a_first_class_replayable_cell() {
+        let receipt = json!({
+            "version": 3,
+            "mode": "collapse_only",
+            "removed_turns": 12,
+            "chars_before": 84012,
+            "chars_after": 21004,
+            "transforms": ["elide_tool_output", "local_skeleton"]
+        });
+        let mut live_event = wire(
+            "ContextCompacted",
+            json!({ "receipt": receipt.clone() }),
+        );
+        live_event.event_id = "evt_receipt".into();
+        let mut live_reducer = TranscriptReducer::default();
+        let mut live = Vec::new();
+        assert!(live_reducer.reduce_event(&mut live, live_event));
+        assert!(!TranscriptReducer::default().reduce_event(
+            &mut Vec::new(),
+            wire(
+                "ContextCompacted",
+                json!({"status":"checkpoint_compact_requested","phase":"requested"}),
+            ),
+        ));
+
+        let mut hydrated_event = item_with_id(
+            "compact_evt_receipt",
+            "context_compacted",
+            "compacted",
+            json!({ "receipt": receipt }),
+        );
+        hydrated_event.source_event_id = "evt_receipt".into();
+        let hydrated = TranscriptReducer::default().hydrate(vec![hydrated_event]);
+
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].id, hydrated[0].id);
+        assert_eq!(live[0].id, "compact:evt_receipt");
+        assert_eq!(live[0].kind, BlockKind::Diagnostic);
+        assert_eq!(live[0].status, "compacted");
+        assert_eq!(live[0].body, hydrated[0].body);
+        assert!(live[0].body.contains("collapse_only"));
+        assert_eq!(
+            crate::semantic_cell::SemanticCellKind::from_block(&live[0]),
+            crate::semantic_cell::SemanticCellKind::Compact
+        );
+        assert_eq!(
+            live[0].localized_title(Locale::ZhHans),
+            i18n::text(Locale::ZhHans, MessageId::CompactCellTitle)
+        );
     }
 
     #[test]

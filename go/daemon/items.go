@@ -869,6 +869,24 @@ func projectSessionItems(sessionID string, events []itemAuditEvent) []SessionIte
 			}
 			item.Details["source_type"] = ev.Type
 			out = append(out, itemEvent("item.completed", sessionID, ev, item))
+		case "ContextCompacted":
+			if stringField(ev.Payload, "phase") == "requested" ||
+				stringField(ev.Payload, "status") == "checkpoint_compact_requested" ||
+				compactReceiptMap(ev.Payload) == nil {
+				break
+			}
+			details := copyMap(ev.Payload)
+			details["source_type"] = ev.Type
+			item := &SessionItem{
+				ID:          fallbackItemID("compact", ev, i),
+				Type:        "context_compacted",
+				Status:      nonempty(stringField(ev.Payload, "status"), "compacted"),
+				TaskID:      ev.TaskID,
+				StartedAt:   ev.Timestamp,
+				CompletedAt: ev.Timestamp,
+				Details:     details,
+			}
+			out = append(out, itemEvent("item.completed", sessionID, ev, item))
 		}
 
 		if ev.Type == "TaskCreated" {
@@ -1259,6 +1277,28 @@ func setCommandOutputDetails(cmd *commandProjection) {
 	if len(cmd.stdout) > 0 || len(cmd.stderr) > 0 {
 		cmd.item.Details["aggregated_output"] = strings.Join(append(append([]string{}, cmd.stdout...), cmd.stderr...), "")
 	}
+}
+
+func compactReceiptMap(payload map[string]any) map[string]any {
+	raw, ok := payload["receipt"]
+	if !ok || raw == nil {
+		return nil
+	}
+	if typed, ok := raw.(map[string]any); ok {
+		if len(typed) == 0 {
+			return nil
+		}
+		return typed
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var receipt map[string]any
+	if json.Unmarshal(encoded, &receipt) != nil || len(receipt) == 0 {
+		return nil
+	}
+	return receipt
 }
 
 func fallbackItemID(prefix string, ev itemAuditEvent, index int) string {

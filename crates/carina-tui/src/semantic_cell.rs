@@ -18,12 +18,16 @@ pub enum SemanticCellKind {
     Patch,
     Failure,
     Notice,
+    Compact,
 }
 
 impl SemanticCellKind {
     pub fn from_block(block: &TranscriptBlock) -> Self {
         if block.failure.is_some() || block.tool_members.iter().any(|member| member.is_failure()) {
             return Self::Failure;
+        }
+        if block.id.starts_with("compact:") {
+            return Self::Compact;
         }
 
         if block.kind == BlockKind::Tool
@@ -65,6 +69,7 @@ impl SemanticCellKind {
                 | Self::Patch
                 | Self::Failure
                 | Self::Notice
+                | Self::Compact
         )
     }
 }
@@ -142,6 +147,19 @@ mod tests {
         assert_eq!(
             SemanticCellKind::from_block(&failure),
             SemanticCellKind::Failure
+        );
+    }
+
+    #[test]
+    fn compact_receipt_identity_is_typed_not_copy() {
+        let mut compact = block(BlockKind::Diagnostic);
+        compact.id = "compact:evt_receipt".into();
+        compact.title = "Context compacted".into();
+        compact.body = "Collapsed 12 turns with collapse_only. 84012 → 21004 characters.".into();
+        compact.status = "compacted".into();
+        assert_eq!(
+            SemanticCellKind::from_block(&compact),
+            SemanticCellKind::Compact
         );
     }
 

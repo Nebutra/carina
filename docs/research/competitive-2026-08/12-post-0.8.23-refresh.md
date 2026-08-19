@@ -1,8 +1,8 @@
 # Post-0.8.23 Harness Audit Refresh
 
-> **取证日期**：2026-08-18  
-> **产品锚点**：`go/product/version.go` → **0.8.23**  
-> **工作树**：含未提交 reasoner 握手修复（Grok `consent_gate` / Claude 增量 assistant / 503 UserAction）  
+> **取证日期**：2026-08-19  
+> **产品锚点**：`go/product/version.go` → **0.8.23**（`670e5c5` 已上 main）  
+> **工作树**：未提交 — Compact 一等 cell + Grok 过期 `models_cache` 跳过隔离失败  
 > **方法**：本仓库源码 + `crates/carina-tui/CAPABILITIES.md` + GitHub ISSUE-019…040 closed + 本机竞品树抽查 + DeepSeek 公开 README（**本机无 clone**）  
 > **前序**：`07-post-0.8-gap-refresh.md`（0.8.0）已过时，**以本文为现状真相**  
 > **未做**：并排 PTY、同机 RAM PSS、DeepSeek 本地行号级 DNA
@@ -13,7 +13,7 @@
 
 Carina 0.8.23 已经不是「内核强、壳弱」。ISSUE-001…018、视觉密度 V001–V011、queue inspect、以及 0.8.22–23 的 **harness honesty**（#28–#39 / epic #40）都已合入。竞品树相对 2026-08-02 **几乎无漂移**（Jcode 仍 0.64.2；Grok `SOURCE_REV` 仍 `8d69c91f…`）。
 
-**今天的产品力短板不是功能清单，而是首轮推理能不能办成事、失败时说不说实话。** 用户截图「帮我在桌面上写个贪吃蛇」三连失败：Grok 361ms 被误判 safety、Claude 7s 被误判 protocol、Mox 503 已重试但界面写「尝试 1 次」。前两条是 Carina 分类/握手 bug（工作树已修、**尚未安装进 live daemon**）；第三条是上游 503 + 计数诚实度。
+**功能清单债已还完。** 握手/503 计数在 `670e5c5`。工作树里还有三刀未提交：Compact 一等 cell、Grok 过期模型缓存不再挡会话、Goal activation 进程内（重启不续跑）。剩下的用户可感债是：**TUI 巨石回潮、上游 503、失败格中英混排（隔离文案已补）**。
 
 DeepSeek Harness（Cordis「一切皆插件」）**不得**作为 day-one 架构。可偷 Trajectory 不变量、Goal 激活语义、会话内 Schedule；不可偷插件核。
 
@@ -21,11 +21,11 @@ DeepSeek Harness（Cordis「一切皆插件」）**不得**作为 day-one 架构
 
 | # | 行动 | 用户价值 | 状态 |
 |---|------|----------|------|
-| 1 | **安装 reasoner 握手修复**（Grok `consent_gate`、Claude thinking→text assistant、503 文案） | 首轮不再「办不了」 | 代码已在 WT，未 commit/install |
-| 2 | **重试计数诚实**：TUI「尝试 N 次」= 执行 lineage，需并列 HTTP/ACP 耗尽 | 不再把 4 次 503 说成 1 次 | P0 残余 |
-| 3 | **Compact 一等 transcript 条目**（receipt 已有，缺 Claude/OMP 式 compaction cell） | 长会话压缩可看见、可回放 | P1 |
-| 4 | **Goal/续跑激活语义**（DSH：unload 必须 disarm） | 避免重启自动续跑 | P1 审计 |
-| 5 | **R-01 回归铁门**（lifecycle + ScreenMode + steer 已产品化，缺持续 gate） | 防 12k/16k TUI 巨石回潮 | P1 过程 |
+| 1 | Isolated CLI 握手 + 503 文案 | 首轮不再被误判 safety/protocol | **SHIPPED** `670e5c5` |
+| 2 | `provider_attempts` 投影到失败格 | 4 次 503 显示尝试 4 次 | **SHIPPED** `670e5c5` |
+| 3 | Compact 一等 transcript cell | 长会话压缩可看见、可回放 | **WT 未提交** |
+| 4 | Grok 过期 `models_cache` 跳过 | `hi` 不再 23ms 死于隔离准备 | **WT 未提交** |
+| 5 | **Goal/续跑 disarm + R-01 铁门** | 重启不偷跑；防巨石回潮 | **WT：Goal activation 进程内** |
 
 **明确不做（仍有效）**：默认 yolo · snapcompact 默认 · MiniLM-on · 3D/Buddy · 整包 Grok pager · Cordis 一切皆插件 · MCP passthrough · git-only rollback · hashline/Codex fuzzy 换掉 `carina-patch` · ACP 当交互协议 · SaaS 多租户 day-one。
 
@@ -46,7 +46,7 @@ Zig: scan · grep · diff · patch-native · run · pty
 | 模块 | 路径 | 分类 |
 |------|------|------|
 | Agent loop | `go/daemon/agent.go`（`maxAgentTurns=64`，`maxRequeries=3`） | **SHIPPED** |
-| Reasoner / 路由 | `reasoner.go` + grok/claude/codex CLI 隔离 | **SHIPPED** + **BUG**（握手/文案，WT 已修） |
+| Reasoner / 路由 | `reasoner.go` + grok/claude/codex CLI 隔离 | **SHIPPED**（`670e5c5` 握手 + `provider_attempts`） |
 | contextengine | `go/contextengine` auto→noop | **SHIPPED** 诚实适配器（不是压缩机） |
 | Product compact | `transcript.go` elide→collapse→summarizer + 3-fail breaker | **SHIPPED** |
 | `/context` ledger | `context_summary.go` = `tr.render()`；非 Anthropic `cache=none` | **SHIPPED**（#28/#34） |
@@ -62,7 +62,7 @@ Zig: scan · grep · diff · patch-native · run · pty
 | TUI 巨石 | `app/mod.rs` ~12k · `render.rs` ~16k | **SLOP**（#33 已拆 composer） |
 | 旧全局 sock | `~/.carina/daemon.sock` | **LEGACY** |
 
-用户视角短板：首轮 reasoner 失败、尝试次数语义、live daemon 仍是未打补丁的 0.8.23。
+用户视角短板：长会话压缩无独立 cell（工作树已投影）；Goal 续跑已 disarm；TUI 需重开才能吃到 `670e5c5`。Mox 503 仍是上游环境。
 
 ---
 
@@ -119,10 +119,8 @@ Zig: scan · grep · diff · patch-native · run · pty
 
 | ID | 项 | P |
 |----|----|---|
-| G23-01 | 首轮 isolated CLI 握手（Grok settings / Claude partial assistant） | P0 |
-| G23-02 | 失败「尝试 N 次」≠ HTTP/ACP 重试耗尽 | P0 |
-| G23-03 | Compact 不是一等 transcript cell | P1 |
-| G23-04 | Goal/续跑是否 unload 后仍 armed（待对照 `goals.go`） | P1 |
+| G23-03 | Compact 不是一等 transcript cell | **SHIPPED**（`ContextCompacted` → `compact:{event_id}` live=replay） |
+| G23-04 | Goal/续跑是否 unload 后仍 armed | **SHIPPED**（`auto_continue` 不落盘；启动 disarm，不 reconcile 续跑） |
 
 ### WIP
 
@@ -131,14 +129,12 @@ Zig: scan · grep · diff · patch-native · run · pty
 
 ### TODO
 
-- Commit + 安装 + 重启 daemon（G23-01 才能被用户摸到）
 - R-01 回归铁门进 release companion
 - 可选：DeepSeek clone 后再写 `01-dna-deepseek.md`
 
 ### BUG
 
-- Live 0.8.23 daemon **不含** WT 握手修复
-- 503 已重试 4 次，TUI 显示尝试 1 次（计数语义）
+- 无未修产品 bug 挂账；Mox 503 是上游环境
 
 ### LEGACY
 
@@ -157,40 +153,28 @@ Zig: scan · grep · diff · patch-native · run · pty
 
 - best-of-n、swarm 通道、VS Code Marketplace、hosted Web Operator、HMS
 
-**已闭合（不要当缺口重开）**：ISSUE-001…018、V001–V011、R-02 `/queue`、#28–#39 honesty。
+**已闭合（不要当缺口重开）**：ISSUE-001…018、V001–V011、R-02 `/queue`、#28–#39 honesty、G23-01/G23-02（`670e5c5`）。
 
 ---
 
 ## 6. Phase 5 — 路线图
 
-### P0-A · 安装握手修复（0.5 人天）
+### P0-A / P0-B · **SHIPPED** `670e5c5`
 
-- **价值**：Grok/Claude 首轮能过握手。  
-- **参考**：本仓库 WT；Grok 1.0.5 `consent_gate`；Claude 2.1.220 `--include-partial-messages`。  
-- **路径**：已实现 → commit/push → `make install` → 重启 runtime。  
-- **验收**：隔离 `grok` inspect+ACP preflight 绿；实录 Claude thinking→text 流 `finish` 成功；503 文案含「暂时不可用」。  
-- **回滚**：revert 9-file diff；分类器仍 fail-closed（未知 settings 对象仍拒）。
+握手 + `provider_attempts`。TUI 需重开。
 
-### P0-B · 重试计数诚实（1 人天）
-
-- **价值**：Mox 503 显示「提供方重试 4/4 后仍不可用」，不是「尝试 1 次」。  
-- **参考**：`agent.go` `RoutingRetryScheduled`；Grok `retry_state`。  
-- **路径**：Failure cell 增加 `provider_attempts`；不改执行 lineage。  
-- **验收**：503 四次重试后 TUI 同时可见 HTTP 耗尽；单次 Grok 握手失败仍为 1。  
-- **回滚**：只投影字段。
-
-### P1 · Compact 一等 cell（2–4 人天）
+### P0 · Compact 一等 cell（2–4 人天）
 
 - **价值**：长会话看见「压缩了什么」。  
 - **参考**：OMP `type:compaction`；Claude collapse；Carina `ContextCompacted` receipt。  
 - **路径**：投影已有 receipt → SemanticCellKind，禁止假装 contextengine 压缩。  
 - **验收**：live=replay；`engine=noop` 不出现假 savings。
 
-### P1 · Goal disarm 审计（1 人天）
+### P1 · Goal disarm · **SHIPPED**（工作树）
 
 - **价值**：重启不会偷偷续跑。  
 - **参考**：DSH goal activation 不持久化。  
-- **路径**：读 `goals.go` / scheduler；若 armed 落盘则改 process-local。
+- **路径**：`auto_continue` 只活在当前 daemon；`goals.json` 不写该位；启动 `disarmPersistedGoalActivation`，不再 `recoverAutoGoals` 扫 terminal 任务。
 
 ### P1 · R-01 铁门（持续 M）
 
@@ -224,4 +208,4 @@ Zig: scan · grep · diff · patch-native · run · pty
 | 未安装的修复让审计变成空文 | P0-A 必须先于新 epic |
 | TUI 巨石继续胀 | 铁门 + 顺手拆，不开 XL 重写 |
 
-**置信度**：Carina 路径高；竞品抽查高（版本未漂）；DeepSeek 中（无本地树）；Goal disarm 待源码确认（中）。
+**置信度**：Carina 路径高；竞品抽查高（版本未漂）；DeepSeek 中（无本地树）；Goal disarm 已对照 `goals.go`（高）。

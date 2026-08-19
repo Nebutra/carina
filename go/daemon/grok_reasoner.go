@@ -35,6 +35,15 @@ const (
 
 var grokACPBaselineCommands = []string{"always-approve", "compact", "context", "session-info"}
 
+var (
+	errGrokModelsCacheStale      = errors.New("Grok Build model cache is stale")
+	errGrokModelsCacheUnreadable = errors.New("Grok Build model cache is unreadable")
+)
+
+func grokModelsCacheOptional(err error) bool {
+	return errors.Is(err, errGrokModelsCacheStale) || errors.Is(err, errGrokModelsCacheUnreadable)
+}
+
 type grokCLIReasoner struct {
 	bin           string
 	version       string
@@ -162,7 +171,11 @@ func (r *grokCLIReasoner) ThinkRoutedModel(ctx context.Context, model, prompt st
 	}
 	configPath, err := prepareGrokIsolationForVersion(grokHome, authPath, r.version)
 	if err != nil {
-		return ReasonerResult{}, grokCLIError{message: "configure isolated Grok Build runtime", kind: "protocol"}
+		detail := boundedMetadata(err.Error(), 180)
+		if detail == "" {
+			detail = "configure isolated Grok Build runtime"
+		}
+		return ReasonerResult{}, grokCLIError{message: detail, kind: "protocol"}
 	}
 	env := grokCLIEnvironment(os.Environ(), grokHome, authPath)
 	if err := r.verifyPureInferenceSurface(callCtx, env, workdir, configPath); err != nil {
@@ -307,7 +320,9 @@ func prepareGrokIsolationForVersion(isolatedHome, authPath, expectedVersion stri
 		return "", err
 	}
 	if err := copySanitizedGrokModelsCacheForVersion(isolatedHome, authPath, expectedVersion); err != nil {
-		return "", err
+		if !grokModelsCacheOptional(err) {
+			return "", err
+		}
 	}
 	bundleDir := filepath.Join(isolatedHome, "bundled")
 	if err := os.MkdirAll(bundleDir, 0o700); err != nil {
@@ -340,7 +355,7 @@ func copySanitizedGrokModelsCacheForVersion(isolatedHome, authPath, expectedVers
 	const cacheLimit = 1 << 20
 	raw, err := io.ReadAll(io.LimitReader(file, cacheLimit+1))
 	if err != nil || len(raw) > cacheLimit {
-		return errors.New("Grok Build model cache is unreadable")
+		return errGrokModelsCacheUnreadable
 	}
 	var cache map[string]json.RawMessage
 	if json.Unmarshal(raw, &cache) != nil {
@@ -365,7 +380,7 @@ func copySanitizedGrokModelsCacheForVersion(isolatedHome, authPath, expectedVers
 	fetchedTime, parseErr := time.Parse(time.RFC3339Nano, fetchedAt)
 	now := time.Now().UTC()
 	if parseErr != nil || fetchedTime.After(now) || now.Sub(fetchedTime) >= 5*time.Minute {
-		return errors.New("Grok Build model cache is stale")
+		return errGrokModelsCacheStale
 	}
 	if json.Unmarshal(cache["origin"], &origin) != nil || origin != "https://cli-chat-proxy.grok.com/v1/models" {
 		return errors.New("Grok Build model cache has an unexpected origin")

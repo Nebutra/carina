@@ -799,7 +799,7 @@ func New(opts Options) (*Daemon, error) {
 	d.recover()
 	d.reconcileMemoryVersions()
 	d.resumeRuns()
-	d.recoverAutoGoals()
+	d.disarmPersistedGoalActivation()
 	d.startBackgroundLoop(d.runScheduleLoop)
 	d.initializeRuntimeIdle()
 	leaseTransferred = true

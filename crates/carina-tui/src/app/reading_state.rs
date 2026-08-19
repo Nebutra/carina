@@ -302,7 +302,7 @@ fn is_semantic(block: &TranscriptBlock) -> bool {
     is_readable(block)
         && !matches!(
             SemanticCellKind::from_block(block),
-            SemanticCellKind::Notice | SemanticCellKind::Approval
+            SemanticCellKind::Notice | SemanticCellKind::Approval | SemanticCellKind::Compact
         )
 }
 

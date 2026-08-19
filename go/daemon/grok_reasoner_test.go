@@ -309,8 +309,29 @@ func TestCopySanitizedGrokModelsCacheRejectsStaleSnapshot(t *testing.T) {
 		"etag":"public-etag",
 		"models":{"grok-4.6":{"api_base_url":null}}
 	}`)
-	if err := copySanitizedGrokModelsCache(home, authPath); err == nil {
-		t.Fatal("stale official model snapshot must not be renewed")
+	if err := copySanitizedGrokModelsCache(home, authPath); !errors.Is(err, errGrokModelsCacheStale) {
+		t.Fatalf("stale cache err=%v, want stale sentinel", err)
+	}
+}
+
+func TestPrepareGrokIsolationSkipsStaleModelsCache(t *testing.T) {
+	home := t.TempDir()
+	authDir := t.TempDir()
+	authPath := filepath.Join(authDir, "auth.json")
+	writeOwnerOnlyFile(t, authPath, `{}`)
+	writeOwnerOnlyFile(t, filepath.Join(authDir, "models_cache.json"), `{
+		"fetched_at":`+strconv.Quote(time.Now().UTC().Add(-5*time.Minute).Format(time.RFC3339Nano))+`,
+		"grok_version":"1.0.3",
+		"auth_method":"session",
+		"origin":"https://cli-chat-proxy.grok.com/v1/models",
+		"etag":"public-etag",
+		"models":{"grok-4.6":{"api_base_url":null}}
+	}`)
+	if _, err := prepareGrokIsolation(home, authPath); err != nil {
+		t.Fatalf("stale cache must not block isolation: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "models_cache.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("stale official model snapshot must not be copied into isolation")
 	}
 }
 

@@ -18,22 +18,25 @@ const goalStoreVersion = 1
 const defaultGoalContinuationLimit = 8
 
 type sessionGoal struct {
-	SessionID           string                   `json:"session_id"`
-	Objective           string                   `json:"objective"`
-	Status              string                   `json:"status"`
-	TokenBudget         int                      `json:"token_budget,omitempty"`
-	TokensUsed          int                      `json:"tokens_used"`
-	TimeUsedSeconds     int64                    `json:"time_used_seconds"`
-	CreatedAt           time.Time                `json:"created_at"`
-	UpdatedAt           time.Time                `json:"updated_at"`
-	ContinuationsUsed   int                      `json:"continuations_used"`
-	MaxContinuations    int                      `json:"max_continuations"`
-	SuccessCriteria     []scheduler.SuccessCheck `json:"success_criteria,omitempty"`
-	AutoContinue        bool                     `json:"auto_continue,omitempty"`
-	ConsecutiveFailures int                      `json:"consecutive_failures,omitempty"`
-	LastTaskID          string                   `json:"last_task_id,omitempty"`
-	UsageBaseline       int                      `json:"-"`
-	ActiveSince         time.Time                `json:"-"`
+	SessionID         string                   `json:"session_id"`
+	Objective         string                   `json:"objective"`
+	Status            string                   `json:"status"`
+	TokenBudget       int                      `json:"token_budget,omitempty"`
+	TokensUsed        int                      `json:"tokens_used"`
+	TimeUsedSeconds   int64                    `json:"time_used_seconds"`
+	CreatedAt         time.Time                `json:"created_at"`
+	UpdatedAt         time.Time                `json:"updated_at"`
+	ContinuationsUsed int                      `json:"continuations_used"`
+	MaxContinuations  int                      `json:"max_continuations"`
+	SuccessCriteria   []scheduler.SuccessCheck `json:"success_criteria,omitempty"`
+	// AutoContinue is process-local activation. It may appear on RPC
+	// responses for the current daemon, but it is never written to
+	// goals.json and is cleared on load so a restart cannot steal a run.
+	AutoContinue        bool      `json:"auto_continue,omitempty"`
+	ConsecutiveFailures int       `json:"consecutive_failures,omitempty"`
+	LastTaskID          string    `json:"last_task_id,omitempty"`
+	UsageBaseline       int       `json:"-"`
+	ActiveSince         time.Time `json:"-"`
 }
 
 type goalRecord struct {
@@ -62,15 +65,40 @@ func newGoalStore(stateDir string) *goalStore {
 		_ = statefmt.Quarantine(s.path, version)
 		return s
 	}
+	dirty := false
 	for _, g := range env.Goals {
 		if g != nil && g.Goal != nil {
 			g.Goal.UsageBaseline = g.UsageBaseline
 			g.Goal.ActiveSince = g.ActiveSince
+			if disarmGoalActivation(g.Goal) {
+				dirty = true
+			}
 			s.goals[g.Goal.SessionID] = g
 		}
 	}
+	if dirty {
+		_ = s.persistLocked()
+	}
 	return s
 }
+
+func disarmGoalActivation(g *sessionGoal) bool {
+	if g == nil || !g.AutoContinue {
+		return false
+	}
+	g.AutoContinue = false
+	return true
+}
+
+func persistableGoalRecord(g *goalRecord) *goalRecord {
+	if g == nil || g.Goal == nil {
+		return g
+	}
+	goal := *g.Goal
+	goal.AutoContinue = false
+	return &goalRecord{Goal: &goal, UsageBaseline: g.UsageBaseline, ActiveSince: g.ActiveSince}
+}
+
 func (s *goalStore) persistLocked() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
 		return err
@@ -79,7 +107,7 @@ func (s *goalStore) persistLocked() error {
 	for _, g := range s.goals {
 		g.UsageBaseline = g.Goal.UsageBaseline
 		g.ActiveSince = g.Goal.ActiveSince
-		rows = append(rows, g)
+		rows = append(rows, persistableGoalRecord(g))
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Goal.SessionID < rows[j].Goal.SessionID })
 	raw, err := json.MarshalIndent(goalEnvelope{Version: goalStoreVersion, Goals: rows}, "", "  ")
@@ -489,10 +517,12 @@ func (d *Daemon) reconcileGoalTask(task *scheduler.ExecutionRun) {
 	_, _ = d.handleGoalContinue(mustRaw(map[string]any{"session_id": task.SessionID}))
 }
 
-func (d *Daemon) recoverAutoGoals() {
-	for _, task := range d.sched.List() {
-		if task.Status == "completed" || task.Status == "failed" || task.Status == "degraded" || task.Status == "cancelled" {
-			go d.reconcileGoalTask(task)
+func (d *Daemon) disarmPersistedGoalActivation() {
+	d.goals.mu.Lock()
+	defer d.goals.mu.Unlock()
+	for _, r := range d.goals.goals {
+		if r != nil {
+			disarmGoalActivation(r.Goal)
 		}
 	}
 }

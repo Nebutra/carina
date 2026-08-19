@@ -73,7 +73,7 @@ func TestAutoGoalBlocksAfterThreeTerminalFailures(t *testing.T) {
 	}
 }
 
-func TestAutoGoalReconcilesTerminalTaskAfterRestart(t *testing.T) {
+func TestAutoGoalActivationDoesNotSurviveRestart(t *testing.T) {
 	stateDir := t.TempDir()
 	d := newDaemonAt(t, stateDir)
 	sess, _ := d.store.CreateSession(t.TempDir(), "safe-edit")
@@ -88,19 +88,61 @@ func TestAutoGoalReconcilesTerminalTaskAfterRestart(t *testing.T) {
 	_ = d.goals.persistLocked()
 	d.goals.mu.Unlock()
 	_ = d.Close()
+	plantArmedGoalFile(t, stateDir, sess.SessionID, task.RunID, now)
 	d = newDaemonAt(t, stateDir)
 	defer d.Close()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(200 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		d.goals.mu.Lock()
-		status := d.goals.goals[sess.SessionID].Goal.Status
+		g := d.goals.goals[sess.SessionID].Goal
+		status := g.Status
+		armed := g.AutoContinue
 		d.goals.mu.Unlock()
-		if status == "complete" {
-			return
+		if status != "active" {
+			t.Fatalf("restart mutated goal status to %s", status)
+		}
+		if armed {
+			t.Fatal("auto_continue stayed armed after restart")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("auto goal terminal state was not reconciled after restart")
+	if n := len(d.sched.List()); n != 1 {
+		t.Fatalf("restart submitted extra tasks: %d", n)
+	}
+}
+
+func TestAutoGoalDoesNotLaunchContinuationAfterRestart(t *testing.T) {
+	stateDir := t.TempDir()
+	d := newDaemonAt(t, stateDir)
+	sess, _ := d.store.CreateSession(t.TempDir(), "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, sess.WorkspaceRoot, "safe-edit", nil)
+	now := time.Now().UTC()
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "failed")
+	d.sched.SetStatus(task.RunID, "failed")
+	failed, _ := d.sched.Get(task.RunID)
+	d.runs.save(failed)
+	d.goals.mu.Lock()
+	d.goals.goals[sess.SessionID] = &goalRecord{Goal: &sessionGoal{SessionID: sess.SessionID, Objective: "retry", Status: "active", AutoContinue: true, LastTaskID: task.RunID, CreatedAt: now, UpdatedAt: now, MaxContinuations: 8, ActiveSince: now}}
+	_ = d.goals.persistLocked()
+	d.goals.mu.Unlock()
+	_ = d.Close()
+	plantArmedGoalFile(t, stateDir, sess.SessionID, task.RunID, now)
+	d = newDaemonAt(t, stateDir)
+	defer d.Close()
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if n := len(d.sched.List()); n != 1 {
+			t.Fatalf("restart launched a continuation: %d tasks", n)
+		}
+		d.goals.mu.Lock()
+		g := d.goals.goals[sess.SessionID].Goal
+		status, armed, used := g.Status, g.AutoContinue, g.ContinuationsUsed
+		d.goals.mu.Unlock()
+		if status != "active" || armed || used != 0 {
+			t.Fatalf("restart mutated goal: status=%s armed=%v continuations=%d", status, armed, used)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func TestGoalContinuationFreezesBudgetBeforeDispatch(t *testing.T) {

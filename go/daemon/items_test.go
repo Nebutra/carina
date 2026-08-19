@@ -739,6 +739,39 @@ func TestProjectSessionItemsHydratesTurnStartFromExecutionQueued(t *testing.T) {
 	}
 }
 
+func TestProjectSessionItemsProjectsContextCompactedReceipt(t *testing.T) {
+	items := projectSessionItems("sess_1", []itemAuditEvent{
+		{EventID: "evt_requested", SessionID: "sess_1", TaskID: "run_1", Type: "ContextCompacted", Payload: map[string]any{
+			"status": "checkpoint_compact_requested", "phase": "requested",
+		}},
+		{EventID: "evt_identity", SessionID: "sess_1", TaskID: "run_1", Type: "ContextCompacted", Payload: map[string]any{
+			"status": "context_compressed", "engine": "noop",
+		}},
+		{EventID: "evt_receipt", SessionID: "sess_1", TaskID: "run_1", Type: "ContextCompacted", Payload: map[string]any{
+			"receipt": CompactionReceipt{
+				Version: 3, Mode: compactionModeCollapseOnly, RemovedTurns: 12,
+				CharsBefore: 84012, CharsAfter: 21004,
+			},
+		}},
+	})
+	var compacted []SessionItemEvent
+	for _, event := range items {
+		if event.Item != nil && event.Item.Type == "context_compacted" {
+			compacted = append(compacted, event)
+		}
+	}
+	if len(compacted) != 1 {
+		t.Fatalf("context_compacted count=%d, want 1: %+v", len(compacted), items)
+	}
+	got := compacted[0]
+	if got.SourceEventID != "evt_receipt" || got.Item.ID != "compact_evt_receipt" {
+		t.Fatalf("compact item identity = %+v", got)
+	}
+	if compactReceiptMap(got.Item.Details) == nil {
+		t.Fatalf("compact item lost receipt: %+v", got.Item.Details)
+	}
+}
+
 func TestProjectSessionItemsProjectsTypedTerminalFailures(t *testing.T) {
 	for _, tc := range []struct {
 		eventType string

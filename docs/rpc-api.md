@@ -30,11 +30,14 @@ reconciliation-blocked tasks must be paused or resolved first. The TUI surface i
 
 Carina stores at most one goal per session. `goal.set/get/clear/pause/resume/complete`
 control that durable state; `goal.continue` is an explicit, operator-triggered task
-submission. There is intentionally no unattended continuation loop: ordinary task
-completion does not mark a goal complete or launch another task. `goal.continue`
-fails closed while a session has an in-flight task, after the configured continuation
-limit, or once the goal token budget is exhausted. Interrupting an active TUI task
-pauses the goal.
+submission. `auto_continue` arms an in-process complete/retry hook for the current
+daemon only: it is never written to `goals.json` and is cleared on load, so a
+restart cannot mark a goal complete or submit another continuation. Re-arm with
+`goal.set` (`auto_continue: true`) or submit an explicit `goal.continue`.
+Ordinary task completion without that hook does not mark a goal complete or
+launch another task. `goal.continue` fails closed while a session has an
+in-flight task, after the configured continuation limit, or once the goal token
+budget is exhausted. Interrupting an active TUI task pauses the goal.
 
 The returned `SessionGoal` includes `objective`, `status` (`active`, `paused`,
 `blocked`, `budget_limited`, `usage_limited`, or `complete`), `token_budget`,

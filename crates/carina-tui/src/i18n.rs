@@ -495,6 +495,9 @@ pub enum MessageId {
     BtwForkWithdrawn,
     SideWithdrawn,
     Compacted,
+    CompactCellTitle,
+    CompactCellCollapse,
+    CompactCellSummary,
     CompactUnavailable,
     SummarizerCircuitOpen,
     ConversationCreated,
@@ -812,6 +815,7 @@ pub enum MessageId {
     FailureReasonGrokSignIn,
     FailureReasonGrokNativeTool,
     FailureReasonGrokDoctor,
+    FailureReasonGrokIsolation,
     FailureReasonPolicyProfile,
     FailureReasonOutputSchema,
     FailureReasonInvalidActions,
@@ -1179,6 +1183,9 @@ impl MessageId {
         Self::BtwForkWithdrawn,
         Self::SideWithdrawn,
         Self::Compacted,
+        Self::CompactCellTitle,
+        Self::CompactCellCollapse,
+        Self::CompactCellSummary,
         Self::CompactUnavailable,
         Self::SummarizerCircuitOpen,
         Self::ConversationCreated,
@@ -1496,6 +1503,7 @@ impl MessageId {
         Self::FailureReasonGrokSignIn,
         Self::FailureReasonGrokNativeTool,
         Self::FailureReasonGrokDoctor,
+        Self::FailureReasonGrokIsolation,
         Self::FailureReasonPolicyProfile,
         Self::FailureReasonOutputSchema,
         Self::FailureReasonInvalidActions,
@@ -1834,6 +1842,60 @@ fn trailing_operator_clause(reason: &str, lead: &str) -> Option<String> {
     Some(rest.to_owned())
 }
 
+pub fn localize_compact_cell_body(locale: Locale, body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.contains("staying on local collapse") {
+        return text(locale, MessageId::SummarizerCircuitOpen).to_owned();
+    }
+    let mode = if trimmed.contains("collapse_only") {
+        MessageId::CompactCellCollapse
+    } else if trimmed.to_ascii_lowercase().contains("summarized") {
+        MessageId::CompactCellSummary
+    } else {
+        return trimmed.to_owned();
+    };
+    let removed = compact_body_number(trimmed, "turns").unwrap_or(0).to_string();
+    let (before, after) = compact_body_span(trimmed);
+    format(
+        locale,
+        mode,
+        &[
+            ("removed", removed.as_str()),
+            ("before", before.as_str()),
+            ("after", after.as_str()),
+        ],
+    )
+}
+
+fn compact_body_number(body: &str, unit: &str) -> Option<u64> {
+    let marker = format!(" {unit}");
+    let start = body.find(&marker)?;
+    body[..start]
+        .rsplit(|ch: char| !ch.is_ascii_digit())
+        .next()
+        .filter(|digits| !digits.is_empty())
+        .and_then(|digits| digits.parse().ok())
+}
+
+fn compact_body_span(body: &str) -> (String, String) {
+    if let Some((left, right)) = body.split_once('→') {
+        let before = left
+            .rsplit(|ch: char| !ch.is_ascii_digit() && ch != ',')
+            .next()
+            .unwrap_or("0")
+            .trim_matches(',')
+            .to_owned();
+        let after = right
+            .split(|ch: char| !ch.is_ascii_digit() && ch != ',')
+            .find(|part| !part.is_empty())
+            .unwrap_or("0")
+            .trim_matches(',')
+            .to_owned();
+        return (before, after);
+    }
+    ("0".into(), "0".into())
+}
+
 fn generic_grok_update_clause(rest: &str) -> bool {
     let rest = rest.trim().trim_end_matches('.').trim();
     rest == "update grok build or choose another provider"
@@ -1880,6 +1942,11 @@ pub fn localize_operator_failure_reason(locale: Locale, reason: &str) -> String 
         || (lower.contains("reply with json") && lower.contains("calling tools"))
     {
         MessageId::FailureReasonGrokNativeTool
+    } else if lower.contains("isolated grok")
+        || lower.contains("model cache")
+        || lower.contains("configure isolated")
+    {
+        MessageId::FailureReasonGrokIsolation
     } else if lower.contains("modelrouter")
         || lower.starts_with("reasoner error:")
         || lower.starts_with("reasoner failed:")
@@ -5051,6 +5118,33 @@ fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
             "Checkpoint compactado. Revisa el recibo de contexto.",
             "Point de contrôle compacté. Consultez le reçu de contexte.",
         ],
+        CompactCellTitle => [
+            "Context compacted",
+            "已压缩上下文",
+            "已壓縮上下文",
+            "コンテキストを圧縮しました",
+            "컨텍스트를 압축했습니다",
+            "Contexto compactado",
+            "Contexte compacté",
+        ],
+        CompactCellCollapse => [
+            "Collapsed {removed} turns locally. {before} → {after} characters.",
+            "已本地折叠 {removed} 轮。{before} → {after} 字符。",
+            "已本地折疊 {removed} 輪。{before} → {after} 字元。",
+            "{removed} ターンをローカル折りたたみしました。{before} → {after} 文字。",
+            "{removed}턴을 로컬로 접었습니다. {before} → {after}자.",
+            "Se plegaron {removed} turnos en local. {before} → {after} caracteres.",
+            "{removed} tours repliés localement. {before} → {after} caractères.",
+        ],
+        CompactCellSummary => [
+            "Summarized {removed} turns. {before} → {after} characters.",
+            "已摘要 {removed} 轮。{before} → {after} 字符。",
+            "已摘要 {removed} 輪。{before} → {after} 字元。",
+            "{removed} ターンを要約しました。{before} → {after} 文字。",
+            "{removed}턴을 요약했습니다. {before} → {after}자.",
+            "Se resumieron {removed} turnos. {before} → {after} caracteres.",
+            "{removed} tours résumés. {before} → {after} caractères.",
+        ],
         SummarizerCircuitOpen => [
             "Summarizer failed 3 times; staying on local collapse. User turns stay verbatim.",
             "摘要连续失败 3 次，已改用本地折叠。用户原话仍保留。",
@@ -7466,6 +7560,15 @@ fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
             "Grok Build가 이 턴을 끝내지 못했습니다. `grok doctor` 후 제공자를 새로고침하세요.",
             "Grok Build no pudo terminar este turno. Ejecuta `grok doctor` y actualiza Proveedores.",
             "Grok Build n’a pas pu terminer ce tour. Lancez `grok doctor`, puis actualisez les fournisseurs.",
+        ],
+        FailureReasonGrokIsolation => [
+            "Grok Build could not start an isolated session. Run `grok models`, then retry.",
+            "Grok Build 无法启动隔离会话。请运行 `grok models`，然后重试。",
+            "Grok Build 無法啟動隔離會話。請執行 `grok models`，然後重試。",
+            "Grok Build の隔離セッションを開始できませんでした。`grok models` のあと再試行してください。",
+            "Grok Build 격리 세션을 시작하지 못했습니다. `grok models` 후 다시 시도하세요.",
+            "Grok Build no pudo iniciar una sesión aislada. Ejecuta `grok models` y reintenta.",
+            "Grok Build n’a pas pu démarrer une session isolée. Lancez `grok models`, puis réessayez.",
         ],
         FailureReasonOutputSchema => [
             "The final answer was not valid JSON for this run. Retry, or ask again without a required output schema.",

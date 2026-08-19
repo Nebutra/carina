@@ -3038,7 +3038,7 @@ impl App {
                 SemanticCellKind::Approval | SemanticCellKind::Failure => {
                     self.theme.transcript_danger()
                 }
-                SemanticCellKind::Notice => self
+                SemanticCellKind::Notice | SemanticCellKind::Compact => self
                     .theme
                     .transcript_metadata()
                     .add_modifier(Modifier::BOLD),
@@ -3053,7 +3053,9 @@ impl App {
             } else {
                 match cell_kind {
                     SemanticCellKind::Thinking => self.theme.transcript_thinking(),
-                    SemanticCellKind::Notice => self.theme.transcript_metadata(),
+                    SemanticCellKind::Notice | SemanticCellKind::Compact => {
+                        self.theme.transcript_metadata()
+                    }
                     _ => Style::default().fg(self.theme.text),
                 }
             };
@@ -8807,7 +8809,8 @@ fn transcript_lines_with_tool_key_and_density(
             | SemanticCellKind::Tool
             | SemanticCellKind::ToolGroup
             | SemanticCellKind::Patch
-            | SemanticCellKind::Notice => glyphs.bullet_prefix(),
+            | SemanticCellKind::Notice
+            | SemanticCellKind::Compact => glyphs.bullet_prefix(),
             SemanticCellKind::User | SemanticCellKind::Assistant => "",
         }
     };
@@ -8893,7 +8896,10 @@ fn transcript_lines_with_tool_key_and_density(
             false,
         ));
     } else if block.expanded && !block.body.is_empty() {
-        lines.extend(block.body.split('\n').map(|line| {
+        let body = block
+            .localized_compact_body(locale)
+            .unwrap_or_else(|| block.body.clone());
+        lines.extend(body.split('\n').map(|line| {
             let mut detail = styled_detail_line(line, block.body_kind, styles);
             detail
                 .spans
