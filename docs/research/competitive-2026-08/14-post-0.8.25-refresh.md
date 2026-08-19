@@ -1,8 +1,8 @@
 # Post-0.8.25 Harness Audit Refresh
 
 > **取证日期**：2026-08-19  
-> **产品锚点**：`go/product/version.go` → **0.8.25**（`abc1046` / tag `v0.8.25`）  
-> **工作树**：干净  
+> **产品锚点**：`go/product/version.go` → **0.8.26**  
+> **工作树**：干净 — G25-01 随 0.8.26 发版  
 > **方法**：本仓库源码 + `CAPABILITIES.md` + `docs/rpc-api.md` + `docs/product.md` + 本机竞品树抽查 + DeepSeek 公开 README（**本机无 clone**）  
 > **前序**：`13-post-0.8.24-refresh.md` 已过时，**以本文为现状真相**  
 > **未做**：并排 PTY、同机 RAM PSS、DeepSeek 本地行号级 DNA
@@ -23,7 +23,7 @@ Carina **0.8.25** 把 Goal×operator-stop 契约补真：Esc 落地暂停 Goal�
 | 2 | Compact 一等 cell + stale Grok cache + Goal disarm | 压缩可见；`hi` 不死；重启不偷跑 | **SHIPPED** 0.8.24 |
 | 3 | Esc 暂停 session Goal | 文档与 interrupt 落地一致 | **SHIPPED** 0.8.25 `4a8acb1` |
 | 4 | Ctrl-C 暂停 Goal；`cancelled` 不续跑 | 硬取消不再偷跑 | **SHIPPED** 0.8.25 `69a8e7d` |
-| 5 | **Goal 暂停投影到 TUI notice/overlay** | Esc/Ctrl-C 后用户看见「已暂停目标」 | **WT G25-01** |
+| 5 | **Goal 暂停投影到 TUI notice/overlay** | Esc/Ctrl-C 后用户看见「已暂停目标」 | **SHIPPED** 0.8.26 |
 
 **明确不做**：默认 yolo · snapcompact 默认 · MiniLM-on · 3D/Buddy · 整包 Grok pager · Cordis 核 · MCP passthrough · git-only 回滚 · hashline/fuzzy 换掉 `carina-patch` · ACP 当交互协议 · SaaS 多租户 day-one。
 
