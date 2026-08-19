@@ -1,8 +1,8 @@
 # Post-0.8.24 Harness Audit Refresh
 
 > **取证日期**：2026-08-19  
-> **产品锚点**：`go/product/version.go` → **0.8.24**（`f8b67a8` / tag `v0.8.24`）  
-> **工作树**：干净  
+> **产品锚点**：`go/product/version.go` → **0.8.25**  
+> **工作树**：干净 — G24-01/G24-02 + R-01 随 0.8.25 发版  
 > **方法**：本仓库源码 + `crates/carina-tui/CAPABILITIES.md` + `docs/rpc-api.md` + `docs/product.md` + 本机竞品树抽查 + DeepSeek 公开 README（**本机无 clone**）  
 > **前序**：`12-post-0.8.23-refresh.md` 已过时，**以本文为现状真相**  
 > **未做**：并排 PTY、同机 RAM PSS、DeepSeek 本地行号级 DNA
