@@ -1,6 +1,6 @@
 # Authoring guide (Carina docs)
 
-Inspired by Claude Code / Mintlify information architecture, adapted for a **local agent runtime**.
+Inspired by Claude Code / Mintlify information architecture, adapted for a **local agent harness**.
 
 ## Audience paths
 

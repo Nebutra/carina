@@ -890,7 +890,7 @@
       "role": "token-source",
       "mediaType": "text/markdown",
       "bytes": 10744,
-      "sha256": "f10f598b44a066bee89094e8775b628c48d24b7ab3e9d2f3cdbb953663e75174"
+      "sha256": "eadd3668d33645a76989f4e0d3e7f8f38e550718accf9ad84be49b84e3e5b4e0"
     },
     {
       "path": "docs/brand/design-system/design-tokens.json",

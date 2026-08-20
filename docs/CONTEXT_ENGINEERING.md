@@ -97,7 +97,7 @@ flowchart TD
   cheap --> build[buildPromptSegmentsFromLayers]
   build --> full["seg.full = prefix + TASK + transcript + closing"]
   full --> route{Reasoner}
-  route -->|Anthropic| cache[CacheSections without TASK]
+  route -->|Anthropic| cache[CacheSections A-D then workspace/catalog]
   route -->|Grok ACP| stuff["system = JSON ReAct; user = framed full()"]
   route -->|OpenAI| blob["single blob; cache kind none"]
   cache --> act[JSON action or native tools]
@@ -109,10 +109,12 @@ flowchart TD
   after --> loop
 ```
 
-**P0 landed (0.8.31–0.8.34):** converse default, F mode-gated (not a phrase
+**P0 landed (0.8.31–0.8.34 + S8 + S7):** converse default, F mode-gated (not a phrase
 classifier), TASK out of prefix, Grok ReAct envelope, compact summarizer off
-the Think stack, capability brief out of live constitution. Remaining waste:
-`toolsHelp` ~1202 tok in constitution; `full()` rebuild every turn; no AGENTS
+the Think stack, capability brief out of live constitution, one-line builtins
+with protocol C ≤ 5 (constitution without F < 800 tok), named A–D sections with
+Anthropic `cache_control` per section. Remaining waste:
+S10 REQUESTED skills in Catalog; `full()` rebuild every turn; no AGENTS
 re-inject after compact.
 
 ---

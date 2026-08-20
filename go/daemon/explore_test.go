@@ -193,7 +193,7 @@ func TestNonExploreSubagentKeepsFullToolContract(t *testing.T) {
 	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
 	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "delegate")
 	_ = d.spawnSubagent(parent, parentTask, "scout", "look")
-	if len(spy.prompts) == 0 || !strings.Contains(spy.prompts[0], `"tool":"patch"`) {
+	if len(spy.prompts) == 0 || !strings.Contains(spy.prompts[0], toolsHelp) || !strings.Contains(spy.prompts[0], "patch:") {
 		t.Fatalf("non-explore subagent must keep the full tool contract, prompts=%q", spy.prompts)
 	}
 }

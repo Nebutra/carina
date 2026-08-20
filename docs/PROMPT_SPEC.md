@@ -6,8 +6,10 @@
 > Code: `go/daemon/agent.go`, `promptcache.go`, `prompt_mode.go`,
 > `agents.go`, `tool_schema.go`, `grok_reasoner.go`.
 >
-> S1–S6 shipped in 0.8.31. “There is a systemPrompt const” is still not a pass.
-> Constitution is still ~8.5 kB / ~2.1 k tok with `toolsHelp` ~1202 tok.
+> S1–S6 shipped in 0.8.31. S8: one-line builtins, protocol C ≤ 5 standing
+> negatives, constitution without Workspace/F < 800 tok (`len/4`). S7: named
+> A–D list, Anthropic `cache_control` per section (cap 4). Remaining P0: S10
+> (REQUESTED skills out of Catalog).
 
 Steal jobs, not strings. Do not copy Claude’s terracotta voice, OMP π, or
 GrokNight into Carina identity.
@@ -120,12 +122,20 @@ S6 search batch only after evidence is needed.
 meta (situated answer, not a matrix). `prompt_mode` is a mode switch, not a
 phrase classifier. converse does not dump AGENTS.md.
 
-**Open after 0.8.34 (audit 21 remainder):**
+**Landed (S8):** builtins are one line each; protocol C is five standing
+bullets; JSON examples stay in tests. Converse constitution without
+Workspace/F is under 800 tok (`len/4`). Native HTTP still swaps `toolsHelp`
+for `nativeToolsContract` — do not paste the catalog back.
+
+**Landed (S7):** constitution is a named list (Mode, Identity, Protocol,
+Tools), not `const systemPrompt`. Anthropic attaches `cache_control` to A–D
+(API cap 4). Grok/OpenAI still consume `full()` concat with cache kind `none`.
+`withToolContract` replaces protocol C and drops tools D.
+
+**Open after S7:**
 
 | ID | Problem | Change | Accept |
 |----|---------|--------|--------|
-| P0-S7 | One `const systemPrompt` concat | Named A–D list; Anthropic `cache_control` per section | Tests assert section order; no single blob const |
-| P0-S8 | `toolsHelp` ~1202 tok with JSON examples | One-line builtins; protocol C ≤ 5 standing negatives | Constitution tokens without Workspace/F < 800 |
 | P0-S10 | Skill catalog keyed off `UserPrompt` | MCP index + skill names only; bodies via `skill://` | `CacheSections` independent of greeting wording |
 | P0-S11 | Native fallback can still carry JSON catalog | Native contract ≤ 200 B protocol, not 4.8 kB examples | `withToolContract` does not re-paste `toolsHelp` |
 

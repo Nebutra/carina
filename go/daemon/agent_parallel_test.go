@@ -103,13 +103,44 @@ func TestReadOnlyToolClassification(t *testing.T) {
 	}
 }
 
+func TestConstitutionWithoutWorkspaceStaysUnder800Tokens(t *testing.T) {
+	if strings.Contains(toolsHelp, `{"tool":`) {
+		t.Fatal("toolsHelp must not paste JSON examples; those belong in tests")
+	}
+	protocol := harnessProtocol
+	bullets := 0
+	for _, line := range strings.Split(protocol, "\n") {
+		if strings.HasPrefix(line, "- ") {
+			bullets++
+		}
+	}
+	if bullets > 5 {
+		t.Fatalf("protocol C has %d standing bullets, want ≤5", bullets)
+	}
+	if tok := len(coreConstitution()) / 4; tok >= 800 {
+		t.Fatalf("core constitution tokens = %d (len=%d), want < 800", tok, len(coreConstitution()))
+	}
+
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "hi")
+	layers := d.composeAgentPromptLayers(sess, task, "")
+	if strings.Contains(layers.Constitution, "PROJECT INSTRUCTIONS") {
+		t.Fatal("constitution must not include Workspace/F")
+	}
+	if tok := len(layers.Constitution) / 4; tok >= 800 {
+		t.Fatalf("converse constitution tokens = %d (len=%d), want < 800", tok, len(layers.Constitution))
+	}
+}
+
 func TestSystemPromptRequiresEconomicalCompletion(t *testing.T) {
 	for _, instruction := range []string{
 		"Use tools only when this message needs workspace evidence",
 		"After the ask is met, done",
 		"do not reread success",
 	} {
-		if !strings.Contains(systemPrompt, instruction) {
+		if !strings.Contains(coreConstitution(), instruction) {
 			t.Fatalf("system prompt is missing execution-economy instruction %q", instruction)
 		}
 	}
@@ -122,7 +153,7 @@ func TestSystemPromptRoutesRepositoryQuestionsToBoundedEvidence(t *testing.T) {
 		`use "web.fetch". Never use run/curl/wget for read-only web access`,
 		"Do not walk the tree because a workspace exists",
 	} {
-		if !strings.Contains(systemPrompt, instruction) {
+		if !strings.Contains(coreConstitution(), instruction) {
 			t.Fatalf("system prompt is missing repository evidence routing %q", instruction)
 		}
 	}
@@ -133,16 +164,17 @@ func TestSystemPromptCarriesNebutraCarinaProductIdentity(t *testing.T) {
 		"You are Carina",
 		"Nebutra",
 		"云毓智能",
+		"the Carina harness",
 		"Intent:",
 		"situated answer",
 		"Not Claude, Codex, GPT",
 	} {
-		if !strings.Contains(systemPrompt, want) {
+		if !strings.Contains(coreConstitution(), want) {
 			t.Fatalf("product identity/intent harness missing %q", want)
 		}
 	}
-	if strings.Contains(systemPrompt, "PRODUCT CAPABILITY BRIEF") {
-		t.Fatal("capability brief must not live in the always-on systemPrompt concat")
+	if strings.Contains(coreConstitution(), "PRODUCT CAPABILITY BRIEF") {
+		t.Fatal("capability brief must not live in the always-on constitution")
 	}
 	// Subagent tool sheet must stay lean: full product brief lives on main agent only.
 	if strings.Contains(toolsHelp, "hash-chained audit") || strings.Contains(toolsHelp, "BYOK") {
@@ -151,7 +183,7 @@ func TestSystemPromptCarriesNebutraCarinaProductIdentity(t *testing.T) {
 	if !strings.Contains(productCapabilityBrief, "hash-chained audit") {
 		t.Fatal("productCapabilityBrief missing expected capability content")
 	}
-	if strings.HasPrefix(strings.TrimSpace(systemPrompt), "You are a coding agent") {
+	if strings.HasPrefix(strings.TrimSpace(coreConstitution()), "You are a coding agent") {
 		t.Fatal("system prompt still opens with generic coding-agent identity")
 	}
 	specs := builtinAgentSpecs()

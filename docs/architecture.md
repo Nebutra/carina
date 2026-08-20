@@ -1,6 +1,6 @@
 # Architecture
 
-Carina is a layered agent runtime. Each layer has one job, one language, and one contract with the layer below it.
+Carina is a layered agent harness. Each layer has one job, one language, and one contract with the layer below it.
 
 ## Layers
 

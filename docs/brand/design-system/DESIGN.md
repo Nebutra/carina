@@ -4,7 +4,7 @@
 
 ## 1. Brand Thesis
 
-Carina is an AI Agent Runtime. Its visual language should communicate controlled energy rather than generic science fiction. The Carina Nebula supplies the metaphor: thousands of luminous bodies forming inside a large, turbulent system, made legible through observation.
+Carina is an AI agent harness. Its visual language should communicate controlled energy rather than generic science fiction. The Carina Nebula supplies the metaphor: thousands of luminous bodies forming inside a large, turbulent system, made legible through observation.
 
 The system is built on three ideas:
 

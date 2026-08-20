@@ -88,3 +88,70 @@ func TestPromptSectionsKeepOrderAndOmitEmpty(t *testing.T) {
 		t.Fatalf("legacy suffix drifted: %q", blob.VolatileSuffix)
 	}
 }
+
+func TestConstitutionSectionsAreNamedAndOrdered(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "hi")
+	layers := d.composeAgentPromptLayers(sess, task, "")
+	if !strings.HasPrefix(layers.Mode, "converse:") {
+		t.Fatalf("mode B must be first operative: %q", truncate(layers.Mode, 80))
+	}
+	if !strings.Contains(layers.Identity, "You are Carina") {
+		t.Fatalf("identity A missing: %q", truncate(layers.Identity, 80))
+	}
+	if !strings.HasPrefix(layers.Protocol, "Harness protocol:") {
+		t.Fatalf("protocol C missing: %q", truncate(layers.Protocol, 80))
+	}
+	if !strings.HasPrefix(layers.Tools, "Available tools:") {
+		t.Fatalf("tools D missing: %q", truncate(layers.Tools, 80))
+	}
+	if strings.Contains(layers.Protocol, "Available tools:") {
+		t.Fatal("protocol C must not carry the tool catalog")
+	}
+	if strings.Contains(layers.Identity, "Harness protocol:") {
+		t.Fatal("identity A must not carry protocol")
+	}
+	if strings.Contains(layers.Tools, "Harness protocol:") {
+		t.Fatal("tools D must not carry protocol C")
+	}
+
+	seg := buildPromptSegmentsFromLayers(layers, task.UserPrompt, "turn1", "GO")
+	got := seg.CacheSections()
+	if len(got) < 4 {
+		t.Fatalf("want A–D cache sections, got %#v", got)
+	}
+	if !strings.HasPrefix(got[0], "converse:") || !strings.Contains(got[0], "Intent:") {
+		t.Fatalf("section 0 must be Mode+Intent: %q", truncate(got[0], 160))
+	}
+	if !strings.Contains(got[1], "You are Carina") {
+		t.Fatalf("section 1 must be Identity: %q", truncate(got[1], 80))
+	}
+	if !strings.HasPrefix(got[2], "Harness protocol:") {
+		t.Fatalf("section 2 must be Protocol: %q", truncate(got[2], 80))
+	}
+	if !strings.HasPrefix(got[3], "Available tools:") {
+		t.Fatalf("section 3 must be Tools: %q", truncate(got[3], 80))
+	}
+	if strings.Join(got, "\n\n") != seg.StablePrefix {
+		t.Fatalf("named sections must reassemble the stuffed prefix")
+	}
+	if strings.Contains(seg.StablePrefix, "TASK:") {
+		t.Fatal("TASK leaked into cache prefix")
+	}
+	if promptCacheKindFor(nil, nil, "grok-build/grok-4.6") != "none" {
+		t.Fatal("Grok must stay cache kind none")
+	}
+
+	native := layers.withToolContract(nativeToolsContract)
+	if native.Tools != "" {
+		t.Fatal("native contract must not re-paste the JSON catalog")
+	}
+	if native.Protocol != nativeToolsContract {
+		t.Fatalf("native contract should replace protocol C, got %q", truncate(native.Protocol, 80))
+	}
+	if strings.Contains(native.Constitution, toolsCatalog) {
+		t.Fatal("native constitution must not re-paste tools catalog")
+	}
+}

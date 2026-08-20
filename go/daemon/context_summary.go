@@ -199,13 +199,14 @@ func (d *Daemon) contextLedger(sess *sessionstore.Session, task *scheduler.Execu
 		"model_visible_bytes":            len(visible),
 		"model_visible_sha256":           sha256Hex(visible),
 		"model_visible_tokens_estimated": estimateTokens(visible),
-		"layers": []map[string]any{
-			layer("constitution", layers.Constitution, cache),
-			layer("workspace", layers.Workspace, cache),
-			layer("catalog", layers.Catalog, cache),
-			layer("trailer", seg.taskTrailer, "none"),
-			layer("transcript", visible, "none"),
-		},
+		"layers": append(compactPromptLedgerLayers(layer, cache, []struct{ id, text string }{
+			{"mode", layers.Mode},
+			{"identity", layers.Identity},
+			{"protocol", layers.Protocol},
+			{"tools", layers.Tools},
+			{"workspace", layers.Workspace},
+			{"catalog", layers.Catalog},
+		}), layer("trailer", seg.taskTrailer, "none"), layer("transcript", visible, "none")),
 		"elided_turns":        transcriptTurnIndices(tr, func(turn Turn) bool { return turn.Obs.Elided }),
 		"pinned_turns":        transcriptTurnIndices(tr, func(turn Turn) bool { return turn.Obs.Pinned }),
 		"receipts":            []CompactionReceipt{},
@@ -225,6 +226,17 @@ func (d *Daemon) contextLedger(sess *sessionstore.Session, task *scheduler.Execu
 		ledger["receipts"] = tr.CompactionReceipts
 	}
 	return ledger
+}
+
+func compactPromptLedgerLayers(layer func(id, text, cache string) map[string]any, cache string, items []struct{ id, text string }) []map[string]any {
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item.text) == "" {
+			continue
+		}
+		out = append(out, layer(item.id, item.text, cache))
+	}
+	return out
 }
 
 func (d *Daemon) promptCacheKind(model string) string {

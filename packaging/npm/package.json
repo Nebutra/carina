@@ -1,7 +1,7 @@
 {
   "name": "@nebutra/carina",
   "version": "0.8.36",
-  "description": "Native launcher for the Carina Agent Runtime",
+  "description": "Native launcher for the Carina Harness",
   "license": "MIT",
   "repository": {
     "type": "git",

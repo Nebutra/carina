@@ -8,7 +8,7 @@
 
 [![status](https://img.shields.io/badge/status-alpha-8E4053)](#当前状态)
 [![release](https://img.shields.io/badge/release-v0.8.36-176F70)](https://github.com/Nebutra/carina/releases/tag/v0.8.36)
-[![runtime](https://img.shields.io/badge/runtime-local--first-087C58)](#为什么用-carina)
+[![harness](https://img.shields.io/badge/harness-local--first-087C58)](#为什么用-carina)
 [![audit](https://img.shields.io/badge/audit-hash--chained-8C5A15)](#审查与审计)
 [![license](https://img.shields.io/badge/license-MIT-182023)](LICENSE)
 
@@ -16,7 +16,7 @@
 
 </div>
 
-Carina 是一个本地优先的 AI 编程智能体运行时。它不是编辑器、聊天产品，也不是托管沙箱。它位于智能体和机器之间，让文件读取、代码修改、命令、网络访问、插件和 secret 都先经过明确策略，再真正发生。
+Carina 是一个本地优先的 AI 编程智能体 Harness。它不是编辑器、聊天产品，也不是托管沙箱。它位于智能体和机器之间，让文件读取、代码修改、命令、网络访问、插件和 secret 都先经过明确策略，再真正发生。
 
 Carina 仍处于 alpha，但已经具备 fail-closed 的公开发布流水线。`0.8.36` 提供完成签名并通过 Apple notarization 的 macOS 包、Linux 归档与系统包、带 provenance 的 npm launcher 和原生平台包、Windows worker，以及已打包的 VS Code/Web Operator 客户端。用户可以通过脚本、Homebrew、npm 或 release 归档安装；源码构建继续面向贡献者和运行时集成者。
 

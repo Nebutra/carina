@@ -1,6 +1,6 @@
 # Carina Docs
 
-Enterprise-grade documentation site for **Carina** — the local-first AI agent runtime.
+Enterprise-grade documentation site for **Carina** — the local-first AI agent harness.
 
 Built with **Astro 7 + Starlight**, **Tailwind CSS v4**, and the **Carina design system** (`docs/brand/`).
 

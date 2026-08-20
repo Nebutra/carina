@@ -1,4 +1,4 @@
-// Package sdk provides typed JSON-RPC wrappers for Carina Runtime 0.8.36.
+// Package sdk provides typed JSON-RPC wrappers for Carina Harness 0.8.36.
 package sdk
 
 import (

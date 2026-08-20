@@ -169,16 +169,25 @@ func anthropicUserBlocks(req modelrouter.Request) ([]map[string]any, bool) {
 	if len(sections) == 0 && len(req.Media) == 0 {
 		return nil, false
 	}
+	// Anthropic Messages prompt caching allows at most four cache_control
+	// breakpoints. A–D take them first so Identity/Mode/Protocol/Tools stay
+	// independently cacheable; leftover workspace/catalog ride as plain text.
+	const maxAnthropicCacheBreakpoints = 4
 	blocks := make([]map[string]any, 0, len(sections)+1+len(req.Media))
+	cached := 0
 	for _, section := range sections {
 		if strings.TrimSpace(section) == "" {
 			continue
 		}
-		blocks = append(blocks, map[string]any{
-			"type":          "text",
-			"text":          section,
-			"cache_control": map[string]string{"type": "ephemeral"},
-		})
+		block := map[string]any{
+			"type": "text",
+			"text": section,
+		}
+		if cached < maxAnthropicCacheBreakpoints {
+			block["cache_control"] = map[string]string{"type": "ephemeral"}
+			cached++
+		}
+		blocks = append(blocks, block)
 	}
 	if len(blocks) > 0 || req.VolatileSuffix != "" {
 		blocks = append(blocks, map[string]any{"type": "text", "text": req.VolatileSuffix})

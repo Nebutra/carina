@@ -10,22 +10,49 @@ import (
 	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
 
-// promptLayers are the three stable prefix sections. They stay byte-identical
-// across turns of one run. Anthropic-compatible adapters may attach a cache
-// breakpoint to each non-empty section; Grok CLI still receives the stuffed
-// full() prompt and does not claim prefix cache.
+// promptLayers are the stable prefix sections. They stay byte-identical
+// across turns of one run. Anthropic-compatible adapters attach a cache
+// breakpoint to each named A–D section (capped at 4); Grok CLI still
+// receives the stuffed full() prompt and does not claim prefix cache.
 //
-// Order: constitution (mode + identity + tools) → workspace (scope, optional
-// project rules) → catalog (MCP + selected skills). TASK, TRANSCRIPT, and the
-// closing instruction are volatile and must not enter the cache prefix.
+// Wire order: Mode (B, first operative line, Intent sits with it) → Identity
+// (A) → Protocol (C) → Tools (D) → Workspace (E/F/G) → Catalog. TASK,
+// TRANSCRIPT, and the closing instruction are volatile.
 type promptLayers struct {
-	Constitution string
+	Mode         string // B
+	Identity     string // A
+	Intent       string // meta; cached with Mode
+	Protocol     string // C
+	Tools        string // D
+	Constitution string // concat A–D for Grok full() and tests
 	Workspace    string
 	Catalog      string
 }
 
+func (p promptLayers) constitutionParts() []string {
+	mode := strings.TrimSpace(joinPromptPrefix(p.Mode, p.Intent))
+	parts := compactNonEmpty(mode, strings.TrimSpace(p.Identity), strings.TrimSpace(p.Protocol), strings.TrimSpace(p.Tools))
+	if len(parts) == 0 {
+		if c := strings.TrimSpace(p.Constitution); c != "" {
+			return []string{c}
+		}
+	}
+	return parts
+}
+
+func (p promptLayers) constitutionText() string {
+	return joinPromptPrefix(p.constitutionParts()...)
+}
+
 func (p promptLayers) withToolContract(next string) promptLayers {
-	if strings.Contains(p.Constitution, toolsHelp) {
+	next = strings.TrimSpace(next)
+	if p.Mode != "" || p.Identity != "" || p.Protocol != "" || p.Tools != "" {
+		p.Protocol = next
+		p.Tools = ""
+		p.Constitution = p.constitutionText()
+		return p
+	}
+	if next != "" && strings.Contains(p.Constitution, toolsHelp) {
 		p.Constitution = strings.Replace(p.Constitution, toolsHelp, next, 1)
 	}
 	return p
@@ -35,6 +62,10 @@ func (p promptLayers) withToolContract(next string) promptLayers {
 // across every turn of a run) and a volatile suffix (growing transcript +
 // closing instruction).
 type promptSegments struct {
+	Mode           string
+	Identity       string
+	Protocol       string
+	Tools          string
 	Constitution   string
 	Workspace      string
 	Catalog        string
@@ -57,13 +88,24 @@ func buildPromptSegments(sysPrompt, userPrompt, transcript, closing string) prom
 
 func buildPromptSegmentsFromLayers(layers promptLayers, userPrompt, transcript, closing string) promptSegments {
 	trailer := fmt.Sprintf("TASK: %s\n\nTRANSCRIPT:\n", userPrompt)
+	parts := layers.constitutionParts()
+	constitution := strings.TrimSpace(layers.Constitution)
+	if constitution == "" {
+		constitution = joinPromptPrefix(parts...)
+	}
+	workspace := strings.TrimSpace(layers.Workspace)
+	catalog := strings.TrimSpace(layers.Catalog)
 	seg := promptSegments{
-		Constitution: strings.TrimSpace(layers.Constitution),
-		Workspace:    strings.TrimSpace(layers.Workspace),
-		Catalog:      strings.TrimSpace(layers.Catalog),
+		Mode:         strings.TrimSpace(joinPromptPrefix(layers.Mode, layers.Intent)),
+		Identity:     strings.TrimSpace(layers.Identity),
+		Protocol:     strings.TrimSpace(layers.Protocol),
+		Tools:        strings.TrimSpace(layers.Tools),
+		Constitution: constitution,
+		Workspace:    workspace,
+		Catalog:      catalog,
 		taskTrailer:  trailer,
 	}
-	seg.StablePrefix = joinPromptPrefix(seg.Constitution, seg.Workspace, seg.Catalog)
+	seg.StablePrefix = joinPromptPrefix(append(append([]string{}, parts...), workspace, catalog)...)
 	suffix := trailer + transcript + "\n" + closing
 	if seg.StablePrefix != "" {
 		seg.VolatileSuffix = "\n\n" + suffix
@@ -74,29 +116,30 @@ func buildPromptSegmentsFromLayers(layers promptLayers, userPrompt, transcript, 
 }
 
 func joinPromptPrefix(parts ...string) string {
-	var b strings.Builder
-	for _, part := range parts {
-		if part == "" {
-			continue
-		}
-		if b.Len() > 0 {
-			b.WriteString("\n\n")
-		}
-		b.WriteString(part)
-	}
-	return b.String()
+	return strings.Join(compactNonEmpty(parts...), "\n\n")
 }
 
-// CacheSections returns the Anthropic-compatible cached text blocks: one per
-// non-empty constitution/workspace/catalog layer. TASK and transcript stay out.
-func (s promptSegments) CacheSections() []string {
-	var out []string
-	for _, part := range []string{s.Constitution, s.Workspace, s.Catalog} {
-		if part != "" {
-			out = append(out, part)
+func compactNonEmpty(parts ...string) []string {
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if strings.TrimSpace(part) == "" {
+			continue
 		}
+		out = append(out, part)
 	}
 	return out
+}
+
+// CacheSections returns Anthropic-compatible cached text blocks: named A–D
+// when present, otherwise the legacy constitution blob, then workspace and
+// catalog. TASK and transcript stay out. The Anthropic adapter attaches at
+// most four cache_control breakpoints (API cap).
+func (s promptSegments) CacheSections() []string {
+	parts := compactNonEmpty(s.Mode, s.Identity, s.Protocol, s.Tools)
+	if len(parts) == 0 && s.Constitution != "" {
+		parts = []string{s.Constitution}
+	}
+	return append(parts, compactNonEmpty(s.Workspace, s.Catalog)...)
 }
 
 // full is the complete prompt (prefix + suffix) — what the loop sends.
@@ -108,17 +151,23 @@ func (s promptSegments) CacheBreakpoint() int { return len(s.StablePrefix) }
 type stableSectionsKey struct{}
 
 func (d *Daemon) composeAgentPromptLayers(sess *sessionstore.Session, task *scheduler.ExecutionRun, memorySnapshot string) promptLayers {
-	constitution := systemPrompt
+	layers := promptLayers{
+		Identity: productIdentity,
+		Intent:   intentFirst,
+		Protocol: harnessProtocol,
+		Tools:    toolsCatalog,
+	}
 	agents := loadAgentSpecs(sess.WorkspaceRoot)
 	if d.safeMode {
 		agents = builtinAgentSpecs()
 	}
 	if spec := agents[taskAgent(task)]; spec != nil && strings.TrimSpace(spec.SystemPrompt) != "" {
-		constitution = strings.TrimSpace(spec.SystemPrompt) + "\n\n" + systemPrompt
+		layers.Mode = strings.TrimSpace(spec.SystemPrompt)
 	}
 	if d.bestOfNEnabled.Load() {
-		constitution += "\n\n" + bestOfNToolHelp
+		layers.Tools = joinPromptPrefix(layers.Tools, bestOfNToolHelp)
 	}
+	layers.Constitution = layers.constitutionText()
 
 	sandboxState := "disabled"
 	if d.sandbox.Load() {
@@ -168,11 +217,9 @@ func (d *Daemon) composeAgentPromptLayers(sess *sessionstore.Session, task *sche
 		catalog.WriteString(skills)
 	}
 
-	return promptLayers{
-		Constitution: constitution,
-		Workspace:    strings.TrimSpace(workspace.String()),
-		Catalog:      strings.TrimSpace(catalog.String()),
-	}
+	layers.Workspace = strings.TrimSpace(workspace.String())
+	layers.Catalog = strings.TrimSpace(catalog.String())
+	return layers
 }
 
 func withStableSections(ctx context.Context, sections []string) context.Context {

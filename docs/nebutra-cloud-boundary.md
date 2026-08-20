@@ -1,6 +1,6 @@
 # Nebutra Cloud Boundary
 
-Carina is the local-first agent runtime. Nebutra Cloud (云毓智能,
+Carina is the local-first agent harness. Nebutra Cloud (云毓智能,
 `nebutra.com`) is the product boundary for identity, organization state, and
 multi-endpoint sync.
 

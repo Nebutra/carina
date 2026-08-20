@@ -120,6 +120,66 @@ func TestAnthropicProviderCachesEachPromptSection(t *testing.T) {
 	}
 }
 
+func TestAnthropicProviderCapsCacheControlAtFourBreakpoints(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct {
+				Content []struct {
+					Type         string            `json:"type"`
+					Text         string            `json:"text"`
+					CacheControl map[string]string `json:"cache_control"`
+				} `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		blocks := body.Messages[0].Content
+		if len(blocks) != 7 {
+			t.Fatalf("want 6 stable + volatile, got %+v", blocks)
+		}
+		for i, name := range []string{"MODE", "IDENTITY", "PROTOCOL", "TOOLS"} {
+			if blocks[i].Text != name || blocks[i].CacheControl["type"] != "ephemeral" {
+				t.Fatalf("cached section %d = %+v", i, blocks[i])
+			}
+		}
+		for i, name := range []string{"WORKSPACE", "CATALOG"} {
+			block := blocks[4+i]
+			if block.Text != name || len(block.CacheControl) != 0 {
+				t.Fatalf("uncached leftover %d = %+v", i, block)
+			}
+		}
+		if !strings.Contains(blocks[6].Text, "TASK: x") || len(blocks[6].CacheControl) != 0 {
+			t.Fatalf("volatile = %+v", blocks[6])
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer srv.Close()
+	store := testAuthStore(t)
+	if err := store.SetAPIKey("anthropic", "sk-ant", nil); err != nil {
+		t.Fatal(err)
+	}
+	p := &anthropicProvider{
+		id: "anthropic", baseURL: srv.URL, model: "claude-test",
+		auth: auth.ProviderChain("anthropic", nil, store, nil), client: srv.Client(),
+	}
+	seg := buildPromptSegmentsFromLayers(promptLayers{
+		Mode: "MODE", Identity: "IDENTITY", Protocol: "PROTOCOL", Tools: "TOOLS",
+		Workspace: "WORKSPACE", Catalog: "CATALOG",
+	}, "x", "turn", "GO")
+	if len(seg.CacheSections()) != 6 {
+		t.Fatalf("cache sections = %#v", seg.CacheSections())
+	}
+	_, err := p.Complete(context.Background(), modelrouter.Request{
+		Model: "default", Prompt: seg.full(), StablePrefix: seg.StablePrefix,
+		StableSections: seg.CacheSections(), VolatileSuffix: seg.VolatileSuffix,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAnthropicEndpointNormalizesVersionExactlyOnce(t *testing.T) {
 	tests := map[string]string{
 		"https://api.example":                    "https://api.example/v1/messages",

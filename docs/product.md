@@ -1,6 +1,6 @@
 # Product Positioning
 
-Carina is a local-first runtime for AI coding agents. It is built for the point
+Carina is a local-first harness for AI coding agents. It is built for the point
 where an agent leaves conversation and starts acting on a real repository.
 
 ## Primary Users
@@ -12,7 +12,7 @@ Carina is for:
 - platform teams building an internal agent runner;
 - security-conscious teams evaluating how agents read files, run commands, and
   handle secrets;
-- tool builders who need a runtime behind an IDE, TUI, CI workflow, or web UI.
+- tool builders who need a harness behind an IDE, TUI, CI workflow, or web UI.
 
 It is not primarily for people who want a finished editor assistant or a hosted
 managed agent service.

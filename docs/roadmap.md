@@ -1,6 +1,6 @@
 # Roadmap
 
-Carina is an alpha Agent Runtime. The repository-owned items selected from the
+Carina is an alpha agent harness. The repository-owned items selected from the
 July 2026 productization audits are implemented in the current source tree and
 have repository-owned test or benchmark coverage. That statement is scoped to
 the listed work; it is not a blanket claim that an alpha product has no future

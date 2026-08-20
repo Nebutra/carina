@@ -78,7 +78,7 @@ English joke. Governed and Degrade changes require the same review standard as
 policy-facing code. Ambient copy may be neutral when a native, trustworthy line
 is not available; forced humor is a quality failure.
 
-The terminology glossary keeps `Agent Runtime`, agent, policy, audit,
+The terminology glossary keeps `Harness`, agent, policy, audit,
 checkpoint, rollback, workspace, session, and task consistent within each
 locale. Public copy never revives the internal `Agent OS` positioning.
 

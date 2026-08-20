@@ -5,7 +5,7 @@ version: ${VERSION}
 section: utils
 priority: optional
 maintainer: Nebutra <opensource@nebutra.com>
-description: Local-first governed Agent Runtime
+description: Local-first governed agent harness
 license: MIT
 homepage: https://github.com/Nebutra/carina
 contents:

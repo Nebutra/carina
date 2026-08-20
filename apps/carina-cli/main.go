@@ -37,7 +37,7 @@ import (
 
 const cliVersion = product.Version
 
-const usage = `carina — command-line client for the Carina Agent Runtime
+const usage = `carina — command-line client for the Carina Harness
 
 Usage:
   carina [options]                 interactive TUI (TTY; auto-starts daemon)

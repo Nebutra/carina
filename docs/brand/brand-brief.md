@@ -3,7 +3,7 @@
 **Status:** Approved identity integrated into the repository. Canonical assets and machine-readable tokens live under `docs/brand/`.
 **Production pipeline:** `generate-brand-vi`; repository consumption is governed by `docs/brand/AGENTS.md` and `asset-manifest.json`.
 **Historical visual reference:** a hydrogen-alpha-dominant rendering of the Carina Nebula informed the early temperament and palette research. It is not a repository dependency or an identity master.
-**Canonical naming:** Product lockup is **Nebutra Carina**; short form **Carina**; descriptor **the Carina agent runtime** (lowercase descriptor, never a second proper name). "Agent OS" is internal-PRD ambition language and does not appear in brand surfaces. External upstream projects are not Nebutra siblings; no constellation codename system exists yet, and none should be implied.
+**Canonical naming:** Product lockup is **Nebutra Carina**; short form **Carina**; descriptor **the Carina harness** (lowercase descriptor, never a second proper name). When a versioned product-line label is required (SDK, SECURITY, marketplace display names), use **Carina Harness**. "Agent OS" is internal-PRD ambition language and does not appear in brand surfaces. External upstream projects are not Nebutra siblings; no constellation codename system exists yet, and none should be implied.
 
 ---
 
@@ -11,9 +11,9 @@
 
 ### The one-sentence brand idea (buyer test)
 
-> **Carina is the local runtime that lets coding agents work at full power on your machine, because every action passes policy, lands on a hash-chained audit record, and can be rolled back.**
+> **Carina is the local harness that lets coding agents work at full power on your machine, because every action passes policy, lands on a hash-chained audit record, and can be rolled back.**
 
-A buyer who hears only this sentence knows what Carina is (a runtime, local, for coding agents), why it exists (full power without losing control), and what makes the claim credible (policy per action, tamper-evident audit, transactional rollback). The sentence is abstracted from the business scenario, not from the nebula — the nebula is the name-source and cultural reference, never the pitch.
+A buyer who hears only this sentence knows what Carina is (a harness, local, for coding agents), why it exists (full power without losing control), and what makes the claim credible (policy per action, tamper-evident audit, transactional rollback). The sentence is abstracted from the business scenario, not from the nebula — the nebula is the name-source and cultural reference, never the pitch.
 
 ### The temperament
 
@@ -147,7 +147,7 @@ Keep the existing register, verbatim as rules:
 4. Mechanism over marketing — every claim ties to a verifiable artifact: a test name, a file path, a config key, a PRD section.
 5. Structured and tabular: Need→Answer tables, short noun-phrase headings.
 6. Governance vocabulary as identity: policy, audit, rollback, capability, boundary, attenuation, hash-chained, local authority.
-7. Six-locale parity: en, zh-CN, ja, ko, es, and fr are peer product languages. Each is rewritten in the same register, never assembled from machine-translated fragments. Fix the internal drift: the Chinese PRD's "Agent OS" register stays internal; public positioning uses the locale-native equivalent of "agent runtime" everywhere.
+7. Six-locale parity: en, zh-CN, ja, ko, es, and fr are peer product languages. Each is rewritten in the same register, never assembled from machine-translated fragments. Fix the internal drift: the Chinese PRD's "Agent OS" register stays internal; public positioning uses the locale-native equivalent of "agent harness" everywhere. The English loanword *Harness* is acceptable in zh-CN where that is the public category name.
 
 ### CLI microcopy voice (rules for the rules+LLM microcopy engine)
 
@@ -161,7 +161,7 @@ hard and test-enforced.
 - **Governed parity:** permission, policy, audit, rollback, destructive action, secret, and egress copy carries the same facts and certainty in all six languages. It is never humorous, hedged, or generated at runtime.
 - **Degrade parity:** every degraded state names the fact, its user-visible effect, and a concrete inspection or repair step. Commands, paths, hashes, IDs, provider names, and policy names remain byte-for-byte verbatim.
 - **Grammar safety:** do not build sentences by concatenating translated fragments. Use complete locale templates with named placeholders so Japanese and Korean particles, Spanish agreement, French spacing, and CJK punctuation remain authored and reviewable.
-- **Mechanical rules:** lowercase-first fragments allowed in field register; sober register uses full sentences. Hashes, paths, policy names always verbatim in mono. Never anthropomorphize the agent being governed; Carina speaks as the runtime, about the agent, in third person.
+- **Mechanical rules:** lowercase-first fragments allowed in field register; sober register uses full sentences. Hashes, paths, policy names always verbatim in mono. Never anthropomorphize the agent being governed; Carina speaks as the harness, about the agent, in third person.
 
 ### Calibration lines
 

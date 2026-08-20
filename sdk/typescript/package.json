@@ -1,7 +1,7 @@
 {
   "name": "@carina/sdk",
   "version": "0.2.0",
-  "description": "TypeScript SDK for the Carina Agent Runtime (JSON-RPC over unix socket)",
+  "description": "TypeScript SDK for the Carina Harness (JSON-RPC over unix socket)",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",

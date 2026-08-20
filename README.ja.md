@@ -8,7 +8,7 @@
 
 [![status](https://img.shields.io/badge/status-alpha-8E4053)](#current-status)
 [![release](https://img.shields.io/badge/release-v0.8.36-176F70)](https://github.com/Nebutra/carina/releases/tag/v0.8.36)
-[![runtime](https://img.shields.io/badge/runtime-local--first-087C58)](#why-carina)
+[![harness](https://img.shields.io/badge/harness-local--first-087C58)](#why-carina)
 [![audit](https://img.shields.io/badge/audit-hash--chained-8C5A15)](#review-and-audit)
 [![license](https://img.shields.io/badge/license-MIT-182023)](LICENSE)
 
@@ -16,7 +16,7 @@
 
 </div>
 
-Carina は、AI コーディングエージェントのためのローカルファーストなランタイム層です。エディタ、チャットアプリ、ホステッドサンドボックスではありません。エージェントとマシンの間に入り、ファイル読み取り、編集、コマンド、ネットワークアクセス、プラグイン、secret を明示的なポリシーの後ろに置きます。
+Carina は、AI コーディングエージェントのためのローカルファーストなハーネスです。エディタ、チャットアプリ、ホステッドサンドボックスではありません。エージェントとマシンの間に入り、ファイル読み取り、編集、コマンド、ネットワークアクセス、プラグイン、secret を明示的なポリシーの後ろに置きます。
 
 Carina はまだ alpha ですが、fail-closed な公開リリースパイプラインを備えています。`0.8.36` では、署名済みかつ Apple notarization 済みの macOS package、Linux archive/package、provenance 付き npm launcher と native package、Windows worker、package 済み VS Code/Web Operator client を提供します。shell installer、Homebrew、npm、release archive からインストールでき、source build は contributor と runtime integrator 向けに維持されています。
 

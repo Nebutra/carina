@@ -167,7 +167,7 @@ func TestCodeImpactIsReadOnlyAndDocumented(t *testing.T) {
 	if !isReadOnlyTool("code.impact") {
 		t.Fatal("code.impact is a pure query and must be read-only (batchable)")
 	}
-	if !strings.Contains(toolsHelp, `"tool":"code.impact"`) {
+	if !strings.Contains(toolsHelp, "code.impact") {
 		t.Fatal("toolsHelp must document code.impact")
 	}
 	if got := briefAction(&action{Tool: "code.impact", Name: "Kernel"}); got != "code.impact Kernel" {

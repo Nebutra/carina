@@ -1,6 +1,6 @@
 ---
 name: carina-docs
-description: Use Carina documentation to answer questions about the local-first AI agent runtime (policy kernel, audit, sessions, JSON-RPC, workflows).
+description: Use Carina documentation to answer questions about the local-first AI agent harness (policy kernel, audit, sessions, JSON-RPC, workflows).
 ---
 
 # Carina docs skill

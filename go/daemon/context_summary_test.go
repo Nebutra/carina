@@ -323,20 +323,27 @@ func TestContextSummaryLedgerLabelsAnthropicCache(t *testing.T) {
 	if ledger["cache"] != "anthropic" {
 		t.Fatalf("Anthropic route must keep cache=anthropic: %#v", ledger)
 	}
-	foundConstitution := false
+	foundIdentity, foundMode := false, false
 	for _, raw := range ledgerLayers(t, ledger["layers"]) {
-		if raw["id"] == "constitution" {
-			foundConstitution = true
+		switch raw["id"] {
+		case "identity":
+			foundIdentity = true
 			if raw["cache"] != "anthropic" {
-				t.Fatalf("Anthropic constitution must stay cacheable: %#v", raw)
+				t.Fatalf("Anthropic identity must stay cacheable: %#v", raw)
+			}
+		case "mode":
+			foundMode = true
+			if raw["cache"] != "anthropic" {
+				t.Fatalf("Anthropic mode must stay cacheable: %#v", raw)
+			}
+		case "transcript":
+			if raw["cache"] != "none" {
+				t.Fatalf("transcript layer is volatile: %#v", raw)
 			}
 		}
-		if raw["id"] == "transcript" && raw["cache"] != "none" {
-			t.Fatalf("transcript layer is volatile: %#v", raw)
-		}
 	}
-	if !foundConstitution {
-		t.Fatal("missing constitution layer")
+	if !foundIdentity || !foundMode {
+		t.Fatal("missing named constitution layers (mode/identity)")
 	}
 }
 
@@ -363,7 +370,7 @@ func TestContextSummaryLedgerLabelsGrokCacheNone(t *testing.T) {
 		t.Fatalf("Grok route must label cache=none: %#v", ledger)
 	}
 	for _, raw := range ledgerLayers(t, ledger["layers"]) {
-		if raw["id"] == "constitution" && raw["cache"] != "none" {
+		if (raw["id"] == "identity" || raw["id"] == "mode" || raw["id"] == "protocol" || raw["id"] == "tools") && raw["cache"] != "none" {
 			t.Fatalf("Grok constitution layer must be cache=none: %#v", raw)
 		}
 		if raw["id"] == "transcript" && raw["cache"] != "none" {

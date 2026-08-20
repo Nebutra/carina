@@ -16,7 +16,7 @@ deliberately do not take is part of the design.
 
 ## 1. Identity and hero moments
 
-Carina is a **local-first, governed runtime for coding agents**: a Go daemon
+Carina is a **local-first, governed harness for coding agents**: a Go daemon
 that owns sessions and tools, a Rust kernel that is the *sole* policy/audit
 chokepoint (hash-chained audit, per-action `PermissionDecision` with
 `decision_id`), and Zig native tools on a <100ms passthrough path. BYOK:

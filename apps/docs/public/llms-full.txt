@@ -2,7 +2,7 @@
 
 ## Carina
 
-Local-first AI agent runtime with policy, hash-chained audit, and transactional rollback.
+Local-first AI agent harness with policy, hash-chained audit, and transactional rollback.
 
 - URL: https://carina.nebutra.com/
 - Markdown: https://carina.nebutra.com/index.md

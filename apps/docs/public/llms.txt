@@ -1,12 +1,12 @@
 # Carina Documentation
 
-> Local-first AI agent runtime with policy, hash-chained audit, and transactional rollback.
+> Local-first AI agent harness with policy, hash-chained audit, and transactional rollback.
 
 Site: https://carina.nebutra.com
 
 ## English
 
-- [Carina](https://carina.nebutra.com/): Local-first AI agent runtime with policy, hash-chained audit, and transactional rollback.
+- [Carina](https://carina.nebutra.com/): Local-first AI agent harness with policy, hash-chained audit, and transactional rollback.
 - [Agents overview](https://carina.nebutra.com/agents/overview/): ReAct coding agent loop — model decides, kernel authorizes, Zig executes.
 - [Sub-agents](https://carina.nebutra.com/agents/sub-agents/): Delegate work with SubagentSpawn and capability attenuation.
 - [JSON-RPC reference](https://carina.nebutra.com/api/json-rpc/): Curated method reference for the local JSON-RPC control plane.

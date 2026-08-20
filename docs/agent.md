@@ -1,6 +1,6 @@
 # Using Carina as a Coding Agent
 
-Carina is not just a runtime — it drives a real ReAct coding agent. The model
+Carina is a harness that drives a real ReAct coding agent. The model
 **only decides**; every side effect is authorized by the Rust capability
 kernel and executed by the Zig toolchain, and the whole run is a
 tamper-evident audit trail you can replay and roll back.
@@ -64,8 +64,9 @@ silence it.
 step). Four implementations, plus one dedicated route inside model-router:
 
 - **model-router** — routes through `go/model-router` provider adapters (BYOK).
-  Supports prompt sections (constitution / workspace / catalog) as a stable
-  prefix plus a volatile transcript suffix for prompt caching, and media
+  Supports prompt sections (Mode / Identity / Protocol / Tools / workspace /
+  catalog) as a stable prefix plus a volatile transcript suffix for prompt
+  caching, and media
   parts for catalog-gated vision delivery. Catalog models that
   advertise native tool calling use HTTP tools on the first try and fall back
   to JSON ReAct. The `grok-build/*` route is JSON-only: Carina drives an

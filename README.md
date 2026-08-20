@@ -8,7 +8,7 @@
 
 [![status](https://img.shields.io/badge/status-alpha-8E4053)](#current-status)
 [![release](https://img.shields.io/badge/release-v0.8.36-176F70)](https://github.com/Nebutra/carina/releases/tag/v0.8.36)
-[![runtime](https://img.shields.io/badge/runtime-local--first-087C58)](#why-carina)
+[![harness](https://img.shields.io/badge/harness-local--first-087C58)](#why-carina)
 [![audit](https://img.shields.io/badge/audit-hash--chained-8C5A15)](#review-and-audit)
 [![license](https://img.shields.io/badge/license-MIT-182023)](LICENSE)
 
@@ -16,7 +16,7 @@
 
 </div>
 
-Carina is a local-first runtime layer for AI coding agents. It is not an
+Carina is a local-first harness for AI coding agents. It is not an
 editor, a chat app, or a hosted sandbox. It sits between an agent and the
 machine, so file reads, edits, commands, network access, plugins, and secrets go
 through explicit policy before they happen.
