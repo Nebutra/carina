@@ -1,9 +1,9 @@
 # Competitive Research 2026-08 — Artifact Index
 
 > 取证日期：2026-08-02  
-> **现状刷新：2026-08-20 @ Carina v0.8.33** — 诚实性见 **[16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md)**；审美见 **[18-tui-aesthetic-post-0.8.29.md](./18-tui-aesthetic-post-0.8.29.md)**；Prompt/Context 见 **[21-prompt-context-re-audit.md](./21-prompt-context-re-audit.md)**；热路径见 **[20-hot-path-latency-audit.md](./20-hot-path-latency-audit.md)**  
+> **现状刷新：2026-08-20 @ Carina v0.8.34** — 诚实性见 **[16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md)**；审美见 **[18-tui-aesthetic-post-0.8.29.md](./18-tui-aesthetic-post-0.8.29.md)**；Prompt/Context 见 **[21-prompt-context-re-audit.md](./21-prompt-context-re-audit.md)**；热路径见 **[20-hot-path-latency-audit.md](./20-hot-path-latency-audit.md)**  
 > 范围：Carina vs Jcode / Grok Build / Claude Code (notes) / Codex / Oh My Pi (OMP) / DeepSeek Harness（公开文档，本机无 clone）  
-> 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图 → **诚实性无新 P0/P1；审美 A010–A013 随 0.8.30 发；Prompt S1–S6 随 0.8.31 发；热路径 H1–H7 随 0.8.33 发；Prompt 结构仍 FAIL（S7–S11 开）**
+> 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图 → **诚实性无新 P0/P1；审美 A010–A013 随 0.8.30 发；Prompt S1–S6 随 0.8.31 发；热路径 H1–H7 随 0.8.33 发；Prompt S9 随 0.8.34 发；结构仍 FAIL（S7–S8, S10–S11 开）**
 
 ---
 
@@ -11,7 +11,7 @@
 
 | 文件 | 角色 |
 |------|------|
-| **[21-prompt-context-re-audit.md](./21-prompt-context-re-audit.md)** | **Prompt 再审计 v0.8.33 FAIL ~5.5/10**：S1–S6 已发；constitution 仍 ~2.1k tok + toolsHelp 全量；法：`docs/PROMPT_SPEC.md` |
+| **[21-prompt-context-re-audit.md](./21-prompt-context-re-audit.md)** | **Prompt 再审计 v0.8.33 FAIL ~5.5/10**：S1–S6 已发；S9 随 **0.8.34** 发（BRIEF 出 constitution、Intent-Meta、无 phrase classifier）；S7–S8/S10–S11 开；法：`docs/PROMPT_SPEC.md` |
 | **[20-hot-path-latency-audit.md](./20-hot-path-latency-audit.md)** | **热路径取证 FAIL ~4.5/10**；P0 H1–H7 随 **0.8.33** 发；法：`docs/HOT_PATH.md` |
 | **[19-prompt-context-audit.md](./19-prompt-context-audit.md)** | 历史：v0.8.30 FAIL；S1–S6 随 **0.8.31** 发 |
 | **[18-tui-aesthetic-post-0.8.29.md](./18-tui-aesthetic-post-0.8.29.md)** | 审美 SSOT：0.8.29 框 + 0.8.30 对话文档刀 A010–A013；P1 仍开 |
