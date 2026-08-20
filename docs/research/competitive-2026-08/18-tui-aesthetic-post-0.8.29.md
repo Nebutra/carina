@@ -1,8 +1,8 @@
 # Carina TUI Aesthetic Audit — post 0.8.29
 
 > Date: 2026-08-20
-> Carina: **v0.8.29** (`36e2673`) plus **uncommitted** conversation-document
-> knives in the working tree (user-band occupied cells, policy-denied recede).
+> Carina: **v0.8.29** (`36e2673`) was the chrome line. Conversation-document
+> knives A010–A013 ship in **v0.8.30**.
 > Role: Terminal Aesthetic Architect. Aesthetic is first-class. “It works”
 > is not a pass.
 > **Verdict: still FAIL.** Chrome was designed. The daily conversation was not.
@@ -297,7 +297,7 @@ screenshot actually contains.
 - **Accept:** A 2-character user turn leaves ≥20 Reset cells on that row.
   Selection may still own the full hit rectangle. Golden style runs must not
   extend band to the right edge on short copy.
-- **Status:** **in working tree, not shipped.**
+- **Status:** **shipped 0.8.30.** Occupied cells only; short copy is a pill.
 
 #### P0-A012 — Policy-denied tools recede
 
@@ -310,7 +310,7 @@ screenshot actually contains.
 - **Accept:** Denied Run has no accent rail, no danger fg. Status word
   `已拒绝` / `denied` remains. Real `FailurePresentation` cells keep `✗` +
   chips + rail.
-- **Status:** **in working tree, not shipped.**
+- **Status:** **shipped 0.8.30.** Denied Run is a settled receipt, not Failure.
 
 #### P0-A011 — Assistant answer is the page
 
@@ -325,7 +325,7 @@ screenshot actually contains.
   reducer identity).
 - **Accept:** In a 4-turn fixture, a trained operator names the answer
   without hunting. Tools quieter than the answer.
-- **Status:** **working tree.** Extra beat after the answer; settled tool
+- **Status:** **shipped 0.8.30.** Extra beat after the answer; settled tool
   titles use muted `gray`, not `Reset` / bold. Body stays `Reset`.
 
 #### P0-A013 — Leftover height is rest
@@ -336,7 +336,7 @@ screenshot actually contains.
 - **Change:** No filler widget. After A010 the void should read as rest.
   Document in `styles.md` (working tree). Do not invent a footer poster.
 - **Accept:** No idle donut, no second empty identity after the first turn.
-- **Status:** **working tree.** Leftover cells stay `Color::Reset`.
+- **Status:** **shipped 0.8.30.** Leftover cells stay `Color::Reset`.
 
 Do **not** wait for a theme catalog. Do **not** reopen A001–A007 unless a
 regression shows.

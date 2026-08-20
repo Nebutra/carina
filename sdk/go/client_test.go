@@ -266,7 +266,7 @@ func TestTypedParityAndEventSubscription(t *testing.T) {
 		methods <- seen
 	}()
 
-	if CompatibleRuntimeVersion != "0.8.29" {
+	if CompatibleRuntimeVersion != "0.8.30" {
 		t.Fatalf("compatibility version = %s", CompatibleRuntimeVersion)
 	}
 	if attached, err := client.AttachSession("s1", 3); err != nil || attached.Cursor != 7 {
@@ -604,7 +604,7 @@ func TestHighLevelThreadRunNegotiatesAndUsesSchema(t *testing.T) {
 			var result any = map[string]any{}
 			switch req.Method {
 			case "runtime.initialize":
-				result = map[string]any{"runtime_version": "0.8.29", "protocol_version": "1.2.0", "projection_version": "1.0.0", "capabilities": map[string]any{"tool_call_lifecycle": true, "event_schema_version": "0.3.0"}}
+				result = map[string]any{"runtime_version": "0.8.30", "protocol_version": "1.2.0", "projection_version": "1.0.0", "capabilities": map[string]any{"tool_call_lifecycle": true, "event_schema_version": "0.3.0"}}
 			case "session.create":
 				result = map[string]any{"session_id": "s", "workspace_id": "w", "workspace_root": "/tmp", "status": "active"}
 			case "execution.start":

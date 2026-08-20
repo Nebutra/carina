@@ -1,9 +1,9 @@
 # Competitive Research 2026-08 — Artifact Index
 
 > 取证日期：2026-08-02  
-> **现状刷新：2026-08-20 @ Carina v0.8.29** — 诚实性见 **[16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md)**；审美见 **[18-tui-aesthetic-post-0.8.29.md](./18-tui-aesthetic-post-0.8.29.md)**（17 为竞品 DNA，已被 18 取代为执行 SSOT）  
+> **现状刷新：2026-08-20 @ Carina v0.8.30** — 诚实性见 **[16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md)**；审美见 **[18-tui-aesthetic-post-0.8.29.md](./18-tui-aesthetic-post-0.8.29.md)**（17 为竞品 DNA，已被 18 取代为执行 SSOT）  
 > 范围：Carina vs Jcode / Grok Build / Claude Code (notes) / Codex / Oh My Pi (OMP) / DeepSeek Harness（公开文档，本机无 clone）  
-> 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图 → **诚实性无新 P0/P1；审美仍 FAIL：框好看了，日常会话还是日志**
+> 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图 → **诚实性无新 P0/P1；审美对话文档刀 A010–A013 随 0.8.30 发，P1 仍开**
 
 ---
 
@@ -11,9 +11,9 @@
 
 | 文件 | 角色 |
 |------|------|
-| **[18-tui-aesthetic-post-0.8.29.md](./18-tui-aesthetic-post-0.8.29.md)** | **审美仍 FAIL**：0.8.29 框已落地；日常 4 回合会话才是产品；新 P0 A010–A013 |
+| **[18-tui-aesthetic-post-0.8.29.md](./18-tui-aesthetic-post-0.8.29.md)** | 审美 SSOT：0.8.29 框 + 0.8.30 对话文档刀 A010–A013；P1 仍开 |
 | [17-tui-aesthetic-audit.md](./17-tui-aesthetic-audit.md) | 历史：竞品 DNA + 被证伪的 chrome-first P0（A001–A007 已发，不够） |
-| **[16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md)** | **诚实性真相**：0.8.29 线；无新诚实性 P0/P1 |
+| **[16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md)** | **诚实性真相**：0.8.30 线；无新诚实性 P0/P1 |
 | [15-post-0.8.26-refresh.md](./15-post-0.8.26-refresh.md) | 历史：0.8.26 收口 |
 | [14-post-0.8.25-refresh.md](./14-post-0.8.25-refresh.md) | 历史：G25-01 TUI Goal 暂停文案 |
 | [13-post-0.8.24-refresh.md](./13-post-0.8.24-refresh.md) | 历史：0.8.24→0.8.25 Goal×stop + R-01 |

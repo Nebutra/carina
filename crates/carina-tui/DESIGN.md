@@ -5,10 +5,9 @@
 > `styles.md` is the renderer contract. When a P0 slice ships, rewrite the
 > matching `styles.md` section. Do not keep two competing empty-state stories.
 >
-> Baseline: Carina v0.8.29 chrome plus the conversation-document knives in
-> this source line. Empty identity, composer rails, header, live rail,
-> approval, thinking spinner, and `/theme` stay. Daily chat is now pills,
-> unboxed answers, receding receipts, and leftover rest.
+> Baseline: Carina v0.8.30. Chrome P0 (empty, composer rails, header, live
+> rail, approval, thinking spinner, `/theme`) and conversation-document P0
+> (user pills, unboxed answers, receding receipts, leftover rest) **landed**.
 > Steal principles, not pixels.
 > Rejected wholesale: GrokNight / TokyoNight, OMP π branding, Claude terracotta
 > as Carina identity, Jcode idle donut, Buddy/pets, Codex 36-frame ASCII loops.
@@ -404,13 +403,13 @@ Functional and still ugly remains **FAIL**.
 Shipped on 0.8.29 and **kept**: empty identity, open-sided composer, quiet
 header, live `┃`, approval warning, thinking spinner, `/theme`.
 
-Conversation-document P0 in this source line:
+Shipped on 0.8.30:
 
 | ID | Knife | Status |
 |----|-------|--------|
-| A010 | User band on occupied cells only | this source line |
-| A012 | Policy-denied tools recede | this source line |
-| A011 | Assistant answer louder than settled tools | this source line |
-| A013 | Leftover height is rest, never a donut | this source line |
+| A010 | User band on occupied cells only | shipped 0.8.30 |
+| A012 | Policy-denied tools recede | shipped 0.8.30 |
+| A011 | Assistant answer louder than settled tools | shipped 0.8.30 |
+| A013 | Leftover height is rest, never a donut | shipped 0.8.30 |
 
 Do not start A102 shine or a theme catalog until Fixture A is the daily binary.
