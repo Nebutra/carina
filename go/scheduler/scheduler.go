@@ -1,6 +1,6 @@
-// Package scheduler queues and tracks agent runs (PRD §8.6).
-// MVP: FIFO in-memory queue. Priorities, pause/resume, and multi-agent
-// concurrency land in Phase 3.
+// Package scheduler queues and tracks agent runs.
+// Foreground ExecutionRun records are in-process; delegated Task records wait
+// on a separate dispatch queue for remote workers.
 package scheduler
 
 import (

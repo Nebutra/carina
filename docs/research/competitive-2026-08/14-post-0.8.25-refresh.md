@@ -128,7 +128,7 @@ Rust kernel：policy · patch · audit · WASM · index（不本地算 embedding
 
 ### SLOP
 - `app/mod.rs` 12225、`render.rs` 16784、`i18n.rs` 8544
-- `go/worker` Phase 3 注释
+- `go/worker` / `go/scheduler` 过期 Phase 3 注释（工作树已改）
 
 ### ISOLATED
 - Grok ACP、Gateway pin、HMS、swarm

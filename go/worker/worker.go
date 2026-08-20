@@ -1,5 +1,6 @@
-// Package worker manages the execution worker pool (PRD §8.6).
-// MVP: local workers only. Remote / CI / sandbox workers land in Phase 3.
+// Package worker manages the execution worker pool.
+// Product path is local workers. Remote, CI, and extra sandbox kinds exist on
+// the type but are not a productized dispatch path.
 package worker
 
 import (

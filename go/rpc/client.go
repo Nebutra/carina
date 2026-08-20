@@ -53,7 +53,8 @@ func Dial(socketPath string) (*Client, error) {
 	return NewClient(conn, conn, conn), nil
 }
 
-// DialTCP connects to a daemon exposed over TCP (remote workers, Phase 3).
+// DialTCP connects over TCP. Workers and tests use it; network-facing
+// listeners stay loopback-restricted unless explicitly configured.
 func DialTCP(addr string) (*Client, error) {
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {

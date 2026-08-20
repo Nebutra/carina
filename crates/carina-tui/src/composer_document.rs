@@ -292,22 +292,21 @@ mod tests {
         assert_eq!(map.step_left(chip.end), chip.start);
     }
 
+    #[test]
     fn paste_chip_layout_uses_display_width_not_backing_text() {
         let mut area = TextArea::new();
         area.insert_str("see ");
         let payload = format!("{}\n{}", "alpha ".repeat(80), "omega");
-        area.insert_element(
-            &payload,
-            crate::clipboard_image::PASTE_ELEMENT_KIND,
-            Some(ratatui::text::Line::from(" paste  8 lines ")),
-        );
+        let display = crate::clipboard_image::paste_chip_line("paste", "8 lines");
+        let expected_width = display.width();
+        area.insert_element(&payload, PASTE_ELEMENT_KIND, Some(display));
         let map = DocumentLayoutMap::from_textarea(&area);
         let paste = map
             .nodes
             .iter()
             .find(|node| node.kind == DocumentNodeKind::Media)
             .expect("paste chip");
-        assert_eq!(paste.width, " paste  8 lines ".chars().count());
+        assert_eq!(paste.width, expected_width);
         assert!(paste.width < payload.len());
         assert_eq!(map.step_right(paste.start), paste.end);
         assert_eq!(map.step_left(paste.end), paste.start);

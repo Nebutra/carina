@@ -1,6 +1,5 @@
-// Package modelrouter provides the unified model call interface (PRD §8.6):
-// provider registry with ordered fallback and per-provider token accounting.
-// Rate limiting and streaming land in Phase 1.
+// Package modelrouter is the unified model call interface: provider registry
+// with ordered fallback, per-provider token accounting, and optional streaming.
 package modelrouter
 
 import (
