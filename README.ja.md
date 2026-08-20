@@ -7,7 +7,7 @@
 **ポリシー、監査、ロールバックの境界内で、実リポジトリ上のコーディングエージェントを動かす。**
 
 [![status](https://img.shields.io/badge/status-alpha-8E4053)](#current-status)
-[![release](https://img.shields.io/badge/release-v0.8.37-176F70)](https://github.com/Nebutra/carina/releases/tag/v0.8.37)
+[![release](https://img.shields.io/badge/release-v0.8.38-176F70)](https://github.com/Nebutra/carina/releases/tag/v0.8.38)
 [![harness](https://img.shields.io/badge/harness-local--first-087C58)](#why-carina)
 [![audit](https://img.shields.io/badge/audit-hash--chained-8C5A15)](#review-and-audit)
 [![license](https://img.shields.io/badge/license-MIT-182023)](LICENSE)
@@ -18,7 +18,7 @@
 
 Carina は、AI コーディングエージェントのためのローカルファーストなハーネスです。エディタ、チャットアプリ、ホステッドサンドボックスではありません。エージェントとマシンの間に入り、ファイル読み取り、編集、コマンド、ネットワークアクセス、プラグイン、secret を明示的なポリシーの後ろに置きます。
 
-Carina はまだ alpha ですが、fail-closed な公開リリースパイプラインを備えています。`0.8.37` では、署名済みかつ Apple notarization 済みの macOS package、Linux archive/package、provenance 付き npm launcher と native package、Windows worker、package 済み VS Code/Web Operator client を提供します。shell installer、Homebrew、npm、release archive からインストールでき、source build は contributor と runtime integrator 向けに維持されています。
+Carina はまだ alpha ですが、fail-closed な公開リリースパイプラインを備えています。`0.8.38` では、署名済みかつ Apple notarization 済みの macOS package、Linux archive/package、provenance 付き npm launcher と native package、Windows worker、package 済み VS Code/Web Operator client を提供します。shell installer、Homebrew、npm、release archive からインストールでき、source build は contributor と runtime integrator 向けに維持されています。
 
 ## Why Carina
 
@@ -68,7 +68,7 @@ Carina が提供するもの：
 | Integration | MCP client/server（`mcp_find` tool search 付き）、WASM plugin boundary（org/user/project tighten-only enable merge）、worker、workflow DAG |
 | Nebutra boundary | ローカル runtime が action authority を維持し、identity と multi-endpoint sync は Nebutra Cloud（`nebutra.com`）の境界に置く |
 
-`v0.8.37` で公開済み：
+`v0.8.38` で公開済み：
 
 - macOS arm64/x64 の署名済み package と Apple `Accepted` notary/signing evidence；
 - Linux arm64/x64 archive、Debian、RPM package；
@@ -120,7 +120,7 @@ npm launcher と対応する native package を使う場合：
 npm install -g @nebutra/carina
 ```
 
-全 artifact は [`v0.8.37` release](https://github.com/Nebutra/carina/releases/tag/v0.8.37) から取得できます。
+全 artifact は [`v0.8.38` release](https://github.com/Nebutra/carina/releases/tag/v0.8.38) から取得できます。
 
 ## First Run
 

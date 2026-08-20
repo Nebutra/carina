@@ -1,6 +1,6 @@
 {
   "name": "@nebutra/carina",
-  "version": "0.8.37",
+  "version": "0.8.38",
   "description": "Native launcher for the Carina Harness",
   "license": "MIT",
   "repository": {
@@ -25,10 +25,10 @@
     "x64"
   ],
   "optionalDependencies": {
-    "@nebutra/carina-darwin-arm64": "0.8.37",
-    "@nebutra/carina-darwin-x64": "0.8.37",
-    "@nebutra/carina-linux-arm64": "0.8.37",
-    "@nebutra/carina-linux-x64": "0.8.37"
+    "@nebutra/carina-darwin-arm64": "0.8.38",
+    "@nebutra/carina-darwin-x64": "0.8.38",
+    "@nebutra/carina-linux-arm64": "0.8.38",
+    "@nebutra/carina-linux-x64": "0.8.38"
   },
   "scripts": {
     "test": "node test.mjs"

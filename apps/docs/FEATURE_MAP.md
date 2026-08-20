@@ -14,7 +14,7 @@ Update this file when you ship a feature or rename a page.
 
 | Fact | Source of truth |
 | --- | --- |
-| Latest **published** GitHub Release | `gh release view` → currently **v0.8.37** |
+| Latest **published** GitHub Release | `gh release view` → currently **v0.8.38** |
 | Monorepo source / crate tags | may be at `0.8.2+` before a Release is cut |
 | Docs stable channel | **`0.8.x`** (`versions.json`, header Version control) |
 | Docs preview channel | **`next`** (tracks `protocol/jsonrpc/methods.json` at head) |
