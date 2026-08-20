@@ -1,9 +1,9 @@
 # Competitive Research 2026-08 — Artifact Index
 
 > 取证日期：2026-08-02  
-> **现状刷新：2026-08-20 @ Carina v0.8.34** — 诚实性见 **[16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md)**；审美见 **[18-tui-aesthetic-post-0.8.29.md](./18-tui-aesthetic-post-0.8.29.md)**；Prompt/Context 见 **[21-prompt-context-re-audit.md](./21-prompt-context-re-audit.md)**；热路径见 **[20-hot-path-latency-audit.md](./20-hot-path-latency-audit.md)**  
+> **现状刷新：2026-08-20 @ Carina v0.8.34** — **Harness SSOT：[22-post-0.8.34-harness-re-audit.md](./22-post-0.8.34-harness-re-audit.md)**；审美见 **[18](./18-tui-aesthetic-post-0.8.29.md)**；Prompt 见 **[21](./21-prompt-context-re-audit.md)**（S9 已随 0.8.34 发）；热路径见 **[20](./20-hot-path-latency-audit.md)**；0.8.27 诚实性切片见 **[16](./16-post-0.8.27-refresh.md)**（「无 P0」已被后续日用刀证伪，勿当现状）  
 > 范围：Carina vs Jcode / Grok Build / Claude Code (notes) / Codex / Oh My Pi (OMP) / DeepSeek Harness（公开文档，本机无 clone）  
-> 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图 → **诚实性无新 P0/P1；审美 A010–A013 随 0.8.30 发；Prompt S1–S6 随 0.8.31 发；热路径 H1–H7 随 0.8.33 发；Prompt S9 随 0.8.34 发；结构仍 FAIL（S7–S8, S10–S11 开）**
+> 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图 → **日用 P0 剩余 = Prompt 结构 S7/S8/S10；审美/compact 为 P1；SaaS/ACP/皮肤否决**
 
 ---
 
@@ -11,12 +11,14 @@
 
 | 文件 | 角色 |
 |------|------|
-| **[21-prompt-context-re-audit.md](./21-prompt-context-re-audit.md)** | **Prompt 再审计 v0.8.33 FAIL ~5.5/10**：S1–S6 已发；S9 随 **0.8.34** 发（BRIEF 出 constitution、Intent-Meta、无 phrase classifier）；S7–S8/S10–S11 开；法：`docs/PROMPT_SPEC.md` |
+| **[23-assistant-markdown-document.md](./23-assistant-markdown-document.md)** | **长文答案排版 FAIL**：尖角 GFM 表 + 氰列表标记 vs `styles.md` Reset 正文；P0-A015–A017 |
+| **[22-post-0.8.34-harness-re-audit.md](./22-post-0.8.34-harness-re-audit.md)** | **Harness 全维度再审计 v0.8.34**：模块地图 + 六家 job + scorecard + 分类清单；剩余 P0 = S7/S8/S10 |
+| **[21-prompt-context-re-audit.md](./21-prompt-context-re-audit.md)** | **Prompt 再审计 v0.8.33 FAIL ~5.5/10**：S1–S6 已发；S9 随 **0.8.34** 发；S7–S8/S10 开；S11 并入 S8；法：`docs/PROMPT_SPEC.md` |
 | **[20-hot-path-latency-audit.md](./20-hot-path-latency-audit.md)** | **热路径取证 FAIL ~4.5/10**；P0 H1–H7 随 **0.8.33** 发；法：`docs/HOT_PATH.md` |
 | **[19-prompt-context-audit.md](./19-prompt-context-audit.md)** | 历史：v0.8.30 FAIL；S1–S6 随 **0.8.31** 发 |
 | **[18-tui-aesthetic-post-0.8.29.md](./18-tui-aesthetic-post-0.8.29.md)** | 审美 SSOT：0.8.29 框 + 0.8.30 对话文档刀 A010–A013；P1 仍开 |
 | [17-tui-aesthetic-audit.md](./17-tui-aesthetic-audit.md) | 历史：竞品 DNA + 被证伪的 chrome-first P0（A001–A007 已发，不够） |
-| **[16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md)** | **诚实性真相**：0.8.30 线；无新诚实性 P0/P1 |
+| **[16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md)** | 历史：0.8.27 诚实性切片。日用 P0 以 **22** 为准 |
 | [15-post-0.8.26-refresh.md](./15-post-0.8.26-refresh.md) | 历史：0.8.26 收口 |
 | [14-post-0.8.25-refresh.md](./14-post-0.8.25-refresh.md) | 历史：G25-01 TUI Goal 暂停文案 |
 | [13-post-0.8.24-refresh.md](./13-post-0.8.24-refresh.md) | 历史：0.8.24→0.8.25 Goal×stop + R-01 |
@@ -53,7 +55,8 @@
 | 13 | [13-post-0.8.24-refresh.md](./13-post-0.8.24-refresh.md) | 0.8.24 | 历史：Goal disarm / Esc |
 | 14 | [14-post-0.8.25-refresh.md](./14-post-0.8.25-refresh.md) | 0.8.25 | 历史：TUI Goal 暂停文案 |
 | 15 | [15-post-0.8.26-refresh.md](./15-post-0.8.26-refresh.md) | 0.8.26 | 历史：收口无 P0/P1 |
-| 16 | [16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md) | **0.8.27** | paste-chip 已发；无新产品刀 |
+| 16 | [16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md) | **0.8.27** | paste-chip 已发；无新产品刀（历史切片） |
+| 22 | [22-post-0.8.34-harness-re-audit.md](./22-post-0.8.34-harness-re-audit.md) | **0.8.34** | **Harness SSOT**：Intent-Meta 已发；结构 S7/S8/S10 仍开 |
 
 ---
 

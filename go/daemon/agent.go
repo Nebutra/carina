@@ -266,6 +266,7 @@ func (d *Daemon) runTaskContext(ctx context.Context, sess *sessionstore.Session,
 		if imported := d.importedConversationContext(sess); imported != "" {
 			tr.addTurn(Turn{Tool: "user", ActionBrief: "imported-conversation", Obs: Observation{Content: imported, Pinned: true}})
 		}
+		d.attachSessionDialogue(sess, task, tr)
 		if evidence := d.buildTaskMemoryEvidence(ctx, sess, task); evidence != "" {
 			tr.addTurn(Turn{Tool: "memory_recall", ActionBrief: "hms-evidence", Obs: Observation{Content: evidence, Pinned: true}})
 		}

@@ -163,8 +163,11 @@ preview indicate missing font coverage and make ASCII the recovery path.
 `CARINA_ASCII` switch remains a hard ASCII override. The Settings preview must
 disclose when an environment override owns the active tier. `NO_COLOR` controls
 color capability independently and must not force ASCII. Product chrome stays
-rounded in Unicode and Nerd Font modes and plain in ASCII; Markdown tables are
-the only sharp-junction exception in graphical modes.
+rounded in Unicode and Nerd Font modes and plain in ASCII. Conversation
+markdown tables are unboxed (header + hairline + aligned columns, or stacked
+`label: value` when narrow). Sharp `┌┬┐` tables stay on workbenches
+(`/changes`), not in the reading column. List markers use muted, not the
+interaction accent.
 
 ## Composer chrome
 

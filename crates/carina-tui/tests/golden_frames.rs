@@ -378,10 +378,7 @@ fn render_empty_conversation(width: u16, height: u16) -> String {
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
         .draw(|frame| {
-            EmptyConversation {
-                locale: Locale::En,
-            }
-            .render(frame, frame.area(), theme);
+            EmptyConversation { locale: Locale::En }.render(frame, frame.area(), theme);
         })
         .unwrap();
     serialize_frame(terminal.backend().buffer())
@@ -468,6 +465,7 @@ fn golden_code_block() {
             code_comment: Style::default().fg(theme.muted),
             code_number: Style::default().fg(theme.warning),
             code_type: Style::default().fg(theme.accent),
+            unboxed_tables: false,
         },
     );
     insta::assert_snapshot!(render_case(80, 24, "markdown", lines, false));

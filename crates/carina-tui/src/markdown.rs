@@ -22,6 +22,9 @@ pub struct MarkdownTheme {
     pub code_comment: Style,
     pub code_number: Style,
     pub code_type: Style,
+    /// Conversation answers stay unboxed. Sharp `┌┬┐` tables belong on
+    /// workbenches (`/changes`), not in the reading column.
+    pub unboxed_tables: bool,
 }
 
 impl MarkdownTheme {
@@ -200,7 +203,7 @@ impl MarkdownWriter {
             }
             Event::TaskListMarker(checked) => self.push(
                 if checked { "[x] " } else { "[ ] " }.into(),
-                self.theme.accent,
+                self.theme.muted,
             ),
             Event::FootnoteReference(reference) => {
                 self.push(format!("[{reference}]"), self.theme.accent)
@@ -260,7 +263,7 @@ impl MarkdownWriter {
                     }
                     None => format!("{} ", self.theme.glyphs.bullet()),
                 };
-                self.push(format!("{}{prefix}", "  ".repeat(depth)), self.theme.accent);
+                self.push(format!("{}{prefix}", "  ".repeat(depth)), self.theme.muted);
             }
             Tag::Emphasis => self
                 .styles
@@ -392,6 +395,10 @@ impl MarkdownWriter {
             self.render_stacked_table(&table, columns);
             return;
         }
+        if self.theme.unboxed_tables {
+            self.render_unboxed_table(&table, columns);
+            return;
+        }
         let available = self.width.saturating_sub(columns + 1);
         let mut widths = (0..columns)
             .map(|column| {
@@ -438,6 +445,9 @@ impl MarkdownWriter {
                         row.get(column).map(Vec::as_slice).unwrap_or(&[]),
                         widths[column],
                     )
+                    .into_iter()
+                    .map(|line| clip_spans(line, widths[column]))
+                    .collect::<Vec<_>>()
                 })
                 .collect::<Vec<_>>();
             let row_height = wrapped.iter().map(Vec::len).max().unwrap_or(1);
@@ -481,6 +491,97 @@ impl MarkdownWriter {
             horizontal,
             self.theme.muted,
         );
+    }
+
+    fn render_unboxed_table(&mut self, table: &Table, columns: usize) {
+        let gap: usize = 2;
+        let available = self.width.saturating_sub(gap.saturating_mul(columns.saturating_sub(1)));
+        let mut widths = (0..columns)
+            .map(|column| {
+                table
+                    .rows
+                    .iter()
+                    .filter_map(|row| row.get(column))
+                    .map(|cell| spans_width(cell))
+                    .max()
+                    .unwrap_or(1)
+                    .max(1)
+            })
+            .collect::<Vec<_>>();
+        while widths.iter().sum::<usize>() > available {
+            let Some((index, _)) = widths
+                .iter()
+                .enumerate()
+                .filter(|(_, width)| **width > 2)
+                .max_by_key(|(_, width)| **width)
+            else {
+                break;
+            };
+            widths[index] -= 1;
+        }
+        if table.header_rows > 0 {
+            if let Some(header) = table.rows.first() {
+                self.push_unboxed_row(header, &widths, gap, true);
+            }
+            let rule_width = widths
+                .iter()
+                .sum::<usize>()
+                .saturating_add(gap.saturating_mul(columns.saturating_sub(1)))
+                .min(self.width);
+            self.lines.push(Line::from(Span::styled(
+                self.theme.glyphs.rule().repeat(rule_width.max(1)),
+                self.theme.muted,
+            )));
+        }
+        let start = usize::from(table.header_rows > 0);
+        for row in table.rows.iter().skip(start) {
+            self.push_unboxed_row(row, &widths, gap, false);
+        }
+    }
+
+    fn push_unboxed_row(
+        &mut self,
+        row: &[Vec<Span<'static>>],
+        widths: &[usize],
+        gap: usize,
+        header: bool,
+    ) {
+        let columns = widths.len();
+        let wrapped = (0..columns)
+            .map(|column| {
+                wrap_spans(
+                    row.get(column).map(Vec::as_slice).unwrap_or(&[]),
+                    widths[column],
+                )
+                .into_iter()
+                .map(|line| clip_spans(line, widths[column]))
+                .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let row_height = wrapped.iter().map(Vec::len).max().unwrap_or(1);
+        let muted = self.theme.muted;
+        let width = self.width;
+        for visual_row in 0..row_height {
+            let mut line = Line::default();
+            for column in 0..columns {
+                if column > 0 {
+                    line.spans.push(Span::raw(" ".repeat(gap)));
+                }
+                let mut content = wrapped[column].get(visual_row).cloned().unwrap_or_default();
+                if header {
+                    for span in &mut content {
+                        span.style = span.style.add_modifier(Modifier::BOLD).patch(muted);
+                    }
+                }
+                let padding = widths[column].saturating_sub(spans_width(&content));
+                line.spans.extend(content);
+                if padding > 0 {
+                    line.spans.push(Span::raw(" ".repeat(padding)));
+                }
+            }
+            self.lines
+                .push(Line::from(clip_spans(line.spans, width)));
+        }
     }
 
     fn render_stacked_table(&mut self, table: &Table, columns: usize) {
@@ -710,6 +811,9 @@ fn wrap_spans_prefixed(
                 prefix_width = 0;
                 lines.push(Vec::new());
             }
+            if used.saturating_add(cell_width) > width {
+                continue;
+            }
             let line = lines.last_mut().expect("wrapped cell owns one line");
             if let Some(last) = line.last_mut()
                 && last.style == span.style
@@ -722,6 +826,31 @@ fn wrap_spans_prefixed(
         }
     }
     lines
+}
+
+fn clip_spans(spans: Vec<Span<'static>>, width: usize) -> Vec<Span<'static>> {
+    if width == 0 {
+        return Vec::new();
+    }
+    let mut fitted = Vec::new();
+    let mut used = 0_usize;
+    for span in spans {
+        for grapheme in span.content.graphemes(true) {
+            let grapheme_width = grapheme.width();
+            if used.saturating_add(grapheme_width) > width {
+                return fitted;
+            }
+            if let Some(last) = fitted.last_mut()
+                && last.style == span.style
+            {
+                last.content.to_mut().push_str(grapheme);
+            } else {
+                fitted.push(Span::styled(grapheme.to_owned(), span.style));
+            }
+            used += grapheme_width;
+        }
+    }
+    fitted
 }
 
 fn fitted_prefix(prefix: &[Span<'_>], width: usize) -> Vec<Span<'static>> {
@@ -808,6 +937,7 @@ mod tests {
             code_comment: Style::default(),
             code_number: Style::default(),
             code_type: Style::default(),
+            unboxed_tables: false,
         }
     }
 
@@ -873,6 +1003,31 @@ mod tests {
             .filter(|ch| !ch.is_whitespace())
             .collect::<String>();
         assert!(compact.contains("value"));
+    }
+
+    #[test]
+    fn unboxed_prefixed_tables_never_exceed_width() {
+        let input = "| 层 | 语言 | 职责 |\n|---|---|---|\n| Native Toolchain | Zig | scan / grep / diff / patch / 进程 / PTY |\n| Capability Kernel | Rust | 权限、policy、hash-chained 审计 |";
+        let mut theme = theme();
+        theme.unboxed_tables = true;
+        let prefix = StyledPrefix::hanging(
+            vec![Span::raw("• ")],
+            Style::default(),
+        );
+        for width in [24_u16, 32, 48, 80, 120] {
+            let lines = render_prefixed(input, width, theme, &prefix);
+            assert!(
+                !plain(&lines).iter().any(|line| line.contains('┌')
+                    || line.contains('┬')
+                    || line.contains('┐')),
+                "conversation tables must not box: {width}"
+            );
+            assert!(
+                plain(&lines).iter().all(|line| line.width() <= usize::from(width)),
+                "prefixed table overflowed {width}: {:?}",
+                plain(&lines)
+            );
+        }
     }
 
     #[test]

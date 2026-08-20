@@ -51,6 +51,7 @@ pub fn run_render_scenario(iterations: usize) -> BenchScenarioResult {
         code_comment: Style::default().fg(theme.muted),
         code_number: Style::default().fg(theme.gray_bright),
         code_type: Style::default().fg(theme.accent),
+        unboxed_tables: true,
     };
     let body = SAMPLE_TRANSCRIPT;
     let mut samples = Vec::with_capacity(iterations);

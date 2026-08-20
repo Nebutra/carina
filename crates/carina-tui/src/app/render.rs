@@ -9093,7 +9093,7 @@ fn transcript_lines_with_tool_key_and_density(
                 accent: label_style,
                 muted: metadata_style,
                 code: code_style,
-                quote: label_style,
+                quote: metadata_style,
                 link: link_style,
                 headings,
                 code_keyword: label_style,
@@ -9101,6 +9101,7 @@ fn transcript_lines_with_tool_key_and_density(
                 code_comment: metadata_style,
                 code_number: code_style,
                 code_type: label_style,
+                unboxed_tables: true,
             },
             &prefix,
         );
