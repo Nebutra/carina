@@ -1,8 +1,8 @@
 # Post-0.8.26 Harness Audit Refresh
 
 > **取证日期**：2026-08-20  
-> **产品锚点**：`go/product/version.go` → **0.8.26**（`c2bb3c7` / tag `v0.8.26`）  
-> **工作树**：未提交 — paste-chip 宽度 `#[test]`；worker/scheduler/model-router/rpc 过期 Phase 注释  
+> **产品锚点**：`go/product/version.go` → **0.8.27**  
+> **工作树**：干净 — paste-chip 契约与过期 Phase 注释随 0.8.27 发版  
 > **方法**：本仓库源码 + `CAPABILITIES.md` + `docs/rpc-api.md` + `docs/product.md` + 本机竞品树抽查（未漂）+ DeepSeek 公开 README（**本机无 clone**）  
 > **前序**：`14-post-0.8.25-refresh.md` 已过时，**以本文为现状真相**  
 > **未做**：并排 PTY、同机 RAM PSS、DeepSeek 本地行号级 DNA
@@ -23,7 +23,7 @@ Carina **0.8.26** 把诚实程序收口：握手、`provider_attempts`、compact
 | 2 | Compact cell + stale cache + Goal disarm | 压缩可见；重启不偷跑 | **SHIPPED** 0.8.24 |
 | 3 | Esc/Ctrl-C 暂停 Goal；cancelled 不续跑 | 停手不偷跑 | **SHIPPED** 0.8.25 |
 | 4 | TUI 说出 Goal 暂停 | notice「已暂停目标」 | **SHIPPED** 0.8.26 |
-| 5 | **停开新 epic**；只顺手钉契约 | 防回潮，不堆功能 | **下一刀 = 不要刀**（WT：paste-chip `#[test]`） |
+| 5 | **停开新 epic**；只顺手钉契约 | 防回潮，不堆功能 | **SHIPPED** 0.8.27 paste-chip + 注释 |
 
 **明确不做**：默认 yolo · snapcompact 默认 · MiniLM-on · 3D/Buddy · 整包 Grok pager · Cordis 核 · MCP passthrough · git-only 回滚 · hashline/fuzzy 换掉 `carina-patch` · ACP 当交互协议 · SaaS 多租户 day-one · 为齐功能做完 native scrollback。
 
