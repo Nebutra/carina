@@ -266,7 +266,16 @@ func (d *Daemon) loadSessionItemsSnapshot(id string) ([]SessionItemEvent, int, e
 		return nil, 0, fmt.Errorf("session.items: decode audit events: %w", err)
 	}
 	durableCursor := len(events)
-	cacheKey := fmt.Sprintf("%p:%s", d, id)
+	if d.store != nil {
+		if sess, ok := d.store.Get(id); ok && sess.ForkedFromTaskID != "" && sess.ParentID != "" {
+			inherited, err := d.inheritedForkEvents(sess.ParentID, sess.ForkedFromTaskID)
+			if err != nil {
+				return nil, 0, err
+			}
+			events = append(inherited, events...)
+		}
+	}
+	cacheKey := fmt.Sprintf("%p:%s:%d", d, id, len(events))
 	now := time.Now()
 	sessionItemsCache.Lock()
 	cached, ok := sessionItemsCache.entries[cacheKey]

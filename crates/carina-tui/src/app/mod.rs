@@ -7017,6 +7017,12 @@ impl App {
             self.notice = Notice::localized(MessageId::HistoryBranchCreating);
             return;
         }
+        self.abort_history_branch(Notice::default());
+        self.notice.clear();
+    }
+
+    fn abort_history_branch(&mut self, notice: Notice) {
+        self.history_branch_pending = false;
         self.history_generation = self.history_generation.saturating_add(1);
         self.history_branch_request_id = None;
         self.history_selected = None;
@@ -7029,7 +7035,7 @@ impl App {
             self.transcript_scroll = scroll;
             self.transcript_follow_bottom = follow_bottom;
         }
-        self.notice.clear();
+        self.notice = notice;
     }
 
     fn branch_from_history(&mut self) {
@@ -7103,25 +7109,24 @@ impl App {
         {
             return;
         }
+        let outcome = match result {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                self.abort_history_branch(Notice::localized_with(
+                    MessageId::HistoryBranchFailed,
+                    [("error", error)],
+                ));
+                return;
+            }
+        };
         let selected_prompt = self
             .blocks
             .iter()
             .find(|block| block.id == selected_block_id && block.branchable)
             .map(|block| block.source_prompt.clone());
         let Some(selected_prompt) = selected_prompt else {
-            self.history_branch_pending = false;
-            self.history_branch_request_id = None;
-            self.notice = Notice::localized(MessageId::HistorySelectionExpired);
+            self.abort_history_branch(Notice::localized(MessageId::HistorySelectionExpired));
             return;
-        };
-        let outcome = match result {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                self.history_branch_pending = false;
-                self.notice =
-                    Notice::localized_with(MessageId::HistoryBranchFailed, [("error", error)]);
-                return;
-            }
         };
 
         let draft = match self.history_stashed_draft.as_deref() {

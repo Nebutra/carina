@@ -2072,9 +2072,17 @@ func (d *Daemon) handleSessionAttach(params json.RawMessage) (any, error) {
 type sessionForkParams struct {
 	SessionID    string `json:"session_id"`
 	LastTaskID   string `json:"last_task_id"`
+	LastRunID    string `json:"last_run_id"`
 	ThroughTurn  int    `json:"through_turn"`
 	BeforeFirst  bool   `json:"before_first"`
 	ClientForkID string `json:"client_fork_id"`
+}
+
+func (p sessionForkParams) requestedTaskID() string {
+	if id := strings.TrimSpace(p.LastTaskID); id != "" {
+		return id
+	}
+	return strings.TrimSpace(p.LastRunID)
 }
 
 // handleSessionFork branches a session at a source-owned conversation
@@ -2093,7 +2101,7 @@ func (d *Daemon) handleSessionFork(params json.RawMessage) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown session %s", id)
 	}
-	if p.BeforeFirst && (p.LastTaskID != "" || p.ThroughTurn > 0) {
+	if p.BeforeFirst && (p.requestedTaskID() != "" || p.ThroughTurn > 0) {
 		return nil, fmt.Errorf("before_first cannot be combined with last_task_id or through_turn")
 	}
 	if p.ClientForkID != "" && !validClientSubmissionID(p.ClientForkID) {
@@ -2113,34 +2121,12 @@ func (d *Daemon) handleSessionFork(params json.RawMessage) (any, error) {
 		return existing, nil
 	}
 
-	var sourceTask *scheduler.ExecutionRun
-	for _, task := range d.sched.List() {
-		if task.SessionID != id {
-			continue
-		}
-		switch task.Status {
-		case "running", "queued", "waiting_approval", "paused":
-			return nil, fmt.Errorf("cannot fork session %s while task %s is %s", id, task.RunID, task.Status)
-		}
-		if p.LastTaskID != "" && task.RunID == p.LastTaskID {
-			sourceTask = task
-		}
-		if p.LastTaskID == "" && (sourceTask == nil || task.UpdatedAt.After(sourceTask.UpdatedAt)) {
-			sourceTask = task
-		}
-	}
-	if !p.BeforeFirst && sourceTask == nil {
-		return nil, fmt.Errorf("cannot fork session %s without a completed task checkpoint", id)
-	}
 	var sourceTaskID string
 	var sourceTurn int
-	if sourceTask != nil {
-		cp := d.runs.loadCheckpoint(sourceTask.RunID)
-		if p.ThroughTurn > 0 {
-			cp = d.runs.loadCheckpointTurn(sourceTask.RunID, p.ThroughTurn)
-		}
-		if cp == nil {
-			return nil, fmt.Errorf("fork boundary not found for task %s", sourceTask.RunID)
+	if !p.BeforeFirst {
+		sourceTask, cp, err := d.resolveForkBoundary(id, p.requestedTaskID(), p.ThroughTurn)
+		if err != nil {
+			return nil, err
 		}
 		sourceTaskID = sourceTask.RunID
 		sourceTurn = cp.Turn
@@ -2172,6 +2158,8 @@ func (d *Daemon) handleSessionFork(params json.RawMessage) (any, error) {
 
 func sessionForkFingerprint(p sessionForkParams) string {
 	p.ClientForkID = ""
+	p.LastTaskID = p.requestedTaskID()
+	p.LastRunID = ""
 	raw, _ := json.Marshal(p)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])

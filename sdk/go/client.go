@@ -557,7 +557,7 @@ func (c *Client) ResumeThread(sessionID string) (*Thread, error) {
 func (c *Client) ForkThread(sessionID, lastRunID string, throughTurn int) (*Thread, error) {
 	params := map[string]any{"session_id": sessionID}
 	if lastRunID != "" {
-		params["last_run_id"] = lastRunID
+		params["last_task_id"] = lastRunID
 	}
 	if throughTurn > 0 {
 		params["through_turn"] = throughTurn

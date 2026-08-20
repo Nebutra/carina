@@ -15248,6 +15248,32 @@ mod transcript_tests {
     }
 
     #[test]
+    fn failed_history_branch_clears_selection_and_restores_draft() {
+        let (mut app, root, server) = production_render_app();
+        app.active_session = Some(serde_json::from_value(serde_json::json!({
+            "session_id": "sess-1"
+        }))
+        .unwrap());
+        app.history_generation = 4;
+        app.history_branch_pending = true;
+        app.history_selected = Some(0);
+        app.history_stashed_draft = Some("original draft".into());
+        app.composer.set_text("对此 你怎么看");
+        app.apply_history_branch(
+            4,
+            "sess-1",
+            "any-block",
+            Err("fork boundary not found for task run_x".into()),
+        );
+        assert!(app.history_selected.is_none());
+        assert!(!app.history_branch_pending);
+        assert_eq!(app.composer.text(), "original draft");
+        assert!(app.notice.is_localized(MessageId::HistoryBranchFailed));
+        let _ = server;
+        let _ = root;
+    }
+
+    #[test]
     fn visual_density_comfortable_fallbacks_preserve_information_and_geometry() {
         for locale in [Locale::En, Locale::ZhHans] {
             for width in [80, 120, 160] {

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	sessionstore "github.com/Nebutra/carina/go/session-store"
@@ -182,5 +183,77 @@ func TestSessionForkThroughTurnCopiesStableContextAndIsolatesWrites(t *testing.T
 	parentAgain := d.runs.loadCheckpointTurn(task.RunID, 1)
 	if parentAgain.Transcript.Turns[0].Obs.Content != "shared" {
 		t.Fatal("fork mutated parent checkpoint")
+	}
+}
+
+func TestSessionForkAcceptsLastRunIDAlias(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	parent, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(parent.SessionID, ws, "safe-edit", nil)
+	task := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "parent task")
+	d.sched.SetStatus(task.RunID, "completed")
+	d.runs.saveCheckpoint(task.RunID, &runCheckpoint{Turn: 1, Transcript: &Transcript{Task: "parent task", policy: defaultCompactionPolicy()}})
+
+	res, err := d.handleSessionFork(mustJSON(t, map[string]any{
+		"session_id": parent.SessionID, "last_run_id": task.RunID, "client_fork_id": "alias-1",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := res.(*sessionstore.Session)
+	if child.ForkedFromTaskID != task.RunID {
+		t.Fatalf("last_run_id alias ignored: %+v", child)
+	}
+}
+
+func TestSessionForkWalksBackWhenRequestedRunHasNoCheckpoint(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	parent, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(parent.SessionID, ws, "safe-edit", nil)
+	ready := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "分析这个 repo")
+	d.sched.SetStatus(ready.RunID, "completed")
+	d.runs.saveCheckpoint(ready.RunID, &runCheckpoint{Turn: 1, Transcript: &Transcript{Task: ready.UserPrompt, Summary: "repo map", policy: defaultCompactionPolicy()}})
+	failed := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "对此你怎么看")
+	d.sched.SetStatus(failed.RunID, "failed")
+
+	res, err := d.handleSessionFork(mustJSON(t, map[string]any{
+		"session_id": parent.SessionID, "last_task_id": failed.RunID, "client_fork_id": "walk-back",
+	}))
+	if err != nil {
+		t.Fatalf("expected walk-back onto the last checkpointed run: %v", err)
+	}
+	child := res.(*sessionstore.Session)
+	if child.ForkedFromTaskID != ready.RunID {
+		t.Fatalf("walk-back used %q, want checkpointed %q", child.ForkedFromTaskID, ready.RunID)
+	}
+}
+
+func TestForkedSessionItemsIncludeParentDialogue(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	parent, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(parent.SessionID, ws, "safe-edit", nil)
+	task := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "分析这个 repo")
+	d.sched.SetStatus(task.RunID, "completed")
+	d.record(parent.SessionID, "ExecutionStarted", task.RunID, "go", map[string]any{"prompt": task.UserPrompt}, "")
+	d.record(parent.SessionID, "ExecutionCompleted", task.RunID, "go", map[string]any{"summary": "这是仓库地图", "result_kind": "answer"}, "")
+	d.runs.saveCheckpoint(task.RunID, &runCheckpoint{Turn: 1, Transcript: &Transcript{Task: task.UserPrompt, Summary: "这是仓库地图", policy: defaultCompactionPolicy()}})
+
+	res, err := d.handleSessionFork(mustJSON(t, map[string]any{
+		"session_id": parent.SessionID, "last_task_id": task.RunID, "client_fork_id": "inherit-items",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := res.(*sessionstore.Session)
+	items, err := d.loadSessionItems(child.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, _ := json.Marshal(items)
+	if !strings.Contains(string(blob), "这是仓库地图") {
+		t.Fatalf("forked session.items missing inherited answer: %s", blob)
 	}
 }

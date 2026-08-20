@@ -956,7 +956,7 @@ impl Client {
     pub fn fork_session(
         &mut self,
         session_id: &str,
-        last_run_id: Option<&str>,
+        last_task_id: Option<&str>,
         before_first: bool,
         client_fork_id: &str,
     ) -> Result<Session, RpcError> {
@@ -970,14 +970,14 @@ impl Client {
                 }),
             )
         } else {
-            let last_run_id = last_run_id.ok_or_else(|| {
+            let last_task_id = last_task_id.ok_or_else(|| {
                 RpcError::Protocol("history fork requires a previous run boundary".into())
             })?;
             self.call(
                 "session.fork",
                 &json!({
                     "session_id": session_id,
-                    "last_run_id": last_run_id,
+                    "last_task_id": last_task_id,
                     "client_fork_id": client_fork_id,
                 }),
             )
