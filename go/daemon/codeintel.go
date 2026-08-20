@@ -325,6 +325,14 @@ func codeIntelError(err error) string {
 	return "code intel error: " + msg
 }
 
+func observeIndex(err error) string {
+	var building *indexBuildingError
+	if errors.As(err, &building) {
+		return indexStatusFromProgress(building.progress) + ". Retry after the background index finishes."
+	}
+	return codeIntelError(err)
+}
+
 // searchHit is one rendered code.search result row (kernel.index.search hit).
 type searchHit struct {
 	Path      string  `json:"path"`
@@ -347,7 +355,7 @@ func (d *Daemon) agentCodeSearch(sess *sessionstore.Session, task *scheduler.Exe
 		return "error: code.search needs a query"
 	}
 	if err := d.ensureIndex(sess, task); err != nil {
-		return codeIntelError(err)
+		return observeIndex(err)
 	}
 	raw, semReason, err := d.searchIndexDegraded(sess.SessionID, act.Query, 10)
 	if err != nil {
@@ -426,7 +434,7 @@ func (d *Daemon) agentCodeSymbols(sess *sessionstore.Session, task *scheduler.Ex
 		return "error: code.symbols needs a name"
 	}
 	if err := d.ensureIndex(sess, task); err != nil {
-		return codeIntelError(err)
+		return observeIndex(err)
 	}
 	res, errObs := d.lookupSymbols(sess, act.Name)
 	if errObs != "" {
@@ -504,7 +512,7 @@ func (d *Daemon) agentSemanticLookup(sess *sessionstore.Session, task *scheduler
 		return "error: " + tool + " needs a name"
 	}
 	if err := d.ensureIndex(sess, task); err != nil {
-		return codeIntelError(err)
+		return observeIndex(err)
 	}
 	// The kernel lookup is the CodeIndex policy gate: a denial returns here,
 	// before any language server runs.
@@ -931,7 +939,7 @@ func (d *Daemon) agentCodeImpact(sess *sessionstore.Session, task *scheduler.Exe
 		return "error: code.impact needs a name"
 	}
 	if err := d.ensureIndex(sess, task); err != nil {
-		return codeIntelError(err)
+		return observeIndex(err)
 	}
 	raw, err := d.kern.IndexImpact(sess.SessionID, act.Name, 0, 0)
 	if err != nil {

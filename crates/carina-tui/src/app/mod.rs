@@ -785,6 +785,7 @@ impl App {
         self.tool_disclosure_overrides
             .insert(id.to_owned(), expanded);
         self.clear_transcript_projection_caches();
+        self.dirty = true;
         true
     }
 

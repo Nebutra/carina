@@ -208,6 +208,17 @@ func TestLargeWorkspaceCodeMapDefersSemanticBuild(t *testing.T) {
 	if !strings.Contains(obs, "Index coverage: semantic index building") || !strings.Contains(obs, "Lightweight workspace map") {
 		t.Fatalf("large workspace must return immediate progressive coverage, got: %s", obs)
 	}
+	search := d.agentCodeSearch(sess, task, &action{Tool: "code.search", Query: "Symbol0"})
+	if strings.Contains(search, "code intel error:") {
+		t.Fatalf("background index progress must not look like a tool failure, got: %s", search)
+	}
+	if !strings.Contains(search, "semantic index building") {
+		t.Fatalf("code.search during a large first build must report progress, got: %s", search)
+	}
+	def := d.agentCodeDef(sess, task, &action{Tool: "code.def", Name: "Symbol0"})
+	if strings.Contains(def, "code intel error:") {
+		t.Fatalf("code.def during a large first build must not look like a tool failure, got: %s", def)
+	}
 
 	deadline := time.Now().Add(10 * time.Second)
 	for {

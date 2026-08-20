@@ -58,7 +58,9 @@ The band must not fill leftover cells in the reading column; a short "你好"
 is a short pill, not a table row. Selection may still own the full hit
 rectangle. Basic and no-color modes keep the background Reset. Leftover
 transcript height below the last turn is rest (`Color::Reset`), not a surface
-to fill. Policy-denied tools are settled receipts, not failure cells: no
+to fill. Each conversation frame clears the full terminal area and the
+transcript pane before painting blocks, so collapsing or reflowing a tool
+cannot leave wrapped remnants in the unread gutter. Policy-denied tools are settled receipts, not failure cells: no
 danger rail, no live-tool warning title.
 
 Steer turns keep the steer mark and the localized "You steered" metadata; they
@@ -96,7 +98,10 @@ clock and one glyph class. Settled tools recede: no outer rail, only the semanti
 two-cell tree gutter on expanded detail. Assistant answers stay unboxed.
 Approval identity uses the warning/tool tone, not event-red; only failures use
 danger. Failure recovery actions render as `[ Retry ]`-style chips, not a flat
-sentence. The approval overlay uses a warning border and, in `NO_COLOR`, a
+sentence. A failure that is being retried, or whose retry already completed,
+leaves the reading column; the reducer keeps the cell so a later failure of
+that chain can restore it. Unresolved retryable failures stay. The approval
+overlay uses a warning border and, in `NO_COLOR`, a
 reversed title so blocking remains structural without a red room.
 
 Expanded tool detail uses the semantic two-cell tree gutter on every source and

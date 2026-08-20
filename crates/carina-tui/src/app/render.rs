@@ -2675,6 +2675,10 @@ impl App {
     }
 
     fn render_conversation(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        // Own every cell on the conversation surface. Collapse/reflow only
+        // paints the reading column; without a pane-wide reset, previous wrap
+        // remnants stay in the right gutter of an ultrawide terminal.
+        frame.render_widget(Clear, area);
         let content = layout_contract::content(area);
         let reading_axis = layout_contract::transcript_content(content);
         let chrome = self.composer_chrome();
@@ -2894,6 +2898,7 @@ impl App {
     }
 
     fn render_transcript(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
         let geometry = layout_contract::TranscriptGeometry::compute(area);
         self.transcript_geometry = geometry;
         self.transcript_scrollbar = layout_contract::TranscriptScrollbar::default();
@@ -8881,6 +8886,13 @@ fn transcript_block_height_with_tool_key_and_density(
 }
 
 fn transcript_block_hidden(block: &TranscriptBlock) -> bool {
+    if block
+        .failure
+        .as_ref()
+        .is_some_and(crate::transcript::FailurePresentation::leaves_document)
+    {
+        return true;
+    }
     block.tool_members.is_empty()
         && block.todo_items.is_empty()
         && block.title.trim().is_empty()
@@ -17649,6 +17661,92 @@ mod transcript_tests {
                 .contains(hidden)
             );
         }
+    }
+
+    #[test]
+    fn collapsing_a_tool_clears_stale_wrap_from_the_unread_gutter() {
+        let (mut app, root, server) = production_render_app();
+        app.theme.glyphs = Glyphs::new(GlyphMode::Unicode);
+        let marker = "claude-sonnet-4-stale-wrap-marker";
+        let mut tool = block(
+            BlockKind::Tool,
+            &format!(
+                r#"{{"{marker}": {{"id": "c"}}, "claude-haiku-4": {{"id": "c"}}, "claude-opus-4": {{"id": "c"}}, "providerModels": true}}"#
+            )
+            .repeat(12),
+        );
+        tool.id = "tool:models-json".into();
+        tool.tool_kind = Some(crate::tool_projection::ToolKind::Read);
+        tool.title = crate::tool_projection::format_tool_title("Read", "models.json");
+        tool.status.clear();
+        tool.collapsible = true;
+        tool.expanded = true;
+        app.blocks = vec![tool];
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(200, 40)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let expanded = rendered_frame_text(terminal.backend().buffer());
+        assert!(
+            expanded.contains(marker),
+            "expanded fixture must occupy the pane:\n{expanded}"
+        );
+
+        app.apply_action(Action::ToggleBlock("tool:models-json".into()));
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let collapsed = rendered_frame_text(terminal.backend().buffer());
+        assert!(
+            !collapsed.contains(marker),
+            "collapse must wipe wrapped remnants from the unread gutter:\n{collapsed}"
+        );
+        assert!(
+            !collapsed.contains("providerModels"),
+            "collapse must wipe the unread gutter:\n{collapsed}"
+        );
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recovering_and_settled_retry_failures_leave_the_document() {
+        let mut retryable = block(BlockKind::Diagnostic, "provider unavailable");
+        retryable.failure = Some(crate::transcript::FailurePresentation {
+            kind: crate::transcript::FailureKind::Failed,
+            action: crate::transcript::FailureAction::Retry,
+            owner: "Carina".into(),
+            reason: "provider unavailable".into(),
+            source_event_id: "evt-1".into(),
+            run_id: "run-1".into(),
+            model: "grok-build/grok-4.6".into(),
+            current_model: "grok-build/grok-4.6".into(),
+            retry_root_run_id: "run-1".into(),
+            attempt_count: 1,
+            focused_action: None,
+        });
+        assert!(!transcript_block_hidden(&retryable));
+
+        retryable.failure.as_mut().unwrap().action =
+            crate::transcript::FailureAction::Recovering;
+        retryable.failure.as_mut().unwrap().run_id = "run-2".into();
+        assert!(transcript_block_hidden(&retryable));
+
+        retryable.failure.as_mut().unwrap().action = crate::transcript::FailureAction::Disabled;
+        assert!(transcript_block_hidden(&retryable));
+
+        let mut terminal = block(BlockKind::Diagnostic, "not retryable");
+        terminal.failure = Some(crate::transcript::FailurePresentation {
+            kind: crate::transcript::FailureKind::Failed,
+            action: crate::transcript::FailureAction::Disabled,
+            owner: "Carina".into(),
+            reason: "not retryable".into(),
+            source_event_id: "evt-2".into(),
+            run_id: "run-x".into(),
+            model: "grok-build/grok-4.6".into(),
+            current_model: "grok-build/grok-4.6".into(),
+            retry_root_run_id: "run-x".into(),
+            attempt_count: 1,
+            focused_action: None,
+        });
+        assert!(!transcript_block_hidden(&terminal));
     }
 
     #[test]

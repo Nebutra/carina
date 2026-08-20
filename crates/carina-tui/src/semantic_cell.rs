@@ -23,7 +23,10 @@ pub enum SemanticCellKind {
 
 impl SemanticCellKind {
     pub fn from_block(block: &TranscriptBlock) -> Self {
-        if block.failure.is_some()
+        if block
+            .failure
+            .as_ref()
+            .is_some_and(|failure| !failure.leaves_document())
             || block
                 .tool_members
                 .iter()
@@ -152,6 +155,13 @@ mod tests {
         assert_eq!(
             SemanticCellKind::from_block(&failure),
             SemanticCellKind::Failure
+        );
+
+        failure.failure.as_mut().unwrap().action = FailureAction::Recovering;
+        failure.failure.as_mut().unwrap().run_id = "run-2".into();
+        assert_eq!(
+            SemanticCellKind::from_block(&failure),
+            SemanticCellKind::Notice
         );
     }
 

@@ -101,6 +101,16 @@ impl FailurePresentation {
         actions.push(FailureRecoveryAction::CopyId);
         actions
     }
+
+    /// Retry-in-flight and successful recovery leave the reading column.
+    /// The reducer still owns the cell so a later terminal failure of the
+    /// same chain can restore it. Unresolved retryable failures stay.
+    pub fn leaves_document(&self) -> bool {
+        matches!(self.action, FailureAction::Recovering)
+            || (self.action == FailureAction::Disabled
+                && !self.retry_root_run_id.is_empty()
+                && self.retry_root_run_id != self.run_id)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5614,13 +5624,9 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
                 json!({"summary":"recovered"}),
             ),
         ));
-        assert_eq!(
-            live.iter()
-                .find_map(|block| block.failure.as_ref())
-                .unwrap()
-                .action,
-            FailureAction::Disabled
-        );
+        let settled = live.iter().find_map(|block| block.failure.as_ref()).unwrap();
+        assert_eq!(settled.action, FailureAction::Disabled);
+        assert!(settled.leaves_document());
     }
 
     #[test]
