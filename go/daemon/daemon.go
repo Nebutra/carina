@@ -2982,7 +2982,7 @@ func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, provenance tas
 			map[string]any{"status": "command_expanded", "command": expanded.Name}, "")
 	}
 	if agent == "" {
-		agent = "build"
+		agent = defaultInteractiveAgent
 	}
 	if model == "" {
 		model = strings.TrimSpace(sess.NextModel)

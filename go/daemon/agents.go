@@ -121,14 +121,23 @@ func loadAgentSpecs(workspaceRoot string) map[string]*AgentSpec {
 
 func builtinAgentSpecs() map[string]*AgentSpec {
 	return map[string]*AgentSpec{
-		"build": {
-			Name:         "build",
-			Description:  "Default coding agent for implementation work.",
+		"converse": {
+			Name:         "converse",
+			Description:  "Default interactive agent. Answer first; inspect only when the message needs workspace evidence or a side effect.",
 			Profile:      "safe-edit",
 			Mode:         "primary",
 			MaxTurns:     8,
 			Source:       "built-in",
-			SystemPrompt: "You are Carina in build mode. Inspect the workspace, make targeted changes, run relevant checks, and finish with a concise engineering summary.",
+			SystemPrompt: "converse: Answer the operator. Call \"done\" immediately unless the message requires workspace evidence or a side effect.",
+		},
+		"build": {
+			Name:         "build",
+			Description:  "Coding agent for implementation work.",
+			Profile:      "safe-edit",
+			Mode:         "primary",
+			MaxTurns:     8,
+			Source:       "built-in",
+			SystemPrompt: "build: Change the workspace. Inspect only what the task needs. Make targeted changes, run relevant checks, and finish with a concise engineering summary.",
 		},
 		"plan": {
 			Name:         "plan",
@@ -137,7 +146,7 @@ func builtinAgentSpecs() map[string]*AgentSpec {
 			Mode:         "primary",
 			MaxTurns:     8,
 			Source:       "built-in",
-			SystemPrompt: "You are Carina in plan mode. Explore and reason, but do not edit files or run commands. For ordinary conversation, answer directly and finish with result_kind='answer'. Only when you produce a concrete implementation plan ready for approval, finish with result_kind='plan' and wait for approval.",
+			SystemPrompt: "plan: Read-only. Answer or produce a plan. No edits, no shell. For ordinary conversation, answer directly and finish with result_kind='answer'. Only when you produce a concrete implementation plan ready for approval, finish with result_kind='plan' and wait for approval.",
 		},
 		"general": {
 			Name:         "general",

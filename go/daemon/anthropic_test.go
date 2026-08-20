@@ -86,12 +86,12 @@ func TestAnthropicProviderCachesEachPromptSection(t *testing.T) {
 		if len(blocks) != 4 {
 			t.Fatalf("want 3 cached sections + volatile, got %+v", blocks)
 		}
-		for i, name := range []string{"CONSTITUTION", "WORKSPACE", "CATALOG\n\nTASK: x\n\nTRANSCRIPT:\n"} {
+		for i, name := range []string{"CONSTITUTION", "WORKSPACE", "CATALOG"} {
 			if blocks[i].Text != name || blocks[i].CacheControl["type"] != "ephemeral" {
 				t.Fatalf("section %d = %+v", i, blocks[i])
 			}
 		}
-		if blocks[3].Text != "turn\nGO" || len(blocks[3].CacheControl) != 0 {
+		if !strings.Contains(blocks[3].Text, "TASK: x") || !strings.Contains(blocks[3].Text, "turn") || len(blocks[3].CacheControl) != 0 {
 			t.Fatalf("volatile = %+v", blocks[3])
 		}
 		w.Header().Set("content-type", "application/json")

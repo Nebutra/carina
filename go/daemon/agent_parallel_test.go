@@ -104,7 +104,7 @@ func TestReadOnlyToolClassification(t *testing.T) {
 
 func TestSystemPromptRequiresEconomicalCompletion(t *testing.T) {
 	for _, instruction := range []string{
-		"batch all independent list/read/search actions",
+		"If this turn needs workspace evidence",
 		"use \"done\" immediately",
 		"Do not spend another turn rereading unchanged files",
 	} {
@@ -154,8 +154,11 @@ func TestSystemPromptCarriesNebutraCarinaProductIdentity(t *testing.T) {
 		t.Fatal("system prompt still opens with generic coding-agent identity")
 	}
 	specs := builtinAgentSpecs()
-	if !strings.Contains(specs["build"].SystemPrompt, "You are Carina in build mode") {
-		t.Fatalf("build mode should name Carina: %q", specs["build"].SystemPrompt)
+	if specs["converse"] == nil || !strings.HasPrefix(specs["converse"].SystemPrompt, "converse:") {
+		t.Fatalf("default interactive agent must be converse-first: %+v", specs["converse"])
+	}
+	if !strings.Contains(specs["build"].SystemPrompt, "build:") || strings.Contains(specs["build"].SystemPrompt, "Inspect the workspace") {
+		t.Fatalf("build mode must not inspect-first: %q", specs["build"].SystemPrompt)
 	}
 }
 

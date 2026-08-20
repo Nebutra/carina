@@ -177,7 +177,7 @@ func (d *Daemon) handleAgentDispatch(params json.RawMessage) (any, error) {
 	}
 	agentName := strings.TrimSpace(p.Agent)
 	if agentName == "" {
-		agentName = "build"
+		agentName = defaultInteractiveAgent
 	}
 	if loadAgentSpecs(p.WorkspaceRoot)[agentName] == nil {
 		return nil, fmt.Errorf("unknown agent %q", agentName)

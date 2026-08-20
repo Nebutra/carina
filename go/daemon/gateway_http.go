@@ -798,7 +798,7 @@ func agentFromGatewayModel(model string) (string, error) {
 	model = normalizedGatewayModel(model)
 	switch model {
 	case "carina", "carina/default":
-		return "build", nil
+		return defaultInteractiveAgent, nil
 	}
 	if strings.HasPrefix(model, "carina/") {
 		agent := strings.TrimPrefix(model, "carina/")

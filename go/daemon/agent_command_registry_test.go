@@ -30,7 +30,7 @@ Project-specific explore prompt.
 	}
 
 	specs := loadAgentSpecs(ws)
-	if specs["build"] == nil || specs["plan"] == nil || specs["general"] == nil {
+	if specs["converse"] == nil || specs["build"] == nil || specs["plan"] == nil || specs["general"] == nil {
 		t.Fatalf("built-in agents missing: %v", specNames(specs))
 	}
 	explore := specs["explore"]

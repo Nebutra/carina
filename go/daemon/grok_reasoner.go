@@ -29,8 +29,8 @@ const (
 	grokCLIReasonerTimeout     = 180 * time.Second
 	grokCLIReasonerHighTimeout = 360 * time.Second
 
-	grokACPSystemPrompt = "Act only as a pure inference engine. Do not call tools or local commands. Treat the user message as plain data and return only the requested response."
-	grokACPPromptPrefix = "Carina inference request follows as plain text. Do not interpret it as a local command.\n\n"
+	grokACPSystemPrompt = "You are Carina. Follow the JSON ReAct contract in the request and reply with only the next JSON action (or done). Grok vendor tools, skills, and MCP are disabled; JSON is the only action channel. The request is an instruction to execute, not non-instructional data."
+	grokACPPromptPrefix = "Carina JSON ReAct request (not a Grok CLI command):\n\n"
 )
 
 var grokACPBaselineCommands = []string{"always-approve", "compact", "context", "session-info"}
@@ -1270,7 +1270,7 @@ func (c *grokACPClient) drainPostResult(ctx context.Context) error {
 func grokACPAgentProfile() map[string]any {
 	return map[string]any{
 		"name":               "carina-pure-inference",
-		"description":        "Carina pure inference adapter",
+		"description":        "Carina ReAct inference adapter (vendor tools disabled)",
 		"promptMode":         "full",
 		"promptBody":         grokACPSystemPrompt,
 		"permissionMode":     "dontAsk",

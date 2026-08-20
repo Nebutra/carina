@@ -44,7 +44,7 @@ func TestMemoryLoadedIntoPrompt(t *testing.T) {
 	d.SetReasoner(cap)
 	sess, _ := d.store.CreateSession(ws, "safe-edit")
 	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
-	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "do it")
+	task := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, "do it", "", "build", nil)
 	d.runTask(sess, task)
 
 	if !strings.Contains(cap.lastPrompt, "ALWAYS_USE_TABS marker") {

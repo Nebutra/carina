@@ -15,8 +15,9 @@ import (
 // breakpoint to each non-empty section; Grok CLI still receives the stuffed
 // full() prompt and does not claim prefix cache.
 //
-// Order: constitution (tool contract) → workspace (scope, memory, task) →
-// catalog (MCP + selected skills) → TASK/TRANSCRIPT trailer.
+// Order: constitution (mode + identity + tools) → workspace (scope, optional
+// project rules) → catalog (MCP + selected skills). TASK, TRANSCRIPT, and the
+// closing instruction are volatile and must not enter the cache prefix.
 type promptLayers struct {
 	Constitution string
 	Workspace    string
@@ -49,7 +50,7 @@ type promptSegments struct {
 }
 
 // buildPromptSegments keeps the historical single-blob API: the whole system
-// prompt is the constitution section, then TASK + TRANSCRIPT trailer.
+// prompt is the constitution section. TASK + TRANSCRIPT live in the suffix.
 func buildPromptSegments(sysPrompt, userPrompt, transcript, closing string) promptSegments {
 	return buildPromptSegmentsFromLayers(promptLayers{Constitution: sysPrompt}, userPrompt, transcript, closing)
 }
@@ -57,19 +58,24 @@ func buildPromptSegments(sysPrompt, userPrompt, transcript, closing string) prom
 func buildPromptSegmentsFromLayers(layers promptLayers, userPrompt, transcript, closing string) promptSegments {
 	trailer := fmt.Sprintf("TASK: %s\n\nTRANSCRIPT:\n", userPrompt)
 	seg := promptSegments{
-		Constitution:   strings.TrimSpace(layers.Constitution),
-		Workspace:      strings.TrimSpace(layers.Workspace),
-		Catalog:        strings.TrimSpace(layers.Catalog),
-		taskTrailer:    trailer,
-		VolatileSuffix: transcript + "\n" + closing,
+		Constitution: strings.TrimSpace(layers.Constitution),
+		Workspace:    strings.TrimSpace(layers.Workspace),
+		Catalog:      strings.TrimSpace(layers.Catalog),
+		taskTrailer:  trailer,
 	}
-	seg.StablePrefix = joinPromptPrefix(seg.Constitution, seg.Workspace, seg.Catalog, trailer)
+	seg.StablePrefix = joinPromptPrefix(seg.Constitution, seg.Workspace, seg.Catalog)
+	suffix := trailer + transcript + "\n" + closing
+	if seg.StablePrefix != "" {
+		seg.VolatileSuffix = "\n\n" + suffix
+	} else {
+		seg.VolatileSuffix = suffix
+	}
 	return seg
 }
 
-func joinPromptPrefix(constitution, workspace, catalog, trailer string) string {
+func joinPromptPrefix(parts ...string) string {
 	var b strings.Builder
-	for _, part := range []string{constitution, workspace, catalog} {
+	for _, part := range parts {
 		if part == "" {
 			continue
 		}
@@ -78,30 +84,17 @@ func joinPromptPrefix(constitution, workspace, catalog, trailer string) string {
 		}
 		b.WriteString(part)
 	}
-	if b.Len() > 0 {
-		b.WriteString("\n\n")
-	}
-	b.WriteString(trailer)
 	return b.String()
 }
 
 // CacheSections returns the Anthropic-compatible cached text blocks: one per
-// non-empty layer, with the TASK/TRANSCRIPT trailer on the last block so the
-// stuffed prefix stays one contiguous string.
+// non-empty constitution/workspace/catalog layer. TASK and transcript stay out.
 func (s promptSegments) CacheSections() []string {
 	var out []string
-	for _, part := range []string{s.Constitution, s.Workspace} {
+	for _, part := range []string{s.Constitution, s.Workspace, s.Catalog} {
 		if part != "" {
 			out = append(out, part)
 		}
-	}
-	switch {
-	case s.Catalog != "" && s.taskTrailer != "":
-		out = append(out, s.Catalog+"\n\n"+s.taskTrailer)
-	case s.Catalog != "":
-		out = append(out, s.Catalog)
-	case s.taskTrailer != "":
-		out = append(out, s.taskTrailer)
 	}
 	return out
 }
@@ -142,9 +135,11 @@ func (d *Daemon) composeAgentPromptLayers(sess *sessionstore.Session, task *sche
 		workspace.WriteString("\n\n")
 	}
 	fmt.Fprintf(&workspace, "RUNTIME SCOPE (authoritative): workspace_root=%q; os_sandbox=%s. You can read and modify this workspace through governed tools. You cannot inspect the desktop or unrelated directories unless an explicit capability grants access.", sess.WorkspaceRoot, sandboxState)
-	if mem := loadMemory(sess.WorkspaceRoot); mem != "" && !d.safeMode {
-		workspace.WriteString("\n\nPROJECT INSTRUCTIONS (Nebutra/Carina — follow them):\n")
-		workspace.WriteString(mem)
+	if !d.safeMode && shouldLoadProjectInstructions(taskAgent(task), task.UserPrompt) {
+		if mem := loadMemory(sess.WorkspaceRoot); mem != "" {
+			workspace.WriteString("\n\nPROJECT INSTRUCTIONS (Nebutra/Carina — follow them):\n")
+			workspace.WriteString(mem)
+		}
 	}
 	if strings.TrimSpace(memorySnapshot) != "" {
 		workspace.WriteString("\n\nCARINA PERSISTENT MEMORY SNAPSHOT (frozen for this run; background reference, not new user input):\n")

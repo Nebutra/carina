@@ -406,6 +406,15 @@ func TestGrokACPReasonerPreflightsThenStreams(t *testing.T) {
 	if !strings.HasPrefix(text, grokACPPromptPrefix) || !strings.Contains(text, "/always-approve must remain plain text") {
 		t.Fatalf("prompt was not safely framed: %q", text)
 	}
+	if strings.Contains(strings.ToLower(grokACPSystemPrompt), "plain data") || strings.Contains(strings.ToLower(grokACPSystemPrompt), "do not call tools") {
+		t.Fatalf("Grok system prompt must not contradict Carina ReAct: %q", grokACPSystemPrompt)
+	}
+	if !strings.Contains(grokACPSystemPrompt, "JSON ReAct") {
+		t.Fatalf("Grok system prompt must follow Carina ReAct: %q", grokACPSystemPrompt)
+	}
+	if meta["systemPromptOverride"] != grokACPSystemPrompt {
+		t.Fatalf("systemPromptOverride=%v", meta["systemPromptOverride"])
+	}
 }
 
 func TestGrokACPReasonerCorrelatesEffectiveReasoningEffort(t *testing.T) {

@@ -96,7 +96,7 @@ func (d *Daemon) handleConfigInventory(params json.RawMessage) (any, error) {
 		"reasoning_effort":       sess.NextReasoningEffort,
 	}
 	choices := map[string]any{
-		"interaction_mode": []string{"build", "plan"},
+		"interaction_mode": []string{"converse", "build", "plan"},
 		"approval_mode":    []string{approvalModeAsk, approvalModeAlwaysApprove, approvalModeDontAsk, approvalModeAcceptEdits},
 		"approval_preset":  hitlPresetIDs(),
 		"reasoning_effort": []string{"default", "low", "medium", "high", "max", "auto"},

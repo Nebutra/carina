@@ -1,0 +1,135 @@
+# Carina Prompt Spec (DRAFT LAW)
+
+> Status: **P0 law after audit 19**. Live evidence:
+> `docs/research/competitive-2026-08/19-prompt-context-audit.md`.
+> Implementation lives in `go/daemon/agent.go`, `promptcache.go`, `prompt_mode.go`,
+> `agents.go`, `tool_schema.go`, `grok_reasoner.go`.
+>
+> “There is a systemPrompt const” is not a pass.
+
+Steal jobs, not strings. Do not copy Claude’s terracotta voice, OMP π, or
+GrokNight into Carina identity.
+
+---
+
+## 1. Segments (ordered)
+
+Constitution is a **list of named sections**, not one Go string. Anthropic
+gets one cacheable block per stable section. Grok/OpenAI still consume
+concatenated text but **must not** put constitution in a user blob labeled
+“plain data”.
+
+| # | Section | Cache | Contents | Must not contain |
+|---|---------|-------|----------|------------------|
+| A | Identity | static | 4–8 lines: Carina / Nebutra; not Claude/Codex/GPT | tools, repo rules, TASK |
+| B | Mode | static per run | **First operative sentence.** `converse` vs `build` vs `plan` | the other mode’s verbs |
+| C | Protocol | static | JSON ReAct or native-tools contract, **short** | full tool catalog examples |
+| D | Tools | static builtins | builtins only; MCP/skills as **index** | MCP JSON schemas, skill bodies |
+| E | Workspace | dynamic | cwd, os, locale, sandbox | AGENTS.md, TASK |
+| F | Project rules | dynamic, **demand** | CARINA.md / AGENTS.md | load on greeting |
+| G | Memory snapshot | dynamic, frozen/run | retrieved facts with budget | full memory dump |
+| H | TASK | volatile | operator message | constitution |
+| I | TRANSCRIPT | volatile | compacted model view | audit log |
+| J | Closing | volatile | one line: next JSON / next tool / `done` | new policy |
+
+**Boundary:** A–D are cacheable constitution. E–G may change between runs
+but not every turn. H–J change every turn. Do not put H inside A–D.
+
+---
+
+## 2. Mode is the first line
+
+Default **interactive** agent is `converse`, not `build`.
+
+```
+converse: Answer the operator. Call done immediately unless the message
+          requires workspace evidence or a side effect.
+build:    Change the workspace. Inspect only what the task needs.
+plan:     Read-only. Answer or produce a plan. No edits, no shell.
+```
+
+`go/daemon/agents.go` used to prepend build with “Inspect the workspace”.
+That sentence overrode the greeting rule later in `toolsHelp`. The default
+interactive agent is now `converse`; build’s opener is inspect-only-what-the-task-needs.
+
+Fixture G (acceptance): in this repo, with `AGENTS.md` present, prompt `hi`
+→ first model action is `done`, zero list/read/search/code.*.
+
+---
+
+## 3. Override rank (high wins)
+
+1. Capability kernel / fail-closed policy (not in the prompt)
+2. Mode (B)
+3. Operator message (H)
+4. Project rules (F) when loaded
+5. User CARINA.md
+6. Memory snapshot (G)
+7. Tool catalog (D)
+8. Identity (A)
+
+If 2 and 4 conflict, mode wins until the operator asks for repo work.
+Do not dump F on a greeting to “be helpful”.
+
+---
+
+## 4. Tool descriptions
+
+- Builtins: one line each. Examples belong in tests, not constitution.
+- Native schemas: same names as JSON actions; do not also paste `toolsHelp`.
+- MCP: names + 60–120 char blurbs; full schema only after `mcp_find`.
+- Skills: catalog + `skill://` body. Skill text never grants tools.
+- Explore subagent: keep lean `exploreToolsHelp`. Do not give it F.
+
+---
+
+## 5. Writing rules
+
+- Ranked bullets. No “always / never / be careful” stacks that fight B.
+- At most **five** standing negative rules in C.
+- PRODUCT CAPABILITY BRIEF stays demand-gated (already the intent).
+- `done.summary` is the only user-visible answer (keep).
+- Parallel batch of list/read/search is allowed **after** the model has
+  decided the turn needs workspace evidence — not as the default first move.
+
+---
+
+## 6. Grok / Claude CLI adapters
+
+Isolation may disable **vendor** tools. It must not:
+
+- Label Carina’s constitution as “plain data”
+- Ask for JSON tool calls in the same blob that says “do not call tools”
+- Skip prefix cache without documenting that the adapter is uncached
+
+One envelope: either (a) Carina ReAct as the **system** text the model
+is allowed to follow, or (b) vendor agent with vendor tools. Not both.
+
+---
+
+## 7. P0 knives
+
+| ID | Problem | Change | Accept |
+|----|---------|--------|--------|
+| P0-S1 | Default build says inspect first | Interactive default = converse; build only when the operator asks to change the repo or `/agent build` | Fixture G: `hi` → `done`, 0 tools |
+| P0-S2 | Greeting rule buried in toolsHelp | Move conversation-first into section B, above tools | Stub-less test: real prompt prefix starts with converse |
+| P0-S3 | 8k AGENTS.md on every run | Load F only when mode is build/plan **or** the message matches repo-work heuristics | Greeting prompt contains no `PROJECT INSTRUCTIONS` |
+| P0-S4 | TASK in cache prefix | H–J stay in VolatileSuffix | `CacheBreakpoint` excludes TASK and transcript |
+| P0-S5 | Grok dual personality | Constitution as system (or clearly framed developer); ACP override must not contradict ReAct | Grok `hi` → `done`; no Explore×N |
+| P0-S6 | “Batch all independent search on first exploration” | Gate behind “if this turn needs workspace evidence” | No first-turn 46-wide search on a two-word chat |
+
+Files: `go/daemon/agent.go`, `agents.go`, `promptcache.go`, `memory.go`,
+`grok_reasoner.go`, `tool_schema.go`, `conversation_first_test.go`.
+
+---
+
+## 8. Anti-patterns
+
+1. Do not treat `conversation_first_test.go` (stub reasoner) as proof models obey greetings.
+2. Do not prepend build/inspect on the default interactive agent.
+3. Do not inject AGENTS.md to “give context” for `hi`.
+4. Do not put TASK inside the cacheable constitution.
+5. Do not stuff Carina’s system prompt as a Grok user message labeled non-instruction.
+6. Do not add more DO NOTs to paper over a wrong first line.
+7. Do not load every MCP schema or skill body every turn.
+8. Do not copy Claude/OMP/Grok prompt prose into Carina identity.
