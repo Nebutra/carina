@@ -21,6 +21,7 @@ var repoWorkKeywords = []string{
 	"cargo test", "go test", "make test", "bug in", "failing test",
 	"search", "fix", "edit",
 	"实现", "修复", "重构", "改代码", "看看代码", "搜一下",
+	"创建", "新建", "写一个", "写一份",
 }
 
 var conversationalChatter = map[string]bool{

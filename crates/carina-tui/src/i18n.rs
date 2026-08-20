@@ -1973,8 +1973,8 @@ pub fn localize_operator_failure_reason(locale: Locale, reason: &str) -> String 
     {
         MessageId::FailureReasonGrokNativeTool
     } else if lower.contains("isolated grok")
-        || lower.contains("model cache")
         || lower.contains("configure isolated")
+        || lower.contains("unsafe settings")
     {
         MessageId::FailureReasonGrokIsolation
     } else if lower.contains("modelrouter")
@@ -1987,7 +1987,7 @@ pub fn localize_operator_failure_reason(locale: Locale, reason: &str) -> String 
             let rest_l = rest.to_ascii_lowercase();
             if rest_l.contains("check the provider and network") {
                 MessageId::FailureReasonGenericTurn
-            } else if rest_l.contains("unsafe settings") {
+            } else if rest_l.contains("unsafe settings") || rest_l.contains("isolated grok") {
                 MessageId::FailureReasonGrokIsolation
             } else if generic_grok_update_clause(&rest_l)
                 || rest_l.contains("update grok")
@@ -7710,13 +7710,13 @@ fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
             "Grok Build n’a pas pu terminer ce tour. Lancez `grok doctor`, puis actualisez les fournisseurs.",
         ],
         FailureReasonGrokIsolation => [
-            "Grok Build could not start an isolated session. Run `grok models`, then retry.",
-            "Grok Build 无法启动隔离会话。请运行 `grok models`，然后重试。",
-            "Grok Build 無法啟動隔離會話。請執行 `grok models`，然後重試。",
-            "Grok Build の隔離セッションを開始できませんでした。`grok models` のあと再試行してください。",
-            "Grok Build 격리 세션을 시작하지 못했습니다. `grok models` 후 다시 시도하세요.",
-            "Grok Build no pudo iniciar una sesión aislada. Ejecuta `grok models` y reintenta.",
-            "Grok Build n’a pas pu démarrer une session isolée. Lancez `grok models`, puis réessayez.",
+            "Grok Build could not start an isolated session. Switch to another model, or see Details.",
+            "Grok Build 无法启动隔离会话。请换一个模型，或查看详情。",
+            "Grok Build 無法啟動隔離會話。請換一個模型，或查看詳情。",
+            "Grok Build の隔離セッションを開始できませんでした。別のモデルに切り替えるか、詳細を確認してください。",
+            "Grok Build 격리 세션을 시작하지 못했습니다. 다른 모델로 바꾸거나 자세한 내용을 확인하세요.",
+            "Grok Build no pudo iniciar una sesión aislada. Cambia de modelo o mira Detalles.",
+            "Grok Build n’a pas pu démarrer une session isolée. Changez de modèle, ou voyez les détails.",
         ],
         FailureReasonOutputSchema => [
             "The final answer was not valid JSON for this run. Retry, or ask again without a required output schema.",
@@ -8252,10 +8252,14 @@ mod tests {
         );
         let grok_detail = localize_operator_failure_reason(
             Locale::ZhHans,
-            "The model could not complete this turn. authenticate: Grok Build emitted an unsafe settings update. update Grok Build or choose another provider.",
+            "The model could not complete this turn. inspect isolated Grok Build configuration. choose another model, or see Details.",
         );
         assert!(
-            grok_detail.contains("隔离") || grok_detail.contains("grok"),
+            grok_detail.contains("隔离") || grok_detail.contains("换一个模型"),
+            "grok_detail={grok_detail}"
+        );
+        assert!(
+            !grok_detail.contains("grok models") && !grok_detail.contains("`grok models`"),
             "grok_detail={grok_detail}"
         );
         assert!(

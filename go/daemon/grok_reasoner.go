@@ -91,9 +91,9 @@ func grokNativeToolRejected(err error) bool {
 func (e grokCLIError) ProviderError() providerErrorInfo {
 	switch e.kind {
 	case "safety":
-		return providerErrorInfo{Code: "reasoner_safety_violation", Category: "internal", Provider: provider.GrokBuildProviderID, UserAction: "update Grok Build or choose another provider"}
+		return providerErrorInfo{Code: "reasoner_safety_violation", Category: "internal", Provider: provider.GrokBuildProviderID, UserAction: "choose another model, or see Details"}
 	case "protocol":
-		return providerErrorInfo{Code: "reasoner_protocol_error", Category: "internal", Provider: provider.GrokBuildProviderID, UserAction: "update Grok Build or choose another provider"}
+		return providerErrorInfo{Code: "reasoner_protocol_error", Category: "internal", Provider: provider.GrokBuildProviderID, UserAction: "choose another model, or see Details"}
 	case "json_fallback":
 		return providerErrorInfo{Code: "provider_native_tools_rejected", Category: "compatibility", Provider: provider.GrokBuildProviderID, UserAction: "retry; the model must reply with JSON instead of calling tools"}
 	}

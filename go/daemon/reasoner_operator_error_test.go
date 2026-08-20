@@ -32,7 +32,7 @@ func TestOperatorFacingReasonerErrorKeepsCLIDetail(t *testing.T) {
 		message: "authenticate: Grok Build emitted an unsafe settings update",
 		kind:    "safety",
 	})
-	if !strings.Contains(got, "unsafe settings update") || !strings.Contains(got, "update Grok Build") {
+	if !strings.Contains(got, "unsafe settings update") || !strings.Contains(got, "choose another model") {
 		t.Fatalf("grok facing = %q", got)
 	}
 	claude := operatorFacingReasonerError(claudeCLIError{

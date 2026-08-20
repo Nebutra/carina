@@ -19,6 +19,7 @@ func TestLooksLikeRepoWork(t *testing.T) {
 		"search the repo for composeAgentPromptLayers",
 		"看看代码",
 		"refactor promptcache.go",
+		"在桌面上创建一个新项目 用zig写一个ASCII版本的我的世界游戏",
 	}
 	for _, prompt := range repo {
 		if !looksLikeRepoWork(prompt) {

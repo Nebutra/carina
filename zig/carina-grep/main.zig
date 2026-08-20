@@ -12,7 +12,9 @@ const jsonl = @import("jsonl");
 const max_file_size = 32 * 1024 * 1024;
 
 const ignored_dirs = [_][]const u8{
-    ".git", "node_modules", "target", "zig-out", ".zig-cache", "zig-cache", "dist", ".venv", "__pycache__",
+    ".git", "node_modules", "target", "zig-out", ".zig-cache", "zig-cache",
+    "dist", "build", ".venv", "__pycache__", ".next", ".turbo",
+    ".cache", ".npm", ".Trash", "Library",
 };
 
 pub fn main() !void {
@@ -47,19 +49,34 @@ pub fn main() !void {
 fn grepDir(allocator: std.mem.Allocator, pattern: []const u8, root: []const u8) !u64 {
     var dir = std.fs.cwd().openDir(root, .{ .iterate = true }) catch return 0;
     defer dir.close();
-    var walker = try dir.walk(allocator);
-    defer walker.deinit();
+    return grepWalk(allocator, pattern, dir, root);
+}
 
+fn grepWalk(allocator: std.mem.Allocator, pattern: []const u8, dir: std.fs.Dir, prefix: []const u8) !u64 {
     var total: u64 = 0;
-    outer: while (try walker.next()) |entry| {
-        if (entry.kind != .file) continue;
-        for (ignored_dirs) |ig| {
-            if (std.mem.indexOf(u8, entry.path, ig) != null) continue :outer;
+    var it = dir.iterate();
+    while (it.next() catch null) |entry| {
+        if (skipIgnoredName(entry.name)) continue;
+        if (entry.kind == .sym_link) continue;
+        const full = try std.fs.path.join(allocator, &.{ prefix, entry.name });
+        if (entry.kind == .directory) {
+            var child = dir.openDir(entry.name, .{ .iterate = true }) catch continue;
+            defer child.close();
+            total += try grepWalk(allocator, pattern, child, full);
+            continue;
         }
-        const full = try std.fs.path.join(allocator, &.{ root, entry.path });
-        total += try grepFile(allocator, pattern, full);
+        if (entry.kind == .file) {
+            total += try grepFile(allocator, pattern, full);
+        }
     }
     return total;
+}
+
+fn skipIgnoredName(name: []const u8) bool {
+    for (ignored_dirs) |ig| {
+        if (std.mem.eql(u8, name, ig)) return true;
+    }
+    return false;
 }
 
 fn grepFile(allocator: std.mem.Allocator, pattern: []const u8, path: []const u8) !u64 {

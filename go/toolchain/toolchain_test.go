@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -73,6 +74,43 @@ func TestNativeToolsBesideInstalledDaemon(t *testing.T) {
 	}
 	if got := nativeToolsBeside(daemon); got != dir {
 		t.Fatalf("nativeToolsBeside = %q, want %q", got, dir)
+	}
+}
+
+func TestScanSkipsIgnoredBuildDirectories(t *testing.T) {
+	tc := New(toolsDir(t))
+	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(ws, "target", "debug", "deps")
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 200; i++ {
+		name := filepath.Join(target, "blob-"+string(rune('a'+i%26))+".o")
+		if err := os.WriteFile(name, []byte("xxxxxxxx"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files, err := tc.Scan(ws)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	for _, f := range files {
+		if strings.Contains(f.Path, "target") {
+			t.Fatalf("scan walked ignored directory: %q", f.Path)
+		}
+	}
+	foundMain := false
+	for _, f := range files {
+		if filepath.Base(f.Path) == "main.go" {
+			foundMain = true
+			break
+		}
+	}
+	if !foundMain {
+		t.Fatalf("scan missed source file: %+v", files)
 	}
 }
 

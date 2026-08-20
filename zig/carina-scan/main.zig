@@ -14,6 +14,7 @@ const jsonl = @import("jsonl");
 const builtin_ignores = [_][]const u8{
     ".git", "node_modules", "target", "zig-out", ".zig-cache", "zig-cache",
     "dist", "build", ".venv", "__pycache__", ".next", ".turbo",
+    ".cache", ".npm", ".Trash", "Library",
 };
 
 pub fn main() !void {
@@ -45,52 +46,80 @@ pub fn main() !void {
     };
     defer dir.close();
 
-    var walker = try dir.walk(allocator);
-    defer walker.deinit();
-
-    var files: u64 = 0;
-    var skipped: u64 = 0;
-    var ignored: u64 = 0;
-
-    outer: while (try walker.next()) |entry| {
-        // Built-in ignore dirs (fast path).
-        for (builtin_ignores) |ig| {
-            if (pathHasSegment(entry.path, ig)) {
-                ignored += 1;
-                continue :outer;
-            }
-        }
-        // User ignore patterns.
-        for (patterns.items) |pat| {
-            if (matchIgnore(entry.path, pat)) {
-                ignored += 1;
-                continue :outer;
-            }
-        }
-        if (entry.kind != .file) continue;
-
-        const stat = dir.statFile(entry.path) catch {
-            skipped += 1;
-            continue;
-        };
-        const large = stat.size > max_size;
-        const binary = if (large) false else detectBinary(dir, entry.path);
-        const language = languageOf(entry.path);
-
-        const escaped = try jsonl.escape(allocator, entry.path);
-        try jsonl.printLine(
-            allocator,
-            "{{\"path\":\"{s}\",\"size\":{d},\"binary\":{},\"large\":{},\"language\":\"{s}\"}}",
-            .{ escaped, stat.size, binary, large, language },
-        );
-        files += 1;
-    }
+    var ctx = ScanCtx{
+        .allocator = allocator,
+        .max_size = max_size,
+        .patterns = patterns.items,
+    };
+    try scanDir(&ctx, dir, "");
 
     try jsonl.printLine(
         allocator,
         "{{\"summary\":{{\"files\":{d},\"skipped\":{d},\"ignored\":{d}}}}}",
-        .{ files, skipped, ignored },
+        .{ ctx.files, ctx.skipped, ctx.ignored },
     );
+}
+
+const ScanCtx = struct {
+    allocator: std.mem.Allocator,
+    max_size: u64,
+    patterns: []const []const u8,
+    files: u64 = 0,
+    skipped: u64 = 0,
+    ignored: u64 = 0,
+};
+
+fn scanDir(ctx: *ScanCtx, dir: std.fs.Dir, rel: []const u8) !void {
+    var it = dir.iterate();
+    while (it.next() catch null) |entry| {
+        const child_rel = if (rel.len == 0)
+            entry.name
+        else
+            try std.fs.path.join(ctx.allocator, &.{ rel, entry.name });
+        if (shouldSkipDir(entry.name, child_rel, ctx.patterns)) {
+            ctx.ignored += 1;
+            continue;
+        }
+        if (entry.kind == .sym_link) {
+            ctx.skipped += 1;
+            continue;
+        }
+        if (entry.kind == .directory) {
+            var child = dir.openDir(entry.name, .{ .iterate = true }) catch {
+                ctx.skipped += 1;
+                continue;
+            };
+            defer child.close();
+            try scanDir(ctx, child, child_rel);
+            continue;
+        }
+        if (entry.kind != .file) continue;
+
+        const stat = dir.statFile(entry.name) catch {
+            ctx.skipped += 1;
+            continue;
+        };
+        const large = stat.size > ctx.max_size;
+        const binary = if (large) false else detectBinary(dir, entry.name);
+        const language = languageOf(child_rel);
+        const escaped = try jsonl.escape(ctx.allocator, child_rel);
+        try jsonl.printLine(
+            ctx.allocator,
+            "{{\"path\":\"{s}\",\"size\":{d},\"binary\":{},\"large\":{},\"language\":\"{s}\"}}",
+            .{ escaped, stat.size, binary, large, language },
+        );
+        ctx.files += 1;
+    }
+}
+
+fn shouldSkipDir(name: []const u8, rel: []const u8, patterns: []const []const u8) bool {
+    for (builtin_ignores) |ig| {
+        if (std.mem.eql(u8, name, ig)) return true;
+    }
+    for (patterns) |pat| {
+        if (matchIgnore(rel, pat) or matchIgnore(name, pat)) return true;
+    }
+    return false;
 }
 
 fn loadIgnoreFile(allocator: std.mem.Allocator, patterns: *std.ArrayList([]const u8), root: []const u8, name: []const u8) !void {
