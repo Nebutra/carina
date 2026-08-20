@@ -3,35 +3,35 @@ source: crates/carina-tui/src/app/render.rs
 expression: rendered_frame_contract(terminal.backend().buffer())
 ---
 size=80x24
-Carina ▾   ·  product-menu conversation         model  ·  reasoning off   Build
+Carina ▾   ·  product-menu conversation                           model   Build
 ────────────────────────────────────────────────────────────────────────────────
 ╭ Carina menu ─────────────╮
 │▌ New conversation        │
 │  Conversations           │
 │  Status                  │
 │  Settings                │
-│  Help                    │
-╰──────────────────────────╯
+│  Help                    │       ⠀⢀⣀⣀⡀⣠⣶⣶⣄⠀
+╰──────────────────────────╯       ⠀⣿⣿⣿⣿⣿⣿⣿⣿⠀
+                                   ⠀⠙⣿⣿⡏⠀⠈⢻⡇⠀
+                                   ⠀⢰⣿⣿⣿⣦⣴⣿⡿⠀
+                                   ⠀⠈⠻⠿⠟⠁⠀⠀⠀⠀
+
+                                     Carina
+                   Type a request, or /help · /model · /status
 
 
 
 
-
-
-
-
-
-   Ready in product-menu
-   Type a request, or /help · /model · /status
 
 
  ──────────────────────────────────────────────────────────────────────────────
  ❯ Describe the change you want to make.
+ ──────────────────────────────────────────────────────────────────────────────
 styles:
 (0,0)..(9,0) (Rgb(142, 219, 210), Reset, BOLD)
 (9,0)..(39,0) (Rgb(150, 160, 156), Reset, NONE)
-(47,0)..(72,0) (Rgb(150, 160, 156), Reset, NONE)
-(73,0)..(80,0) (Rgb(142, 219, 210), Reset, BOLD)
+(65,0)..(72,0) (Rgb(150, 160, 156), Reset, NONE)
+(73,0)..(80,0) (Rgb(150, 160, 156), Reset, NONE)
 (0,1)..(80,1) (Rgb(52, 65, 68), Reset, NONE)
 (0,2)..(28,2) (Rgb(142, 219, 210), Reset, BOLD)
 (0,3)..(1,3) (Rgb(142, 219, 210), Reset, BOLD)
@@ -45,8 +45,30 @@ styles:
 (27,6)..(28,6) (Rgb(142, 219, 210), Reset, BOLD)
 (0,7)..(1,7) (Rgb(142, 219, 210), Reset, BOLD)
 (27,7)..(28,7) (Rgb(142, 219, 210), Reset, BOLD)
+(35,7)..(37,7) (Rgb(222, 133, 155), Reset, NONE)
+(37,7)..(38,7) (Rgb(150, 160, 156), Reset, NONE)
+(38,7)..(39,7) (Reset, Reset, BOLD)
+(39,7)..(40,7) (Rgb(150, 160, 156), Reset, NONE)
+(40,7)..(45,7) (Rgb(222, 133, 155), Reset, NONE)
 (0,8)..(28,8) (Rgb(142, 219, 210), Reset, BOLD)
-(3,18)..(24,18) (Reset, Reset, BOLD)
-(3,19)..(46,19) (Rgb(150, 160, 156), Reset, NONE)
-(1,22)..(79,22) (Rgb(52, 65, 68), Reset, NONE)
-(1,23)..(79,23) (Rgb(150, 160, 156), Reset, NONE)
+(35,8)..(38,8) (Rgb(222, 133, 155), Reset, NONE)
+(38,8)..(39,8) (Rgb(150, 160, 156), Reset, NONE)
+(39,8)..(40,8) (Reset, Reset, BOLD)
+(40,8)..(41,8) (Rgb(150, 160, 156), Reset, NONE)
+(41,8)..(45,8) (Rgb(222, 133, 155), Reset, NONE)
+(35,9)..(39,9) (Rgb(222, 133, 155), Reset, NONE)
+(39,9)..(40,9) (Rgb(150, 160, 156), Reset, NONE)
+(40,9)..(41,9) (Rgb(222, 133, 155), Reset, NONE)
+(41,9)..(42,9) (Rgb(150, 160, 156), Reset, NONE)
+(42,9)..(45,9) (Rgb(222, 133, 155), Reset, NONE)
+(35,10)..(40,10) (Rgb(222, 133, 155), Reset, NONE)
+(40,10)..(41,10) (Rgb(150, 160, 156), Reset, NONE)
+(41,10)..(42,10) (Reset, Reset, BOLD)
+(42,10)..(43,10) (Rgb(150, 160, 156), Reset, NONE)
+(43,10)..(45,10) (Rgb(222, 133, 155), Reset, NONE)
+(35,11)..(45,11) (Rgb(222, 133, 155), Reset, NONE)
+(37,13)..(43,13) (Reset, Reset, BOLD)
+(19,14)..(62,14) (Rgb(150, 160, 156), Reset, NONE)
+(1,21)..(79,21) (Rgb(52, 65, 68), Reset, NONE)
+(1,22)..(79,22) (Rgb(150, 160, 156), Reset, NONE)
+(1,23)..(79,23) (Rgb(52, 65, 68), Reset, NONE)

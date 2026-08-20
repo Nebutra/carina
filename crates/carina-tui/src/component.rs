@@ -3,6 +3,7 @@ use xai_ratatui_textarea::ElementId;
 
 use crate::glyphs::GlyphPreference;
 use crate::rpc::RetryRouting;
+use crate::theme::ThemePreference;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ComponentId(pub u64);
@@ -71,6 +72,10 @@ pub enum Action {
     PreviewGlyphPreference(GlyphPreference),
     ApplyGlyphPreference,
     CancelGlyphPreview,
+    OpenThemePreview,
+    PreviewThemePreference(ThemePreference),
+    ApplyThemePreference,
+    CancelThemePreview,
     ToggleDensity,
     OpenStatus,
     OpenHelp,

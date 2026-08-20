@@ -260,6 +260,31 @@ impl TranscriptBlock {
     pub fn is_collapsible(&self) -> bool {
         self.collapsible
     }
+
+    /// Live work owns the outer accent rail. Settled tools recede; failures and
+    /// approvals keep a rail so risk stays scannable.
+    pub fn is_live_work(&self) -> bool {
+        if self.failure.is_some() {
+            return false;
+        }
+        if self.tool_members.iter().any(ToolGroupMember::is_running) {
+            return true;
+        }
+        if self
+            .tool_members
+            .iter()
+            .any(|member| !member.lifecycle.is_empty())
+        {
+            return false;
+        }
+        match self.kind {
+            BlockKind::Thinking => !is_settled_block_status(&self.status),
+            BlockKind::Tool | BlockKind::Governance => {
+                !self.status.is_empty() && !is_settled_block_status(&self.status)
+            }
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -2282,6 +2307,14 @@ fn is_terminal_tool_status(status: &str) -> bool {
     )
 }
 
+fn is_settled_block_status(status: &str) -> bool {
+    is_terminal_tool_status(status)
+        || matches!(
+            status.trim().to_ascii_lowercase().as_str(),
+            "applied" | "accepted" | "rejected" | "done" | "complete"
+        )
+}
+
 fn can_transition_tool_status(current: &str, next: &str) -> bool {
     if current.is_empty() {
         return tool_status_stage(next).is_some();
@@ -2834,6 +2867,45 @@ mod tests {
             )
         }));
         lines.join("\n")
+    }
+
+    #[test]
+    fn live_work_owns_the_accent_rail_and_settled_tools_recede() {
+        let mut running = TranscriptBlock::local_user("live".into(), String::new());
+        running.kind = BlockKind::Tool;
+        running.status = "running".into();
+        assert!(running.is_live_work());
+
+        let mut completed = running.clone();
+        completed.status = "completed".into();
+        completed.tool_members = vec![ToolGroupMember {
+            id: "member".into(),
+            tool_name: "read".into(),
+            title: "src/lib.rs".into(),
+            body: String::new(),
+            body_kind: BlockBodyKind::Plain,
+            additions: 0,
+            deletions: 0,
+            status: String::new(),
+            lifecycle: "completed".into(),
+        }];
+        assert!(!completed.is_live_work());
+
+        let mut applied = running.clone();
+        applied.status = "applied".into();
+        assert!(!applied.is_live_work());
+
+        let mut thinking = running.clone();
+        thinking.kind = BlockKind::Thinking;
+        thinking.status.clear();
+        assert!(thinking.is_live_work());
+        thinking.status = "completed".into();
+        assert!(!thinking.is_live_work());
+
+        let mut approval = running.clone();
+        approval.kind = BlockKind::Governance;
+        approval.status = "waiting_approval".into();
+        assert!(approval.is_live_work());
     }
 
     #[test]
@@ -4377,7 +4449,7 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         // Compact single-line dump must not remain the body form.
         assert_ne!(body.trim(), raw.trim());
 
-        // Any object/array — not only "result"/"path" shapes — gets the same treatment.
+        // Any object/array - not only "result"/"path" shapes - gets the same treatment.
         let generic = visible_assistant_text(r#"{"foo":1,"bar":[2,3]}"#).unwrap();
         assert!(generic.starts_with("```json\n"));
         assert!(generic.contains("\"foo\""));

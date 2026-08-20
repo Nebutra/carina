@@ -3,7 +3,7 @@ source: crates/carina-tui/src/app/render.rs
 expression: rendered
 ---
 size=80x24
-Carina ▾   ·  carina 会话                           model  ·  推理已关闭   执行
+Carina ▾   ·  carina 会话                                          model   执行
 ────────────────────────────────────────────────────────────────────────────────
          ╭ 设置 / 符号 ───────────────────────────────────────────────╮
          │ 请选择保持对齐的行。方框或错位符号表示字体覆盖不完整。     │
@@ -28,7 +28,7 @@ Carina ▾   ·  carina 会话                           model  ·  推理已关
 styles:
 (0,0)..(9,0) (Reset, Reset, BOLD)
 (9,0)..(25,0) (Rgb(150, 160, 156), Reset, NONE)
-(51,0)..(73,0) (Rgb(150, 160, 156), Reset, NONE)
+(66,0)..(73,0) (Rgb(150, 160, 156), Reset, NONE)
 (74,0)..(80,0) (Rgb(142, 219, 210), Reset, BOLD)
 (0,1)..(80,1) (Rgb(52, 65, 68), Reset, NONE)
 (9,2)..(71,2) (Rgb(142, 219, 210), Reset, BOLD)

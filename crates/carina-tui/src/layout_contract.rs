@@ -58,8 +58,12 @@ pub const CONVERSATION_MIN_TRANSCRIPT_HEIGHT: u16 = 4;
 pub const COMPOSER_MIN_HEIGHT: u16 = 1;
 pub const COMPOSER_MAX_HEIGHT: u16 = 5;
 pub const COMPOSER_PROMPT_COLUMNS: u16 = 2;
-pub const COMPOSER_CHROME_ROWS: u16 = 1;
+/// Open-sided composer field: top rail + bottom rail.
+pub const COMPOSER_CHROME_ROWS: u16 = 2;
 pub const COMPOSER_CHROME_HEIGHT: u16 = 2;
+/// Transcript pane must fit the 5-row mark, a gap, name, hint, and padding.
+pub const EMPTY_MARK_MIN_WIDTH: u16 = 48;
+pub const EMPTY_MARK_MIN_HEIGHT: u16 = 10;
 pub const TRANSCRIPT_HORIZONTAL_INSET: u16 = 1;
 pub const TRANSCRIPT_SCROLLBAR_GAP: u16 = 1;
 pub const TRANSCRIPT_SCROLLBAR_WIDTH: u16 = 1;

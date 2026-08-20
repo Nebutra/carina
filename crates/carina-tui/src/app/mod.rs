@@ -91,7 +91,7 @@ use crate::session_browser::{ConversationImportStage, SessionBrowserState, Sessi
 use crate::sync_output::SyncOutputSupport;
 use crate::terminal_graphics::{MediaPreviewPlacement, TerminalGraphics};
 use crate::terminal_writer::TerminalWriter;
-use crate::theme::Theme;
+use crate::theme::{Theme, ThemePreference};
 use crate::transcript::{TranscriptBlock, TranscriptReducer};
 
 const LOCALES: &[(&str, &str)] = &[
@@ -103,8 +103,9 @@ const LOCALES: &[(&str, &str)] = &[
     ("es", "Español"),
     ("fr", "Français"),
 ];
-const SETTINGS_ITEM_COUNT: usize = 10;
-const SETTINGS_SYMBOLS_INDEX: usize = 5;
+const SETTINGS_ITEM_COUNT: usize = 11;
+const SETTINGS_THEME_INDEX: usize = 5;
+const SETTINGS_SYMBOLS_INDEX: usize = 6;
 const PLAN_REVIEW_PAGE_LINES: usize = 8;
 const IMPORT_ERROR_LIMIT: u64 = 1024;
 const IMPORT_HELPER_TIMEOUT: Duration = Duration::from_secs(20);
@@ -151,6 +152,8 @@ pub struct Options {
     pub density_path: Option<PathBuf>,
     pub glyph_preference: GlyphPreference,
     pub glyphs_path: Option<PathBuf>,
+    pub theme_preference: ThemePreference,
+    pub theme_path: Option<PathBuf>,
     pub carina_bin: Option<PathBuf>,
     pub no_alt_screen: bool,
     pub screen_mode: Option<ScreenMode>,
@@ -601,6 +604,9 @@ pub struct App {
     density: DensityMode,
     glyph_preference: GlyphPreference,
     glyph_resolution: GlyphResolution,
+    theme_preference: ThemePreference,
+    theme_background: Option<[u8; 3]>,
+    theme_env_override: bool,
     tool_disclosure_overrides: HashMap<String, bool>,
     blocks: Vec<TranscriptBlock>,
     scrollback: ScrollbackLedger,
@@ -810,22 +816,34 @@ impl App {
     }
 
     fn open_settings(&mut self) {
-        if matches!(
-            self.overlays.active(),
+        match self.overlays.active() {
             Some(Overlay::Settings(SettingsOverlay {
                 page: SettingsPage::Symbols,
                 ..
-            }))
-        ) {
-            self.cancel_glyph_preview();
+            })) => self.cancel_glyph_preview(),
+            Some(Overlay::Settings(SettingsOverlay {
+                page: SettingsPage::Theme,
+                ..
+            })) => self.cancel_theme_preview(),
+            _ => {}
         }
         self.overlays
             .replace(Overlay::Settings(SettingsOverlay::root(
                 self.glyph_preference,
+                self.theme_preference,
             )));
     }
 
     fn open_glyph_preview(&mut self) {
+        if matches!(
+            self.overlays.active(),
+            Some(Overlay::Settings(SettingsOverlay {
+                page: SettingsPage::Theme,
+                ..
+            }))
+        ) {
+            self.cancel_theme_preview();
+        }
         match self.overlays.active_mut() {
             Some(Overlay::Settings(settings)) => {
                 settings.page = SettingsPage::Symbols;
@@ -839,6 +857,35 @@ impl App {
                 .overlays
                 .replace(Overlay::Settings(SettingsOverlay::symbols(
                     self.glyph_preference,
+                    self.theme_preference,
+                ))),
+        }
+    }
+
+    fn open_theme_preview(&mut self) {
+        if matches!(
+            self.overlays.active(),
+            Some(Overlay::Settings(SettingsOverlay {
+                page: SettingsPage::Symbols,
+                ..
+            }))
+        ) {
+            self.cancel_glyph_preview();
+        }
+        match self.overlays.active_mut() {
+            Some(Overlay::Settings(settings)) => {
+                settings.page = SettingsPage::Theme;
+                settings.original_theme_preference = self.theme_preference;
+                settings.theme_selected = ThemePreference::ALL
+                    .iter()
+                    .position(|candidate| *candidate == self.theme_preference)
+                    .unwrap_or_default();
+            }
+            _ => self
+                .overlays
+                .replace(Overlay::Settings(SettingsOverlay::theme(
+                    self.glyph_preference,
+                    self.theme_preference,
                 ))),
         }
     }
@@ -913,6 +960,90 @@ impl App {
             [
                 ("preference", preference.as_config_value()),
                 ("mode", resolution.mode.as_str()),
+            ],
+        );
+    }
+
+    fn apply_theme_polarity(&mut self, preference: ThemePreference) {
+        let effective = if self.theme_env_override {
+            ThemePreference::from_env().unwrap_or(preference)
+        } else {
+            preference
+        };
+        let glyphs = self.theme.glyphs;
+        let level = self.theme.level;
+        let mut theme = Theme::from_preference(effective, self.theme_background, level);
+        theme.glyphs = glyphs;
+        self.theme = theme;
+        self.clear_transcript_projection_caches();
+        self.dirty = true;
+    }
+
+    fn preview_theme_preference(&mut self, preference: ThemePreference) {
+        let Some(Overlay::Settings(settings)) = self.overlays.active_mut() else {
+            return;
+        };
+        if settings.page != SettingsPage::Theme {
+            return;
+        }
+        settings.theme_selected = ThemePreference::ALL
+            .iter()
+            .position(|candidate| *candidate == preference)
+            .unwrap_or_default();
+        self.apply_theme_polarity(preference);
+    }
+
+    fn cancel_theme_preview(&mut self) {
+        let Some(Overlay::Settings(settings)) = self.overlays.active() else {
+            return;
+        };
+        let original = settings.original_theme_preference;
+        self.apply_theme_polarity(original);
+        if let Some(Overlay::Settings(settings)) = self.overlays.active_mut() {
+            settings.page = SettingsPage::Root;
+            settings.theme_selected = ThemePreference::ALL
+                .iter()
+                .position(|candidate| *candidate == original)
+                .unwrap_or_default();
+        }
+    }
+
+    fn commit_theme_preference(&mut self) {
+        let Some(Overlay::Settings(settings)) = self.overlays.active() else {
+            return;
+        };
+        let preference = settings.theme_preference();
+        let path = self
+            .options
+            .theme_path
+            .clone()
+            .or_else(default_locale_path);
+        let Some(path) = path else {
+            self.notice = Notice::localized(MessageId::ThemePersistFailed);
+            return;
+        };
+        if persist_theme_preference(&path, preference).is_err() {
+            self.notice = Notice::localized(MessageId::ThemePersistFailed);
+            return;
+        }
+        self.theme_preference = preference;
+        self.apply_theme_polarity(preference);
+        if let Some(Overlay::Settings(settings)) = self.overlays.active_mut() {
+            settings.original_theme_preference = preference;
+            settings.page = SettingsPage::Root;
+        }
+        let polarity = self.theme.polarity;
+        self.notice = Notice::localized_with(
+            MessageId::ThemeApplied,
+            [
+                ("preference", preference.as_config_value()),
+                (
+                    "polarity",
+                    match polarity {
+                        crate::theme::Polarity::Dark => "dark",
+                        crate::theme::Polarity::Light => "light",
+                    },
+                ),
             ],
         );
     }
@@ -995,7 +1126,15 @@ impl App {
         let glyph_preference = options.glyph_preference;
         let glyph_resolution = ResolvedGlyphs::detect(glyph_preference)
             .context("resolve terminal symbol preference")?;
-        let mut theme = Theme::detected(None);
+        let theme_preference = options.theme_preference;
+        let theme_env_override = ThemePreference::from_env().is_some();
+        let theme_background = None;
+        let effective_theme = ThemePreference::from_env().unwrap_or(theme_preference);
+        let mut theme = Theme::from_preference(
+            effective_theme,
+            theme_background,
+            crate::theme::ColorLevel::detect(),
+        );
         theme.glyphs = theme.glyphs.with_mode(glyph_resolution.mode);
 
         let mut app = Self {
@@ -1020,6 +1159,9 @@ impl App {
             density,
             glyph_preference,
             glyph_resolution,
+            theme_preference,
+            theme_background,
+            theme_env_override,
             tool_disclosure_overrides: HashMap::new(),
             blocks: Vec::new(),
             scrollback: ScrollbackLedger::default(),
@@ -6141,6 +6283,27 @@ impl App {
                     KeyCode::Esc => deferred = Some(Action::CancelGlyphPreview),
                     _ => {}
                 },
+                SettingsPage::Theme => match key.code {
+                    KeyCode::Up | KeyCode::Left | KeyCode::BackTab => {
+                        let index = settings.theme_selected.saturating_sub(1);
+                        deferred =
+                            Some(Action::PreviewThemePreference(ThemePreference::ALL[index]));
+                    }
+                    KeyCode::Down | KeyCode::Right | KeyCode::Tab => {
+                        let index = (settings.theme_selected + 1)
+                            .min(ThemePreference::ALL.len().saturating_sub(1));
+                        deferred =
+                            Some(Action::PreviewThemePreference(ThemePreference::ALL[index]));
+                    }
+                    KeyCode::Char(value @ '1'..='3') => {
+                        let index = value.to_digit(10).unwrap_or(1) as usize - 1;
+                        deferred =
+                            Some(Action::PreviewThemePreference(ThemePreference::ALL[index]));
+                    }
+                    KeyCode::Enter => deferred = Some(Action::ApplyThemePreference),
+                    KeyCode::Esc => deferred = Some(Action::CancelThemePreview),
+                    _ => {}
+                },
             },
             Some(Overlay::Status(_)) => match key.code {
                 KeyCode::Esc | KeyCode::Char('q') => deferred = Some(Action::CloseOverlay),
@@ -6753,14 +6916,16 @@ impl App {
     }
 
     fn close_top_non_governance(&mut self) -> bool {
-        if matches!(
-            self.overlays.active(),
+        match self.overlays.active() {
             Some(Overlay::Settings(SettingsOverlay {
                 page: SettingsPage::Symbols,
                 ..
-            }))
-        ) {
-            self.cancel_glyph_preview();
+            })) => self.cancel_glyph_preview(),
+            Some(Overlay::Settings(SettingsOverlay {
+                page: SettingsPage::Theme,
+                ..
+            })) => self.cancel_theme_preview(),
+            _ => {}
         }
         let Some(overlay) = self.overlays.active() else {
             return false;
@@ -7649,6 +7814,10 @@ impl App {
             Action::PreviewGlyphPreference(preference) => self.preview_glyph_preference(preference),
             Action::ApplyGlyphPreference => self.commit_glyph_preference(),
             Action::CancelGlyphPreview => self.cancel_glyph_preview(),
+            Action::OpenThemePreview => self.open_theme_preview(),
+            Action::PreviewThemePreference(preference) => self.preview_theme_preference(preference),
+            Action::ApplyThemePreference => self.commit_theme_preference(),
+            Action::CancelThemePreview => self.cancel_theme_preview(),
             Action::ToggleDensity => self.toggle_density(),
             Action::OpenQueue => self.open_queue_overlay(),
             Action::OpenPlugins => self.open_plugins_overlay(),
@@ -8348,11 +8517,12 @@ fn settings_action(index: usize) -> Option<Action> {
         2 => Some(Action::OpenModels),
         3 => Some(Action::TogglePlanMode),
         4 => Some(Action::ToggleDensity),
+        SETTINGS_THEME_INDEX => Some(Action::OpenThemePreview),
         SETTINGS_SYMBOLS_INDEX => Some(Action::OpenGlyphPreview),
-        6 => Some(Action::OpenStatus),
-        7 => Some(Action::OpenSessions),
-        8 => Some(Action::ResumePausedExecutionRun),
-        9 => Some(Action::CloseOverlay),
+        7 => Some(Action::OpenStatus),
+        8 => Some(Action::OpenSessions),
+        9 => Some(Action::ResumePausedExecutionRun),
+        10 => Some(Action::CloseOverlay),
         _ => None,
     }
 }
@@ -9066,6 +9236,12 @@ fn relaunch_in_screen_mode(app: &App, mode: ScreenMode) -> Result<Outcome> {
         .arg(app.glyph_preference.as_config_value());
     if let Some(path) = app.options.glyphs_path.as_ref() {
         command.arg("--glyphs-path").arg(path);
+    }
+    command
+        .arg("--theme")
+        .arg(app.theme_preference.as_config_value());
+    if let Some(path) = app.options.theme_path.as_ref() {
+        command.arg("--theme-path").arg(path);
     }
     if let Some(path) = app.options.carina_bin.as_ref() {
         command.arg("--carina-bin").arg(path);
@@ -10100,6 +10276,10 @@ fn persist_glyph_preference(path: &Path, preference: GlyphPreference) -> Result<
     persist_config_string(path, "tui_glyphs", preference.as_config_value())
 }
 
+fn persist_theme_preference(path: &Path, preference: ThemePreference) -> Result<()> {
+    persist_config_string(path, "tui_theme", preference.as_config_value())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -10204,6 +10384,8 @@ mod tests {
             density_path: None,
             glyph_preference: GlyphPreference::Auto,
             glyphs_path: None,
+            theme_preference: ThemePreference::Auto,
+            theme_path: None,
             carina_bin: None,
             no_alt_screen: true,
             screen_mode: None,
@@ -10382,6 +10564,8 @@ mod tests {
             density_path: None,
             glyph_preference: GlyphPreference::Auto,
             glyphs_path: None,
+            theme_preference: ThemePreference::Auto,
+            theme_path: None,
             carina_bin: None,
             no_alt_screen: true,
             screen_mode: None,
@@ -11057,6 +11241,25 @@ mod tests {
         assert_eq!(value["provider"]["id"], "openai");
         assert_eq!(value["tui_locale"], "zh-Hans");
         assert_eq!(value["tui_glyphs"], "nerd");
+    }
+
+    #[test]
+    fn theme_update_preserves_unrelated_config() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("config.json");
+        fs::write(
+            &path,
+            br#"{"max_concurrent_tasks":4,"tui_locale":"zh-Hans","tui_glyphs":"unicode"}"#,
+        )
+        .unwrap();
+
+        persist_theme_preference(&path, ThemePreference::Light).unwrap();
+
+        let value: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(value["max_concurrent_tasks"], 4);
+        assert_eq!(value["tui_locale"], "zh-Hans");
+        assert_eq!(value["tui_glyphs"], "unicode");
+        assert_eq!(value["tui_theme"], "light");
     }
 
     #[cfg(unix)]
@@ -11871,14 +12074,15 @@ mod tests {
 
     #[test]
     fn settings_keyboard_and_pointer_share_provider_action_order() {
-        assert_eq!(SETTINGS_ITEM_COUNT, 10);
+        assert_eq!(SETTINGS_ITEM_COUNT, 11);
         assert_eq!(settings_action(1), Some(Action::OpenProvider));
         assert_eq!(settings_action(3), Some(Action::TogglePlanMode));
         assert_eq!(settings_action(4), Some(Action::ToggleDensity));
-        assert_eq!(settings_action(5), Some(Action::OpenGlyphPreview));
-        assert_eq!(settings_action(6), Some(Action::OpenStatus));
-        assert_eq!(settings_action(9), Some(Action::CloseOverlay));
-        assert_eq!(settings_action(10), None);
+        assert_eq!(settings_action(5), Some(Action::OpenThemePreview));
+        assert_eq!(settings_action(6), Some(Action::OpenGlyphPreview));
+        assert_eq!(settings_action(7), Some(Action::OpenStatus));
+        assert_eq!(settings_action(10), Some(Action::CloseOverlay));
+        assert_eq!(settings_action(11), None);
     }
 
     #[test]

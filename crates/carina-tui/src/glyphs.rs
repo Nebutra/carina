@@ -375,6 +375,7 @@ const SELECTED_CELL: GlyphSet = GlyphSet::new("▌", "\u{f105}", ">", 1);
 const TREE: GlyphSet = GlyphSet::new("│ ", "│ ", "| ", 2);
 const SCROLL_TRACK: GlyphSet = GlyphSet::new("│", "│", "|", 1);
 const SCROLL_THUMB: GlyphSet = GlyphSet::new("┃", "┃", "#", 1);
+const ACCENT_RAIL: GlyphSet = GlyphSet::new("┃", "┃", "|", 1);
 const RULE: GlyphSet = GlyphSet::new("─", "─", "-", 1);
 const SEPARATOR: GlyphSet = GlyphSet::new("·", "·", "|", 1);
 const DISCLOSURE_CLOSED: GlyphSet = GlyphSet::new("▸ ", "\u{f054} ", "> ", 2);
@@ -446,6 +447,7 @@ const ALL: &[GlyphSet] = &[
     TREE,
     SCROLL_TRACK,
     SCROLL_THUMB,
+    ACCENT_RAIL,
     RULE,
     SEPARATOR,
     DISCLOSURE_CLOSED,
@@ -561,6 +563,9 @@ impl Glyphs {
     }
     pub fn tool_gutter(self) -> &'static str {
         self.get(TREE)
+    }
+    pub fn accent_rail(self) -> &'static str {
+        self.get(ACCENT_RAIL)
     }
     pub fn scroll_track(self) -> &'static str {
         self.get(SCROLL_TRACK)
@@ -888,10 +893,19 @@ mod tests {
             let glyphs = Glyphs::new(mode);
             let spinner_widths = SPINNER.map(|frame| UnicodeWidthStr::width(frame.get(mode)));
             assert!(spinner_widths.into_iter().all(|width| width == 1));
+            for elapsed in [0_u128, ACTIVITY_TICK_INTERVAL.as_millis(), 1_000] {
+                let prefix = format!("{} ", glyphs.activity_spinner(elapsed));
+                assert_eq!(UnicodeWidthStr::width(prefix.as_str()), 2);
+                assert_eq!(
+                    UnicodeWidthStr::width(prefix.as_str()),
+                    UnicodeWidthStr::width(glyphs.disclosure_open())
+                );
+            }
             assert_eq!(UnicodeWidthStr::width(glyphs.disclosure_open()), 2);
             assert_eq!(UnicodeWidthStr::width(glyphs.disclosure_closed()), 2);
             assert_eq!(UnicodeWidthStr::width(glyphs.role_prefix()), 2);
             assert_eq!(UnicodeWidthStr::width(glyphs.tool_gutter()), 2);
+            assert_eq!(UnicodeWidthStr::width(glyphs.accent_rail()), 1);
             assert_eq!(UnicodeWidthStr::width(glyphs.failure_prefix()), 2);
             assert_eq!(UnicodeWidthStr::width(glyphs.warning_prefix()), 2);
             assert_eq!(

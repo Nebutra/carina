@@ -3,7 +3,7 @@ source: crates/carina-tui/src/app/render.rs
 expression: rendered
 ---
 size=160x30
-Carina ▾   ·  carina conversation                                                                                               model  ·  reasoning off   Build
+Carina ▾   ·  carina conversation                                                                                                                 model   Build
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -27,15 +27,15 @@ Carina ▾   ·  carina conversation                                            
                                 │   L11   11. Confirm closing the review executes nothing.                                     │
                                 │   L12   12. Record the final verification outcome.                                           │
                                 │ ──────────────────────────────────────────────────────────────────────────────────────────── │
-                      Ready in  │ [ Approve ] [ Revise ] [ Comment ] [ Close review ]                                          │
-                      Type a re │                                                                                              │
-                                │ A Approve S Revise C Comment M range Q Close Up/Dn J/K Page Home/End                         │
+                                │ [ Approve ] [ Revise ] [ Comment ] [ Close review ]                                          │
                                 │                                                                                              │
-                    ─────────── ╰──────────────────────────────────────────────────────────────────────────────────────────────╯ ───────────
+                                │ A Approve S Revise C Comment M range Q Close Up/Dn J/K Page Home/End                         │
+                    ─────────── │                                                                                              │ ───────────
+                    ❯ Describe  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 styles:
 (0,0)..(9,0) (Reset, Reset, BOLD)
 (9,0)..(33,0) (Rgb(150, 160, 156), Reset, NONE)
-(127,0)..(152,0) (Rgb(150, 160, 156), Reset, NONE)
+(145,0)..(152,0) (Rgb(150, 160, 156), Reset, NONE)
 (153,0)..(160,0) (Rgb(142, 219, 210), Reset, BOLD)
 (0,1)..(160,1) (Rgb(52, 65, 68), Reset, NONE)
 (32,4)..(128,4) (Rgb(142, 219, 210), Reset, BOLD)
@@ -98,22 +98,22 @@ styles:
 (32,23)..(33,23) (Rgb(142, 219, 210), Reset, BOLD)
 (34,23)..(126,23) (Rgb(52, 65, 68), Reset, NONE)
 (127,23)..(128,23) (Rgb(142, 219, 210), Reset, BOLD)
-(22,24)..(31,24) (Reset, Reset, BOLD)
 (32,24)..(33,24) (Rgb(142, 219, 210), Reset, BOLD)
 (34,24)..(45,24) (Rgb(142, 219, 210), Reset, NONE)
 (46,24)..(56,24) (Rgb(142, 219, 210), Reset, NONE)
 (57,24)..(68,24) (Rgb(142, 219, 210), Reset, NONE)
 (69,24)..(85,24) (Rgb(142, 219, 210), Reset, NONE)
 (127,24)..(128,24) (Rgb(142, 219, 210), Reset, BOLD)
-(22,25)..(31,25) (Rgb(150, 160, 156), Reset, NONE)
 (32,25)..(33,25) (Rgb(142, 219, 210), Reset, BOLD)
 (127,25)..(128,25) (Rgb(142, 219, 210), Reset, BOLD)
 (32,26)..(33,26) (Rgb(142, 219, 210), Reset, BOLD)
 (34,26)..(126,26) (Rgb(150, 160, 156), Reset, NONE)
 (127,26)..(128,26) (Rgb(142, 219, 210), Reset, BOLD)
+(20,27)..(31,27) (Rgb(52, 65, 68), Reset, NONE)
 (32,27)..(33,27) (Rgb(142, 219, 210), Reset, BOLD)
 (34,27)..(126,27) (Rgb(150, 160, 156), Reset, NONE)
 (127,27)..(128,27) (Rgb(142, 219, 210), Reset, BOLD)
-(20,28)..(31,28) (Rgb(52, 65, 68), Reset, NONE)
+(129,27)..(140,27) (Rgb(52, 65, 68), Reset, NONE)
+(20,28)..(31,28) (Rgb(150, 160, 156), Reset, NONE)
 (32,28)..(128,28) (Rgb(142, 219, 210), Reset, BOLD)
-(129,28)..(140,28) (Rgb(52, 65, 68), Reset, NONE)
+(129,28)..(140,28) (Rgb(150, 160, 156), Reset, NONE)

@@ -365,6 +365,20 @@ pub enum MessageId {
     SymbolsKeepCurrentHint,
     SymbolsApplied,
     SymbolsPersistFailed,
+    Theme,
+    ThemeAuto,
+    ThemeDark,
+    ThemeLight,
+    ThemeAutoDetail,
+    ThemeDarkDetail,
+    ThemeLightDetail,
+    ThemePreviewGuidance,
+    ThemeRequested,
+    ThemeEffective,
+    ThemeEnvironmentOverride,
+    ThemeApplied,
+    ThemePersistFailed,
+    ThemeUnknownChoice,
     ChromeRun,
     ChromeQueue,
     ChromeContext,
@@ -424,6 +438,7 @@ pub enum MessageId {
     Commands,
     CommandSettings,
     CommandDensity,
+    CommandTheme,
     CommandSymbols,
     CommandStatus,
     CommandContext,
@@ -1053,6 +1068,20 @@ impl MessageId {
         Self::SymbolsKeepCurrentHint,
         Self::SymbolsApplied,
         Self::SymbolsPersistFailed,
+        Self::Theme,
+        Self::ThemeAuto,
+        Self::ThemeDark,
+        Self::ThemeLight,
+        Self::ThemeAutoDetail,
+        Self::ThemeDarkDetail,
+        Self::ThemeLightDetail,
+        Self::ThemePreviewGuidance,
+        Self::ThemeRequested,
+        Self::ThemeEffective,
+        Self::ThemeEnvironmentOverride,
+        Self::ThemeApplied,
+        Self::ThemePersistFailed,
+        Self::ThemeUnknownChoice,
         Self::ChromeRun,
         Self::ChromeQueue,
         Self::ChromeContext,
@@ -1112,6 +1141,7 @@ impl MessageId {
         Self::Commands,
         Self::CommandSettings,
         Self::CommandDensity,
+        Self::CommandTheme,
         Self::CommandSymbols,
         Self::CommandStatus,
         Self::CommandContext,
@@ -4594,6 +4624,117 @@ fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
             "터미널 기호 미리보기 및 선택",
             "Previsualizar y elegir símbolos del terminal",
             "Prévisualiser et choisir les symboles du terminal",
+        ],
+        Theme => [
+            "Theme", "主题", "主題", "テーマ", "테마", "Tema", "Thème",
+        ],
+        ThemeAuto => [
+            "Auto", "自动", "自動", "自動", "자동", "Auto", "Auto",
+        ],
+        ThemeDark => [
+            "Dark", "深色", "深色", "ダーク", "다크", "Oscuro", "Sombre",
+        ],
+        ThemeLight => [
+            "Light", "浅色", "淺色", "ライト", "라이트", "Claro", "Clair",
+        ],
+        ThemeAutoDetail => [
+            "Follow the terminal background",
+            "跟随终端背景",
+            "跟隨終端背景",
+            "端末の背景に合わせる",
+            "터미널 배경을 따름",
+            "Seguir el fondo del terminal",
+            "Suivre l’arrière-plan du terminal",
+        ],
+        ThemeDarkDetail => [
+            "Mineral dark palette",
+            "深色矿物色板",
+            "深色礦物色板",
+            "ダークのミネラルパレット",
+            "다크 미네랄 팔레트",
+            "Paleta mineral oscura",
+            "Palette minérale sombre",
+        ],
+        ThemeLightDetail => [
+            "Mineral light palette",
+            "浅色矿物色板",
+            "淺色礦物色板",
+            "ライトのミネラルパレット",
+            "라이트 미네랄 팔레트",
+            "Paleta mineral clara",
+            "Palette minérale claire",
+        ],
+        ThemePreviewGuidance => [
+            "Dark and light update the whole surface immediately. Enter saves. Esc keeps the current choice.",
+            "深色和浅色会立刻更新整个界面。Enter 保存，Esc 保留当前选择。",
+            "深色和淺色會立刻更新整個介面。Enter 儲存，Esc 保留目前選擇。",
+            "ダークとライトは画面全体にすぐ反映されます。Enter で保存、Esc で現在の選択を維持します。",
+            "다크와 라이트가 화면 전체에 바로 적용됩니다. Enter로 저장, Esc로 현재 선택을 유지합니다.",
+            "Oscuro y claro actualizan toda la superficie al instante. Intro guarda. Esc mantiene la elección actual.",
+            "Sombre et clair mettent à jour toute la surface immédiatement. Entrée enregistre. Échap conserve le choix actuel.",
+        ],
+        ThemeRequested => [
+            "Requested {preference}",
+            "已选 {preference}",
+            "已選 {preference}",
+            "選択 {preference}",
+            "선택 {preference}",
+            "Solicitado {preference}",
+            "Demandé {preference}",
+        ],
+        ThemeEffective => [
+            "Active {polarity}",
+            "当前 {polarity}",
+            "目前 {polarity}",
+            "表示 {polarity}",
+            "표시 {polarity}",
+            "Activo {polarity}",
+            "Actif {polarity}",
+        ],
+        ThemeEnvironmentOverride => [
+            "CARINA_THEME controls polarity ({polarity}). Remove it to use this choice.",
+            "CARINA_THEME 正在控制极性（{polarity}）。要使用此选择，请先移除该变量。",
+            "CARINA_THEME 正在控制極性（{polarity}）。要使用此選擇，請先移除該變數。",
+            "CARINA_THEME が極性（{polarity}）を制御しています。この選択を使うには削除してください。",
+            "CARINA_THEME가 극성({polarity})을 제어합니다. 이 선택을 쓰려면 변수를 제거하세요.",
+            "CARINA_THEME controla la polaridad ({polarity}). Elimínala para usar esta opción.",
+            "CARINA_THEME contrôle la polarité ({polarity}). Supprimez-la pour utiliser ce choix.",
+        ],
+        ThemeApplied => [
+            "Theme saved · preference {preference}, active {polarity}.",
+            "主题已保存 · 偏好 {preference}，当前 {polarity}。",
+            "主題已儲存 · 偏好 {preference}，目前 {polarity}。",
+            "テーマを保存しました · 選択 {preference}、表示 {polarity}。",
+            "테마를 저장했습니다 · 선택 {preference}, 표시 {polarity}.",
+            "Tema guardado · preferencia {preference}, activo {polarity}.",
+            "Thème enregistré · préférence {preference}, actif {polarity}.",
+        ],
+        ThemePersistFailed => [
+            "Could not save theme. The previous choice is still active. Try again.",
+            "无法保存主题；仍使用之前的选择。请重试。",
+            "無法儲存主題；仍使用先前的選擇。請重試。",
+            "テーマを保存できませんでした。以前の選択が有効です。再試行してください。",
+            "테마를 저장할 수 없습니다. 이전 선택이 계속 적용됩니다. 다시 시도하세요.",
+            "No se pudo guardar el tema. La opción anterior sigue activa. Inténtalo de nuevo.",
+            "Impossible d’enregistrer le thème. Le choix précédent reste actif. Réessayez.",
+        ],
+        ThemeUnknownChoice => [
+            "Theme must be auto, dark, or light.",
+            "主题只能是 auto、dark 或 light。",
+            "主題只能是 auto、dark 或 light。",
+            "テーマは auto、dark、light のいずれかです。",
+            "테마는 auto, dark, light만 사용할 수 있습니다.",
+            "El tema debe ser auto, dark o light.",
+            "Le thème doit être auto, dark ou light.",
+        ],
+        CommandTheme => [
+            "Preview and choose dark or light",
+            "预览并选择深色或浅色",
+            "預覽並選擇深色或淺色",
+            "ダークまたはライトをプレビューして選択",
+            "다크 또는 라이트 미리보기 및 선택",
+            "Previsualizar y elegir oscuro o claro",
+            "Prévisualiser et choisir sombre ou clair",
         ],
         PlanCommentSaved => [
             "Comment saved. Saved comments: {count}.",
@@ -8298,6 +8439,63 @@ mod tests {
         assert!(guidance.contains("aligned"));
         assert!(guidance.contains("missing font coverage"));
         assert!(!guidance.to_ascii_lowercase().contains("tofu"));
+    }
+
+    #[test]
+    fn theme_copy_is_complete_and_compact_in_every_supported_locale() {
+        for locale in Locale::ALL {
+            for id in [
+                MessageId::Theme,
+                MessageId::ThemeAuto,
+                MessageId::ThemeDark,
+                MessageId::ThemeLight,
+                MessageId::ThemeAutoDetail,
+                MessageId::ThemeDarkDetail,
+                MessageId::ThemeLightDetail,
+                MessageId::ThemePreviewGuidance,
+                MessageId::ThemeEnvironmentOverride,
+                MessageId::ThemePersistFailed,
+                MessageId::ThemeUnknownChoice,
+                MessageId::CommandTheme,
+            ] {
+                assert!(!text(locale, id).trim().is_empty(), "{locale:?} {id:?}");
+            }
+
+            let requested = format(
+                locale,
+                MessageId::ThemeRequested,
+                &[("preference", "AUTO")],
+            );
+            let effective = format(locale, MessageId::ThemeEffective, &[("polarity", "DARK")]);
+            let applied = format(
+                locale,
+                MessageId::ThemeApplied,
+                &[("preference", "AUTO"), ("polarity", "DARK")],
+            );
+            assert!(requested.contains("AUTO"), "{locale:?}: {requested}");
+            assert!(effective.contains("DARK"), "{locale:?}: {effective}");
+            assert!(
+                applied.contains("AUTO") && applied.contains("DARK"),
+                "{locale:?}: {applied}"
+            );
+
+            for id in [
+                MessageId::Theme,
+                MessageId::ThemeAuto,
+                MessageId::ThemeDark,
+                MessageId::ThemeLight,
+            ] {
+                let copy = text(locale, id);
+                assert!(
+                    unicode_width::UnicodeWidthStr::width(copy) <= 12,
+                    "Theme label is too wide in {locale:?}: {copy:?}"
+                );
+            }
+        }
+        let guidance = text(Locale::En, MessageId::ThemePreviewGuidance);
+        assert!(guidance.to_ascii_lowercase().contains("dark"));
+        assert!(guidance.to_ascii_lowercase().contains("light"));
+        assert!(!guidance.to_ascii_lowercase().contains("catalog"));
     }
 
     #[test]

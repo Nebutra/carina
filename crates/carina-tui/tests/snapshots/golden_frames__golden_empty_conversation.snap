@@ -11,22 +11,43 @@ size=80x24
 
 
 
+                                   ⠀⢀⣀⣀⡀⣠⣶⣶⣄⠀
+                                   ⠀⣿⣿⣿⣿⣿⣿⣿⣿⠀
+                                   ⠀⠙⣿⣿⡏⠀⠈⢻⡇⠀
+                                   ⠀⢰⣿⣿⣿⣦⣴⣿⡿⠀
+                                   ⠀⠈⠻⠿⠟⠁⠀⠀⠀⠀
+
+                                     Carina
+                   Type a request, or /help · /model · /status
 
 
 
 
 
 
-
-
-
-
-
-
-  Ready in workspace
-  Type a request, or /help · /model · /status
 
 
 styles:
-(2, 20)..(20, 20) (Reset, Reset, BOLD)
-(2, 21)..(45, 21) (Rgb(150, 160, 156), Reset, NONE)
+(35, 8)..(37, 8) (Rgb(222, 133, 155), Reset, NONE)
+(37, 8)..(38, 8) (Rgb(150, 160, 156), Reset, NONE)
+(38, 8)..(39, 8) (Reset, Reset, BOLD)
+(39, 8)..(40, 8) (Rgb(150, 160, 156), Reset, NONE)
+(40, 8)..(45, 8) (Rgb(222, 133, 155), Reset, NONE)
+(35, 9)..(38, 9) (Rgb(222, 133, 155), Reset, NONE)
+(38, 9)..(39, 9) (Rgb(150, 160, 156), Reset, NONE)
+(39, 9)..(40, 9) (Reset, Reset, BOLD)
+(40, 9)..(41, 9) (Rgb(150, 160, 156), Reset, NONE)
+(41, 9)..(45, 9) (Rgb(222, 133, 155), Reset, NONE)
+(35, 10)..(39, 10) (Rgb(222, 133, 155), Reset, NONE)
+(39, 10)..(40, 10) (Rgb(150, 160, 156), Reset, NONE)
+(40, 10)..(41, 10) (Rgb(222, 133, 155), Reset, NONE)
+(41, 10)..(42, 10) (Rgb(150, 160, 156), Reset, NONE)
+(42, 10)..(45, 10) (Rgb(222, 133, 155), Reset, NONE)
+(35, 11)..(40, 11) (Rgb(222, 133, 155), Reset, NONE)
+(40, 11)..(41, 11) (Rgb(150, 160, 156), Reset, NONE)
+(41, 11)..(42, 11) (Reset, Reset, BOLD)
+(42, 11)..(43, 11) (Rgb(150, 160, 156), Reset, NONE)
+(43, 11)..(45, 11) (Rgb(222, 133, 155), Reset, NONE)
+(35, 12)..(45, 12) (Rgb(222, 133, 155), Reset, NONE)
+(37, 14)..(43, 14) (Reset, Reset, BOLD)
+(19, 15)..(62, 15) (Rgb(150, 160, 156), Reset, NONE)

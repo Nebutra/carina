@@ -81,6 +81,7 @@ type Config struct {
 	TUILocale                  string              `json:"tui_locale"`
 	TUIDensity                 string              `json:"tui_density"`
 	TUIGlyphs                  string              `json:"tui_glyphs"`
+	TUITheme                   string              `json:"tui_theme"`
 	TUIAlternateScreen         string              `json:"tui_alternate_screen"`
 }
 
@@ -103,6 +104,7 @@ func Defaults(home string) Config {
 		MemoryHMSProjectionPollMS: 1000,
 		TUIDensity:                "compact",
 		TUIGlyphs:                 "auto",
+		TUITheme:                  "auto",
 		TUIAlternateScreen:        "auto",
 	}
 }
@@ -295,6 +297,11 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.TUIGlyphs) != "" {
 		if _, err := normalizeTUIGlyphs(c.TUIGlyphs); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(c.TUITheme) != "" {
+		if _, err := normalizeTUITheme(c.TUITheme); err != nil {
 			return err
 		}
 	}

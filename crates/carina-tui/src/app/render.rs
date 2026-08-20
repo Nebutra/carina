@@ -2715,8 +2715,8 @@ impl App {
                 )
                 .max(layout_contract::COMPOSER_MIN_HEIGHT + layout_contract::COMPOSER_CHROME_ROWS),
         );
-        // A conversation is an operating surface, not a repeated welcome
-        // screen. Keep its context bar compact at every terminal size.
+        // Empty conversations keep a one-shot identity in the transcript pane.
+        // Live run/queue status occupies the composer top rail, not extra rows.
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -2735,7 +2735,7 @@ impl App {
             reading_axis.intersection(chunks[2]),
             &chrome,
         );
-        self.render_composer(frame, reading_axis.intersection(chunks[3]));
+        self.render_composer(frame, reading_axis.intersection(chunks[3]), &chrome);
         let completion_axis = reading_axis.intersection(chunks[1]);
         self.render_slash_completion(frame, completion_axis);
         self.render_context_completion(frame, completion_axis);
@@ -2749,8 +2749,7 @@ impl App {
             &self.options.workspace,
             self.ui_locale(),
         );
-        let (_, model, reasoning) = self.product_header_metadata();
-        let model_route = format!("{model}  {}  {reasoning}", self.theme.glyphs.separator());
+        let (_, model, _) = self.product_header_metadata();
         let mode = if self
             .active_session
             .as_ref()
@@ -2760,6 +2759,7 @@ impl App {
         } else {
             tr(locale, MessageId::ModeBuildLabel)
         };
+        let product_menu_open = matches!(self.overlays.active(), Some(Overlay::ProductMenu(_)));
         let mut actions = Vec::new();
         if self
             .active_session
@@ -2781,17 +2781,21 @@ impl App {
             label: mode,
             action: Action::TogglePlanMode,
             component: ComponentId(9_106),
-            tone: ConversationHeaderTone::Active,
+            tone: if product_menu_open {
+                ConversationHeaderTone::Muted
+            } else {
+                ConversationHeaderTone::Active
+            },
         });
         actions.push(ConversationHeaderAction {
-            label: &model_route,
+            label: model.as_str(),
             action: Action::OpenModels,
             component: ComponentId(9_102),
             tone: ConversationHeaderTone::Muted,
         });
         let product_menu_anchor = ConversationHeader {
             title: &title,
-            product_menu_open: matches!(self.overlays.active(), Some(Overlay::ProductMenu(_))),
+            product_menu_open,
             actions: &actions,
         }
         .render(frame, area, self.theme, &mut self.interactions);
@@ -2916,7 +2920,6 @@ impl App {
         }
         if self.blocks.is_empty() {
             EmptyConversation {
-                workspace: &self.options.workspace,
                 locale: self.ui_locale(),
             }
             .render(frame, geometry.content, self.theme);
@@ -3035,9 +3038,8 @@ impl App {
                 SemanticCellKind::Tool | SemanticCellKind::ToolGroup | SemanticCellKind::Patch => {
                     self.theme.transcript_tool()
                 }
-                SemanticCellKind::Approval | SemanticCellKind::Failure => {
-                    self.theme.transcript_danger()
-                }
+                SemanticCellKind::Approval => self.theme.transcript_tool(),
+                SemanticCellKind::Failure => self.theme.transcript_danger(),
                 SemanticCellKind::Notice | SemanticCellKind::Compact => self
                     .theme
                     .transcript_metadata()
@@ -3072,6 +3074,7 @@ impl App {
                     .bg(self.theme.code_bg),
                 link: self.theme.transcript_link(),
                 headings: std::array::from_fn(|index| self.theme.heading(index + 1)),
+                live: self.theme.transcript_tool(),
             };
             let render_options = TranscriptRenderOptions {
                 locale,
@@ -3081,8 +3084,17 @@ impl App {
                 tool_expand_key: self.keybindings.expand_tools.label(),
                 tool_inspect_key: self.keybindings.inspect_tool_output.label(),
                 expanded_output_budget,
+                activity_elapsed_ms: self
+                    .execution_activity
+                    .current()
+                    .map(|(_, elapsed)| elapsed.as_millis())
+                    .or_else(|| self.execution_timer.elapsed().map(|elapsed| elapsed.as_millis()))
+                    .unwrap_or(0),
             };
-            let mut lines = if dimmed || block.failure.is_some() {
+            let mut lines = if dimmed
+                || block.failure.is_some()
+                || (cell_kind == SemanticCellKind::Thinking && block.is_live_work())
+            {
                 transcript_lines_with_tool_key_and_density(
                     block,
                     locale,
@@ -3156,13 +3168,22 @@ impl App {
                 band
             };
             // Chrome lives in the outer gutter and never changes the content
-            // width. Use a blank cell when inactive: Color::Reset is the
-            // terminal foreground, so recoloring the rail to it does not hide
-            // the glyph on a terminal-owned background.
+            // width. Live work and risk get a 1-cell accent rail; settled tools
+            // recede to a blank cell. Color::Reset is the terminal foreground,
+            // so recoloring the rail to it does not hide the glyph.
+            let live = block.is_live_work();
+            let risk_rail = matches!(
+                cell_kind,
+                SemanticCellKind::Approval | SemanticCellKind::Failure
+            );
             let outer_chrome_owned = !cell_kind.owns_internal_rail();
-            let chrome_visible =
-                block.selected || outer_chrome_owned && (hovered || block.is_collapsible());
-            let chrome_glyph = if chrome_visible {
+            let chrome_visible = live
+                || risk_rail
+                || block.selected
+                || outer_chrome_owned && (hovered || block.is_collapsible());
+            let chrome_glyph = if live || risk_rail {
+                self.theme.glyphs.accent_rail()
+            } else if chrome_visible {
                 self.theme.glyphs.scroll_track()
             } else {
                 " "
@@ -3175,7 +3196,9 @@ impl App {
                 layout_contract::TRANSCRIPT_HORIZONTAL_INSET,
                 block_area.height,
             );
-            let chrome_style = if chrome_visible {
+            let chrome_style = if live {
+                self.theme.transcript_tool()
+            } else if chrome_visible {
                 Style::default().fg(accent)
             } else {
                 Style::default()
@@ -3359,7 +3382,7 @@ impl App {
         }
     }
 
-    fn render_composer(&mut self, frame: &mut Frame<'_>, area: Rect) {
+    fn render_composer(&mut self, frame: &mut Frame<'_>, area: Rect, chrome: &ComposerChrome) {
         let focused = self.focus == Focus::Composer;
         let locale = self.ui_locale();
         let sep = self.theme.glyphs.separator();
@@ -3381,19 +3404,22 @@ impl App {
                 });
         let component = ComponentId(9_000);
         let interactive = focused || self.interactions.hovered(component);
-        let mut block = Block::default()
-            .borders(Borders::TOP)
-            .border_type(self.theme.glyphs.outer_border_type())
-            .border_style(if interactive {
-                self.theme.focus()
-            } else {
-                Style::default().fg(self.theme.border)
-            });
-        if let Some(title) = attachment_title {
-            block = block.title(title).title_alignment(Alignment::Right);
-        }
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
+        let rail_style = if interactive {
+            self.theme.focus()
+        } else {
+            Style::default().fg(self.theme.border)
+        };
+        let (inner, queue) = if area.height >= layout_contract::COMPOSER_CHROME_ROWS + 1 {
+            self.paint_composer_rails(
+                frame,
+                area,
+                chrome,
+                rail_style,
+                attachment_title.as_deref(),
+            )
+        } else {
+            (area, None)
+        };
         let prompt_width = layout_contract::COMPOSER_PROMPT_COLUMNS.min(inner.width);
         let input = Rect::new(
             inner.x.saturating_add(prompt_width),
@@ -3434,9 +3460,40 @@ impl App {
         self.composer_area = input;
         self.interactions.register(HitRegion {
             component,
-            area,
+            area: inner,
             action: Action::FocusComposer,
         });
+        if area.height >= layout_contract::COMPOSER_CHROME_ROWS + 1 {
+            let top = Rect::new(area.x, area.y, area.width, 1);
+            let bottom = Rect::new(
+                area.x,
+                area.bottom().saturating_sub(1),
+                area.width,
+                1,
+            );
+            self.interactions.register(HitRegion {
+                component,
+                area: top,
+                action: Action::FocusComposer,
+            });
+            if bottom.y != top.y {
+                self.interactions.register(HitRegion {
+                    component,
+                    area: bottom,
+                    action: Action::FocusComposer,
+                });
+            }
+        }
+        if let Some((start, width)) = queue {
+            self.interactions.register(HitRegion {
+                component: ComponentId::stable(
+                    "composer-chrome",
+                    chrome_slot_key(ChromeSlotKind::Queue),
+                ),
+                area: Rect::new(area.x.saturating_add(start), area.y, width, 1),
+                action: chrome_capability_action(ChromeCapability::OpenQueue),
+            });
+        }
         for row in input.y..input.bottom() {
             for column in input.x..input.right() {
                 if let Some(element) = self
@@ -4133,7 +4190,23 @@ impl App {
     #[cfg(test)]
     fn render_composer_chrome(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let chrome = self.composer_chrome();
-        self.render_composer_chrome_projection(frame, area, &chrome);
+        let notice_height = chrome.row_count(area.width).min(area.height);
+        if notice_height > 0 {
+            self.render_composer_chrome_projection(
+                frame,
+                Rect::new(area.x, area.y, area.width, notice_height),
+                &chrome,
+            );
+        }
+        let composer = Rect::new(
+            area.x,
+            area.y.saturating_add(notice_height),
+            area.width,
+            area.height.saturating_sub(notice_height),
+        );
+        if composer.height > 0 {
+            self.render_composer(frame, composer, &chrome);
+        }
     }
 
     fn render_composer_chrome_projection(
@@ -4145,83 +4218,162 @@ impl App {
         if area.height == 0 || area.width == 0 {
             return;
         }
-
-        let activity = self.execution_activity.current();
-        let mut rows = Vec::new();
         if let Some(notice) = &chrome.notice {
-            rows.push(Line::from(Span::styled(
-                truncate_cells(&notice.text, area.width as usize, self.theme.glyphs),
-                chrome_tone_style(notice.tone, self.theme),
-            )));
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    truncate_cells(&notice.text, area.width as usize, self.theme.glyphs),
+                    chrome_tone_style(notice.tone, self.theme),
+                ))),
+                Rect::new(area.x, area.y, area.width, 1),
+            );
         }
-
-        let mut primary_spans = Vec::new();
-        if let Some(primary) = &chrome.primary {
-            if primary.animated {
-                primary_spans.push(Span::styled(
-                    format!(
-                        "{} ",
-                        self.theme.glyphs.activity_spinner(
-                            activity
-                                .map(|(_, elapsed)| elapsed)
-                                .or_else(|| self.execution_timer.elapsed())
-                                .unwrap_or_default()
-                                .as_millis()
-                        )
-                    ),
-                    chrome_tone_style(primary.tone, self.theme),
-                ));
-            }
-            let prefix_width = primary_spans
-                .iter()
-                .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
-                .sum::<usize>();
-            primary_spans.push(Span::styled(
-                truncate_cells(
-                    &primary.text,
-                    (area.width as usize).saturating_sub(prefix_width),
-                    self.theme.glyphs,
-                ),
-                chrome_tone_style(primary.tone, self.theme),
-            ));
-            rows.push(Line::from(primary_spans));
-        }
-
-        let slots = chrome.layout_slots(area.width, self.theme.glyphs);
-        let separator = format!(" {} ", self.theme.glyphs.separator());
-        let mut slot_spans = Vec::new();
-        let slot_row = area.y.saturating_add(
-            u16::from(chrome.notice.is_some()) + u16::from(chrome.primary.is_some()),
-        );
-        for (index, slot) in slots.iter().enumerate() {
-            if index > 0 {
-                slot_spans.push(Span::styled(separator.clone(), self.theme.muted()));
-            }
-            let component = ComponentId::stable("composer-chrome", chrome_slot_key(slot.kind));
-            let action = slot.capability.map(chrome_capability_action);
-            let style = if action.is_some() && self.interactions.hovered(component) {
-                self.theme.hovered()
-            } else {
-                chrome_tone_style(slot.tone, self.theme)
-            };
-            slot_spans.push(Span::styled(slot.text.as_str(), style));
-            if let Some(action) = action {
-                self.interactions.register(HitRegion {
-                    component,
-                    area: Rect::new(area.x.saturating_add(slot.start), slot_row, slot.width, 1),
-                    action,
-                });
-            }
-        }
-        if !slots.is_empty() {
-            rows.push(Line::from(slot_spans));
-        }
-        let painted = chrome.notice.is_some()
-            && area.height >= u16::from(chrome.notice.is_some())
-            && area.width > 0;
+        let painted = chrome.notice.is_some() && area.width > 0;
         let unoccluded = painted && self.overlays.active().is_none();
         self.record_notice_paint(unoccluded);
-        frame.render_widget(Paragraph::new(rows), area);
+    }
+
+    fn paint_composer_rails(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        chrome: &ComposerChrome,
+        rail_style: Style,
+        attachment_title: Option<&str>,
+    ) -> (Rect, Option<(u16, u16)>) {
+        let rule = self.theme.glyphs.rule();
+        let fill = rule.repeat(area.width as usize);
+        let top = Rect::new(area.x, area.y, area.width, 1);
+        let bottom = Rect::new(
+            area.x,
+            area.bottom().saturating_sub(1).max(area.y),
+            area.width,
+            1,
+        );
+        frame.render_widget(Paragraph::new(fill.as_str()).style(rail_style), top);
+        if bottom.y != top.y {
+            frame.render_widget(Paragraph::new(fill.as_str()).style(rail_style), bottom);
+        }
+
+        let attachment_width = attachment_title
+            .map(UnicodeWidthStr::width)
+            .unwrap_or(0)
+            .min(area.width as usize);
+        let status_budget = (area.width as usize).saturating_sub(
+            if attachment_width == 0 {
+                0
+            } else {
+                attachment_width.saturating_add(1)
+            },
+        );
+        let (status, queue) = self.composer_rail_status(chrome, status_budget, rail_style);
+        if !status.spans.is_empty() {
+            frame.render_widget(Paragraph::new(status), top);
+        }
+        if let Some(title) = attachment_title.filter(|value| !value.is_empty()) {
+            let width = attachment_width as u16;
+            if width > 0 {
+                frame.render_widget(
+                    Paragraph::new(title).style(self.theme.muted()),
+                    Rect::new(top.right().saturating_sub(width), top.y, width, 1),
+                );
+            }
+        }
+        (
+            Rect::new(
+                area.x,
+                area.y.saturating_add(1),
+                area.width,
+                area.height.saturating_sub(layout_contract::COMPOSER_CHROME_ROWS),
+            ),
+            queue,
+        )
+    }
+
+    fn composer_rail_status(
+        &self,
+        chrome: &ComposerChrome,
+        width: usize,
+        rail_style: Style,
+    ) -> (Line<'static>, Option<(u16, u16)>) {
+        if width == 0 {
+            return (Line::default(), None);
+        }
+        let slots = chrome.layout_slots(width as u16, self.theme.glyphs);
+        if chrome.primary.is_none() && slots.is_empty() {
+            return (Line::default(), None);
+        }
+        let activity = self.execution_activity.current();
+        let rule = self.theme.glyphs.rule();
+        let separator = format!(" {} ", self.theme.glyphs.separator());
+        let separator_width = UnicodeWidthStr::width(separator.as_str());
+        let mut spans = vec![Span::styled(format!("{rule} "), rail_style)];
+        let mut used = UnicodeWidthStr::width(spans[0].content.as_ref());
+        if let Some(primary) = &chrome.primary {
+            let style = chrome_tone_style(primary.tone, self.theme);
+            if primary.animated {
+                let spinner = format!(
+                    "{} ",
+                    self.theme.glyphs.activity_spinner(
+                        activity
+                            .map(|(_, elapsed)| elapsed)
+                            .or_else(|| self.execution_timer.elapsed())
+                            .unwrap_or_default()
+                            .as_millis()
+                    )
+                );
+                used += UnicodeWidthStr::width(spinner.as_str());
+                spans.push(Span::styled(spinner, style));
+            }
+            let text = truncate_cells(
+                &primary.text,
+                width.saturating_sub(used).saturating_sub(5),
+                self.theme.glyphs,
+            );
+            if !text.is_empty() {
+                used += UnicodeWidthStr::width(text.as_str());
+                spans.push(Span::styled(text, style));
+            }
+        }
+        let remaining = width.saturating_sub(used);
+        let slot_width = if chrome.primary.is_some() && remaining > separator_width {
+            remaining.saturating_sub(separator_width)
+        } else {
+            remaining
+        };
+        let slots = chrome.layout_slots(slot_width as u16, self.theme.glyphs);
+        let mut queue = None;
+        if !slots.is_empty() && remaining > 0 {
+            if chrome.primary.is_some() && used + separator_width < width {
+                spans.push(Span::styled(separator.clone(), self.theme.muted()));
+                used += separator_width;
+            }
+            for (index, slot) in slots.iter().enumerate() {
+                if index > 0 {
+                    if used + separator_width >= width {
+                        break;
+                    }
+                    spans.push(Span::styled(separator.clone(), self.theme.muted()));
+                    used += separator_width;
+                }
+                let component = ComponentId::stable("composer-chrome", chrome_slot_key(slot.kind));
+                let style = if slot.capability.is_some() && self.interactions.hovered(component) {
+                    self.theme.hovered()
+                } else {
+                    chrome_tone_style(slot.tone, self.theme)
+                };
+                let text = truncate_cells(&slot.text, width.saturating_sub(used), self.theme.glyphs);
+                let text_width = UnicodeWidthStr::width(text.as_str());
+                if text_width == 0 {
+                    break;
+                }
+                if slot.kind == ChromeSlotKind::Queue {
+                    queue = Some((used as u16, text_width as u16));
+                }
+                spans.push(Span::styled(text, style));
+                used += text_width;
+            }
+        }
+        (Line::from(spans), queue)
     }
 
     fn record_notice_paint(&mut self, unoccluded: bool) {
@@ -4470,17 +4622,31 @@ impl App {
                     layout_contract::APPROVAL_POPUP.1,
                 );
                 frame.render_widget(Clear, popup);
+                let (approval_border, approval_title_style) = if self.theme.no_color {
+                    (
+                        Style::default().add_modifier(Modifier::BOLD),
+                        Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED),
+                    )
+                } else {
+                    (
+                        Style::default().fg(self.theme.warning),
+                        Style::default()
+                            .fg(self.theme.warning)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                };
+                let approval_title = Line::from(Span::styled(approval_title, approval_title_style));
                 let inner = Block::default()
                     .borders(Borders::ALL)
                     .border_type(self.theme.glyphs.outer_border_type())
-                    .border_style(Style::default().fg(self.theme.danger))
+                    .border_style(approval_border)
                     .title(approval_title.clone())
                     .inner(popup);
                 frame.render_widget(
                     Block::default()
                         .borders(Borders::ALL)
                         .border_type(self.theme.glyphs.outer_border_type())
-                        .border_style(Style::default().fg(self.theme.danger))
+                        .border_style(approval_border)
                         .title(approval_title)
                         .style(Style::default()),
                     popup,
@@ -6450,6 +6616,11 @@ impl App {
                 tr(locale, MessageId::Settings),
                 tr(locale, MessageId::Symbols)
             ),
+            SettingsPage::Theme => format!(
+                "{} / {}",
+                tr(locale, MessageId::Settings),
+                tr(locale, MessageId::Theme)
+            ),
         };
         let block = Block::default()
             .borders(Borders::ALL)
@@ -6462,6 +6633,7 @@ impl App {
         match settings.page {
             SettingsPage::Root => self.render_settings_root(frame, inner, settings),
             SettingsPage::Symbols => self.render_symbols_settings(frame, inner, settings),
+            SettingsPage::Theme => self.render_theme_settings(frame, inner, settings),
         }
     }
 
@@ -6498,6 +6670,15 @@ impl App {
             format!("{symbol_preference} ({symbol_mode})")
         } else {
             symbol_preference.to_owned()
+        };
+        let theme_preference = theme_preference_label(locale, self.theme_preference);
+        let theme_polarity = polarity_label(locale, self.theme.polarity);
+        let theme_value = if self.theme_preference == crate::theme::ThemePreference::Auto
+            || self.theme_env_override
+        {
+            format!("{theme_preference} ({theme_polarity})")
+        } else {
+            theme_preference.to_owned()
         };
         self.render_rows(
             frame,
@@ -6562,6 +6743,7 @@ impl App {
                         }
                     )
                 ),
+                format!("{}  {sep}  {theme_value}", tr(locale, MessageId::Theme)),
                 format!("{}  {sep}  {symbol_value}", tr(locale, MessageId::Symbols)),
                 format!(
                     "{}  {sep}  {}",
@@ -6799,6 +6981,166 @@ impl App {
                     tr(locale, MessageId::SymbolsKeepCurrentHint),
                     Action::CancelGlyphPreview,
                     12_601,
+                ),
+            ],
+        );
+    }
+
+    fn render_theme_settings(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        settings: &SettingsOverlay,
+    ) {
+        let locale = self.ui_locale();
+        let content = area.inner(Margin::new(1, 0));
+        if content.height == 0 || content.width == 0 {
+            return;
+        }
+        let compact = content.height <= 14;
+        let guidance_height = if compact { 1 } else { 2 }.min(content.height);
+        frame.render_widget(
+            Paragraph::new(tr(locale, MessageId::ThemePreviewGuidance))
+                .style(Style::default().fg(self.theme.muted))
+                .wrap(Wrap { trim: false }),
+            Rect::new(content.x, content.y, content.width, guidance_height),
+        );
+
+        let choices_y = content.y.saturating_add(guidance_height);
+        let choices = Rect::new(
+            content.x,
+            choices_y,
+            content.width,
+            3.min(content.bottom().saturating_sub(choices_y)),
+        );
+        let detail_width = usize::from(choices.width).saturating_sub(
+            self.theme.glyphs.selected().width() + "1  ".width() + 12 + "  ".width(),
+        );
+        self.render_rows(
+            frame,
+            choices,
+            crate::theme::ThemePreference::ALL
+                .into_iter()
+                .enumerate()
+                .map(|(index, preference)| {
+                    format!(
+                        "{}  {}  {}",
+                        index + 1,
+                        pad_cells(
+                            theme_preference_label(locale, preference),
+                            12,
+                            self.theme.glyphs,
+                        ),
+                        truncate_cells(
+                            theme_preference_detail(locale, preference),
+                            detail_width,
+                            self.theme.glyphs,
+                        )
+                    )
+                })
+                .collect(),
+            settings.theme_selected,
+            12_700,
+            theme_preview_action,
+        );
+
+        let sample_y = if compact {
+            choices.bottom()
+        } else {
+            choices.bottom().saturating_add(1)
+        }
+        .min(content.bottom());
+        if sample_y < content.bottom().saturating_sub(2) {
+            let sample = Line::from(vec![
+                Span::styled(
+                    tr(locale, MessageId::Theme),
+                    Style::default().fg(self.theme.text),
+                ),
+                Span::styled("  ", Style::default()),
+                Span::styled(
+                    tr(locale, MessageId::Open),
+                    Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("  ", Style::default()),
+                Span::styled(
+                    tr(locale, MessageId::Review),
+                    Style::default().fg(self.theme.warning),
+                ),
+                Span::styled("  ", Style::default()),
+                Span::styled(
+                    tr(locale, MessageId::StatusFailed),
+                    Style::default().fg(self.theme.danger),
+                ),
+            ]);
+            frame.render_widget(
+                Paragraph::new(sample),
+                Rect::new(content.x, sample_y, content.width, 1),
+            );
+        }
+
+        let footer_y = content.bottom().saturating_sub(1);
+        let info_y = if compact {
+            sample_y.saturating_add(1).min(footer_y)
+        } else {
+            sample_y.saturating_add(2).min(footer_y)
+        };
+        let info_height = footer_y.saturating_sub(info_y);
+        if info_height > 0 {
+            let preference = settings.theme_preference();
+            let polarity = polarity_label(locale, self.theme.polarity);
+            let mut info = vec![Line::from(vec![
+                Span::styled(
+                    tr_format(
+                        locale,
+                        MessageId::ThemeRequested,
+                        &[("preference", theme_preference_label(locale, preference))],
+                    ),
+                    Style::default().fg(self.theme.text),
+                ),
+                Span::styled(
+                    format!("  {}  ", self.theme.glyphs.separator()),
+                    Style::default().fg(self.theme.border),
+                ),
+                Span::styled(
+                    tr_format(
+                        locale,
+                        MessageId::ThemeEffective,
+                        &[("polarity", polarity)],
+                    ),
+                    Style::default().fg(self.theme.accent),
+                ),
+            ])];
+            if self.theme_env_override {
+                info.push(Line::from(Span::styled(
+                    tr_format(
+                        locale,
+                        MessageId::ThemeEnvironmentOverride,
+                        &[("polarity", polarity)],
+                    ),
+                    Style::default().fg(self.theme.warning),
+                )));
+            }
+            frame.render_widget(
+                Paragraph::new(info)
+                    .wrap(Wrap { trim: false })
+                    .style(Style::default().fg(self.theme.muted)),
+                Rect::new(content.x, info_y, content.width, info_height),
+            );
+        }
+
+        self.render_modal_buttons(
+            frame,
+            Rect::new(content.x, footer_y, content.width, 1),
+            &[
+                (
+                    tr(locale, MessageId::SymbolsApplyHint),
+                    Action::ApplyThemePreference,
+                    12_800,
+                ),
+                (
+                    tr(locale, MessageId::SymbolsKeepCurrentHint),
+                    Action::CancelThemePreview,
+                    12_801,
                 ),
             ],
         );
@@ -7945,6 +8287,51 @@ fn symbol_preview_action(index: usize) -> Option<Action> {
         .map(Action::PreviewGlyphPreference)
 }
 
+fn theme_preference_label(
+    locale: Locale,
+    preference: crate::theme::ThemePreference,
+) -> &'static str {
+    tr(
+        locale,
+        match preference {
+            crate::theme::ThemePreference::Auto => MessageId::ThemeAuto,
+            crate::theme::ThemePreference::Dark => MessageId::ThemeDark,
+            crate::theme::ThemePreference::Light => MessageId::ThemeLight,
+        },
+    )
+}
+
+fn theme_preference_detail(
+    locale: Locale,
+    preference: crate::theme::ThemePreference,
+) -> &'static str {
+    tr(
+        locale,
+        match preference {
+            crate::theme::ThemePreference::Auto => MessageId::ThemeAutoDetail,
+            crate::theme::ThemePreference::Dark => MessageId::ThemeDarkDetail,
+            crate::theme::ThemePreference::Light => MessageId::ThemeLightDetail,
+        },
+    )
+}
+
+fn polarity_label(locale: Locale, polarity: crate::theme::Polarity) -> &'static str {
+    tr(
+        locale,
+        match polarity {
+            crate::theme::Polarity::Dark => MessageId::ThemeDark,
+            crate::theme::Polarity::Light => MessageId::ThemeLight,
+        },
+    )
+}
+
+fn theme_preview_action(index: usize) -> Option<Action> {
+    crate::theme::ThemePreference::ALL
+        .get(index)
+        .copied()
+        .map(Action::PreviewThemePreference)
+}
+
 /// Terminal cell width for layout (CJK is typically 2 cells per character).
 fn display_cells(value: &str) -> u16 {
     UnicodeWidthStr::width(value).min(u16::MAX as usize) as u16
@@ -8148,6 +8535,7 @@ struct TranscriptRenderOptions {
     tool_expand_key: &'static str,
     tool_inspect_key: &'static str,
     expanded_output_budget: usize,
+    activity_elapsed_ms: u128,
 }
 
 impl TranscriptRenderOptions {
@@ -8170,6 +8558,7 @@ struct TranscriptStyles {
     code: Style,
     link: Style,
     headings: [Style; 6],
+    live: Style,
 }
 
 fn truncate_cells(value: &str, max_width: usize, glyphs: Glyphs) -> String {
@@ -8219,6 +8608,7 @@ impl TranscriptLayout {
             tool_expand_key,
             tool_inspect_key,
             expanded_output_budget,
+            activity_elapsed_ms: 0,
         };
         let mut items = Vec::with_capacity(blocks.len());
         let mut top = 0_usize;
@@ -8358,6 +8748,7 @@ impl TranscriptLayout {
                 tool_expand_key: viewport.tool_expand_key,
                 tool_inspect_key: viewport.tool_inspect_key,
                 expanded_output_budget: viewport.expanded_output_budget,
+                activity_elapsed_ms: 0,
             },
             rows_into_block,
         );
@@ -8446,6 +8837,7 @@ fn transcript_block_height_with_tool_key(
                 .inspect_tool_output
                 .label(),
             expanded_output_budget: layout_contract::TOOL_OUTPUT_MAX_BUDGET,
+            activity_elapsed_ms: 0,
         },
     )
 }
@@ -8599,6 +8991,7 @@ fn transcript_lines_with_tool_key(
                 .inspect_tool_output
                 .label(),
             expanded_output_budget: layout_contract::TOOL_OUTPUT_MAX_BUDGET,
+            activity_elapsed_ms: 0,
         },
     )
 }
@@ -8627,6 +9020,7 @@ fn transcript_lines_with_tool_key_and_density(
         code: code_style,
         link: link_style,
         headings,
+        live: live_style,
     } = styles;
     let cell_kind = SemanticCellKind::from_block(block);
     if cell_kind == SemanticCellKind::User {
@@ -8795,7 +9189,12 @@ fn transcript_lines_with_tool_key_and_density(
         );
     }
     let label = transcript_label(locale, block.kind);
-    let marker = if block.is_collapsible() {
+    let live_thinking = cell_kind == SemanticCellKind::Thinking && block.is_live_work();
+    let live_marker = live_thinking
+        .then(|| format!("{} ", glyphs.activity_spinner(options.activity_elapsed_ms)));
+    let marker = if let Some(marker) = live_marker.as_deref() {
+        marker
+    } else if block.is_collapsible() {
         if block.expanded {
             glyphs.disclosure_open()
         } else {
@@ -8824,17 +9223,22 @@ fn transcript_lines_with_tool_key_and_density(
     // When intent is primary, show technical target as dim secondary text on the
     // same row (member title holds the path/command for single-tool blocks).
     let dim_target = tool_row_dim_target(block, &block_title);
-    let mut title_spans = vec![
-        Span::styled(format!("{marker}{label}"), label_style),
-        Span::styled(
-            format!(
-                "{}{}",
-                if label.is_empty() { "" } else { "  " },
-                block_title
-            ),
-            text_style,
+    let mut title_spans = if let Some(live_marker) = live_marker {
+        vec![
+            Span::styled(live_marker, live_style),
+            Span::styled(label.to_owned(), label_style),
+        ]
+    } else {
+        vec![Span::styled(format!("{marker}{label}"), label_style)]
+    };
+    title_spans.push(Span::styled(
+        format!(
+            "{}{}",
+            if label.is_empty() { "" } else { "  " },
+            block_title
         ),
-    ];
+        text_style,
+    ));
     if let Some(target) = dim_target {
         title_spans.push(Span::styled(format!("  {target}"), metadata_style));
     }
@@ -9950,6 +10354,7 @@ fn cached_transcript_lines_with_tool_key(
                 .inspect_tool_output
                 .label(),
             expanded_output_budget: layout_contract::TOOL_OUTPUT_MAX_BUDGET,
+            activity_elapsed_ms: 0,
         },
     )
 }
@@ -10117,7 +10522,7 @@ fn failure_action_layout(
         .available_actions(&failure.current_model)
         .into_iter()
         .map(|action| {
-            let label = failure_action_label(locale, action, expanded).to_owned();
+            let label = format!("[ {} ]", failure_action_label(locale, action, expanded));
             let width = UnicodeWidthStr::width(label.as_str());
             let start_cell = cursor;
             cursor = cursor.saturating_add(width).saturating_add(2);
@@ -10527,6 +10932,8 @@ mod transcript_tests {
             density_path: None,
             glyph_preference: crate::glyphs::GlyphPreference::Auto,
             glyphs_path: None,
+            theme_preference: crate::theme::ThemePreference::Auto,
+            theme_path: None,
             carina_bin: None,
             no_alt_screen: true,
             screen_mode: None,
@@ -11075,7 +11482,7 @@ mod transcript_tests {
     }
 
     #[test]
-    fn conversation_header_exposes_reasoning_inside_the_model_route() {
+    fn conversation_header_shows_the_model_without_reasoning_telemetry() {
         let (mut app, root, server) = production_render_app();
         app.options.locale = Some(Locale::ZhHans.product_id().into());
         app.locale_index = Locale::ALL
@@ -11098,21 +11505,25 @@ mod transcript_tests {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 18)).unwrap();
         terminal.draw(|frame| app.render(frame)).unwrap();
-        let route = format!("gpt-5.6-sol  {}  high 推理", app.theme.glyphs.separator());
         let rendered = rendered_frame_text(terminal.backend().buffer());
-        assert!(rendered.contains(&route), "{rendered}");
+        let header = rendered.lines().nth(1).unwrap_or_default();
+        assert!(header.contains("gpt-5.6-sol"), "{rendered}");
+        assert!(
+            !header.contains("推理") && !header.contains("reasoning"),
+            "conversation header must not dump reasoning telemetry\n{rendered}"
+        );
         let model_positions =
             action_positions(&app, terminal.backend().buffer().area, Action::OpenModels);
         assert_eq!(
             model_positions.len(),
-            UnicodeWidthStr::width(route.as_str()) + 2,
-            "the padded model and effort route must be one hit target"
+            UnicodeWidthStr::width("gpt-5.6-sol") + 2,
+            "the padded model identity must be one hit target"
         );
         assert!(
             model_positions
                 .windows(2)
                 .all(|pair| pair[0].y == pair[1].y && pair[0].x + 1 == pair[1].x),
-            "the combined route must not contain non-clickable gaps"
+            "the model action must not contain non-clickable gaps"
         );
 
         let mut narrow =
@@ -11123,7 +11534,7 @@ mod transcript_tests {
         assert!(!rendered.contains("推理"), "{rendered}");
         assert!(
             action_positions(&app, narrow.backend().buffer().area, Action::OpenModels).is_empty(),
-            "narrow layouts must hide the combined route atomically"
+            "narrow layouts must hide the model action atomically"
         );
 
         server.join().unwrap();
@@ -11703,16 +12114,18 @@ mod transcript_tests {
             app.queued_prompts.push_back("then summarize".into());
         }
         let mut terminal =
-            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 2)).unwrap();
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 3)).unwrap();
         terminal
             .draw(|frame| {
                 app.interactions.begin_frame();
                 app.render_composer_chrome(frame, frame.area());
             })
             .unwrap();
-        let queue_position = (0..width).find_map(|x| {
-            let position = Position::new(x, 1);
-            (app.interactions.action_at(position) == Some(Action::OpenQueue)).then_some(position)
+        let queue_position = (0..3).find_map(|y| {
+            (0..width).find_map(|x| {
+                let position = Position::new(x, y);
+                (app.interactions.action_at(position) == Some(Action::OpenQueue)).then_some(position)
+            })
         });
         let rendered = rendered_frame_contract(terminal.backend().buffer());
         server.join().unwrap();
@@ -11732,14 +12145,33 @@ mod transcript_tests {
                         crate::glyphs::GlyphMode::Unicode,
                         crate::theme::ColorLevel::TrueColor,
                     );
-                    assert_eq!(
-                        rendered.lines().any(|line| {
-                            !line.trim().is_empty()
-                                && !line.starts_with("size=")
-                                && line.trim() != "styles:"
-                        }),
-                        state != "idle"
+                    assert!(
+                        rendered.contains("Describe")
+                            || rendered.contains("描述")
+                            || rendered.contains("❯")
+                            || rendered.contains("> "),
+                        "composer prompt should remain visible\n{rendered}"
                     );
+                    if state == "idle" {
+                        assert!(
+                            !rendered.contains("Running")
+                                && !rendered.contains("queue")
+                                && !rendered.contains("waiting"),
+                            "{rendered}"
+                        );
+                    } else {
+                        assert!(
+                            rendered.contains("Running")
+                                || rendered.contains("Preparing")
+                                || rendered.contains("waiting")
+                                || rendered.contains("queue")
+                                || rendered.contains("运行")
+                                || rendered.contains("整理")
+                                || rendered.contains("队列")
+                                || rendered.contains("批准"),
+                            "{rendered}"
+                        );
+                    }
                     assert_eq!(queue_position.is_some(), state == "queued");
                     insta::assert_snapshot!(
                         format!("composer_chrome_{locale_name}_{state}_{width}"),
@@ -11793,18 +12225,17 @@ mod transcript_tests {
                 app.execution_status = "running".into();
                 app.queued_prompts.push_back("next task".into());
                 let mut terminal =
-                    ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 2)).unwrap();
+                    ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 3)).unwrap();
                 terminal
                     .draw(|frame| {
                         app.interactions.begin_frame();
                         app.render_composer_chrome(frame, frame.area());
                     })
                     .unwrap();
-                let queue_cells = (0..120)
-                    .filter_map(|x| {
-                        let position = Position::new(x, 1);
-                        (app.interactions.action_at(position) == Some(Action::OpenQueue))
-                            .then_some(position)
+                let queue_cells = (0..3_u16)
+                    .flat_map(|y| (0..120_u16).map(move |x| Position::new(x, y)))
+                    .filter(|position| {
+                        app.interactions.action_at(*position) == Some(Action::OpenQueue)
                     })
                     .collect::<Vec<_>>();
                 assert!(!queue_cells.is_empty());
@@ -11841,7 +12272,7 @@ mod transcript_tests {
             app.execution_status = "running".into();
             app.queued_prompts.push_back("next task".into());
             let mut terminal =
-                ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 2)).unwrap();
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 3)).unwrap();
             terminal
                 .draw(|frame| {
                     app.interactions.begin_frame();
@@ -11849,11 +12280,13 @@ mod transcript_tests {
                 })
                 .unwrap();
             let before = rendered_frame_contract(terminal.backend().buffer());
-            let queue_position = (0..80)
-                .find_map(|x| {
-                    let position = Position::new(x, 1);
-                    (app.interactions.action_at(position) == Some(Action::OpenQueue))
-                        .then_some(position)
+            let queue_position = (0..3)
+                .find_map(|y| {
+                    (0..80).find_map(|x| {
+                        let position = Position::new(x, y);
+                        (app.interactions.action_at(position) == Some(Action::OpenQueue))
+                            .then_some(position)
+                    })
                 })
                 .expect("queued work should register a queue hit region");
             let before_anchor = anchor_position(&before, "queue 1");
@@ -12100,7 +12533,7 @@ mod transcript_tests {
                             "width={width}\n{rendered}"
                         );
                         assert!(
-                            header.contains(tr(locale, MessageId::ReasoningOff)),
+                            !header.contains(tr(locale, MessageId::ReasoningOff)),
                             "width={width}\n{rendered}"
                         );
                         for repeated in ["⇧Tab", "Direct API"] {
@@ -12126,7 +12559,11 @@ mod transcript_tests {
                             "width={width}"
                         );
                         assert_eq!(app.composer_area.height, 1, "width={width}");
-                        assert_eq!(app.composer_area.bottom(), buffer.area.bottom());
+                        assert_eq!(
+                            app.composer_area.bottom(),
+                            buffer.area.bottom().saturating_sub(1),
+                            "width={width}"
+                        );
                         let prompt = Position::new(reading_axis.x, app.composer_area.y);
                         assert_eq!(
                             app.interactions.action_at(prompt),
@@ -12327,7 +12764,12 @@ mod transcript_tests {
                 app.transcript_geometry.viewport,
                 app.composer_area
             );
-            assert_eq!(app.composer_area.bottom(), height);
+            assert_eq!(
+                app.composer_area.bottom(),
+                height.saturating_sub(1),
+                "height={height} composer={:?}",
+                app.composer_area
+            );
             assert!(
                 app.composer_area.height <= layout_contract::COMPOSER_MAX_HEIGHT,
                 "height={height} composer={:?}",
@@ -12683,6 +13125,23 @@ mod transcript_tests {
             source_prompt: body.into(),
             branchable: kind == BlockKind::User,
             layout_revision: 1,
+        }
+    }
+
+    fn transcript_render_options(elapsed_ms: u128) -> TranscriptRenderOptions {
+        TranscriptRenderOptions {
+            locale: Locale::En,
+            density: DensityMode::Compact,
+            glyph_mode: GlyphMode::Unicode,
+            content_width: 80,
+            tool_expand_key: crate::keybinding::KeyBindings::default()
+                .expand_tools
+                .label(),
+            tool_inspect_key: crate::keybinding::KeyBindings::default()
+                .inspect_tool_output
+                .label(),
+            expanded_output_budget: layout_contract::TOOL_OUTPUT_MAX_BUDGET,
+            activity_elapsed_ms: elapsed_ms,
         }
     }
 
@@ -13413,8 +13872,10 @@ mod transcript_tests {
         };
         app.theme = crate::theme::Theme::new(polarity, color_level);
         app.theme.glyphs = Glyphs::new(glyph_mode);
-        app.overlays
-            .replace(Overlay::Settings(SettingsOverlay::symbols(preference)));
+        app.overlays.replace(Overlay::Settings(SettingsOverlay::symbols(
+            preference,
+            crate::theme::ThemePreference::Auto,
+        )));
 
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
@@ -13826,6 +14287,92 @@ mod transcript_tests {
                 ..
             }))
         ));
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn theme_preview_is_live_reversible_and_persists_only_on_apply() {
+        let (mut app, root, server) = production_render_app();
+        let config = root.join("config.json");
+        let original_config = br#"{"max_concurrent_tasks":4,"tui_locale":"en"}"#;
+        std::fs::write(&config, original_config).unwrap();
+        app.options.theme_path = Some(config.clone());
+        app.theme_env_override = false;
+        app.theme_preference = crate::theme::ThemePreference::Dark;
+        app.theme = crate::theme::Theme::new(
+            crate::theme::Polarity::Dark,
+            crate::theme::ColorLevel::TrueColor,
+        );
+        app.theme.glyphs = Glyphs::new(GlyphMode::Unicode);
+        app.composer.set_text("retain this operator draft");
+
+        assert_eq!(app.handle_slash_command("/theme"), Some(true));
+        assert!(matches!(
+            app.overlays.active(),
+            Some(Overlay::Settings(SettingsOverlay {
+                page: SettingsPage::Theme,
+                ..
+            }))
+        ));
+        app.apply_action(Action::PreviewThemePreference(
+            crate::theme::ThemePreference::Light,
+        ));
+        assert_eq!(app.theme_preference, crate::theme::ThemePreference::Dark);
+        assert_eq!(app.theme.polarity, crate::theme::Polarity::Light);
+        assert_eq!(app.composer.text(), "retain this operator draft");
+        assert_eq!(std::fs::read(&config).unwrap(), original_config);
+
+        app.apply_action(Action::CancelThemePreview);
+        assert_eq!(app.theme_preference, crate::theme::ThemePreference::Dark);
+        assert_eq!(app.theme.polarity, crate::theme::Polarity::Dark);
+        assert_eq!(std::fs::read(&config).unwrap(), original_config);
+        assert!(matches!(
+            app.overlays.active(),
+            Some(Overlay::Settings(SettingsOverlay {
+                page: SettingsPage::Root,
+                ..
+            }))
+        ));
+
+        assert_eq!(app.handle_slash_command("/theme light"), Some(true));
+        assert_eq!(app.theme.polarity, crate::theme::Polarity::Light);
+        assert_eq!(app.theme_preference, crate::theme::ThemePreference::Dark);
+        assert!(app.close_top_non_governance());
+        assert!(app.overlays.active().is_none());
+        assert_eq!(app.theme.polarity, crate::theme::Polarity::Dark);
+        assert_eq!(std::fs::read(&config).unwrap(), original_config);
+
+        app.apply_action(Action::OpenThemePreview);
+        app.apply_action(Action::PreviewThemePreference(
+            crate::theme::ThemePreference::Light,
+        ));
+        app.apply_action(Action::ApplyThemePreference);
+        assert_eq!(app.theme_preference, crate::theme::ThemePreference::Light);
+        assert_eq!(app.theme.polarity, crate::theme::Polarity::Light);
+        assert!(app.notice.is_localized(MessageId::ThemeApplied));
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+        assert_eq!(persisted["max_concurrent_tasks"], 4);
+        assert_eq!(persisted["tui_locale"], "en");
+        assert_eq!(persisted["tui_theme"], "light");
+
+        assert_eq!(app.handle_slash_command("/theme twilight"), Some(false));
+        assert!(app.notice.is_localized(MessageId::ThemeUnknownChoice));
+
+        app.options.theme_path = Some(root.clone());
+        app.apply_action(Action::OpenThemePreview);
+        app.apply_action(Action::PreviewThemePreference(
+            crate::theme::ThemePreference::Dark,
+        ));
+        app.apply_action(Action::ApplyThemePreference);
+        assert_eq!(
+            app.theme_preference,
+            crate::theme::ThemePreference::Light,
+            "failed persistence must not commit the previewed preference"
+        );
+        assert!(app.notice.is_localized(MessageId::ThemePersistFailed));
 
         server.join().unwrap();
         std::fs::remove_dir_all(root).unwrap();
@@ -14768,6 +15315,12 @@ mod transcript_tests {
                 width + UnicodeWidthStr::width(Glyphs::default().tool_gutter()) <= 80,
                 "failure actions overflow at 80 columns for {locale:?}: {actions:?}"
             );
+            assert!(
+                actions
+                    .iter()
+                    .all(|action| action.label.starts_with("[ ") && action.label.ends_with(" ]")),
+                "failure actions must be chips for {locale:?}: {actions:?}"
+            );
         }
     }
 
@@ -14810,6 +15363,12 @@ mod transcript_tests {
         assert_eq!(style_for("Details").fg, theme.transcript_metadata().fg);
         assert_eq!(style_for("Copy ID").fg, theme.transcript_metadata().fg);
         assert_ne!(style_for("Retry current").fg, Some(theme.danger));
+        assert!(
+            actions
+                .iter()
+                .any(|(content, _)| content == "[ Retry current ]"),
+            "{actions:?}"
+        );
 
         block.failure.as_mut().expect("failure").focused_action =
             Some(FailureRecoveryAction::Details);
@@ -14819,6 +15378,71 @@ mod transcript_tests {
             .find(|(content, _)| content.contains("Details"))
             .expect("focused details");
         assert!(details.1.add_modifier.contains(Modifier::REVERSED));
+    }
+
+    #[test]
+    fn approval_overlay_uses_warning_chrome_not_a_danger_room() {
+        let (mut app, root, server) = production_render_app();
+        app.theme = crate::theme::Theme::new(
+            crate::theme::Polarity::Dark,
+            crate::theme::ColorLevel::TrueColor,
+        );
+        app.theme.glyphs = Glyphs::new(crate::glyphs::GlyphMode::Unicode);
+        app.overlays.replace(Overlay::Approval(crate::overlay::ApprovalOverlay {
+            decision_id: "dec-1".into(),
+            run_id: "run-1".into(),
+            capability: "shell.exec".into(),
+            resource: "cargo test".into(),
+            reason: "Network access".into(),
+            label: "Run tests".into(),
+            diff: String::new(),
+            scope: ApprovalScope::Once,
+            resolving: false,
+            error: String::new(),
+            scroll: 0,
+        }));
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let rendered = rendered_frame_text(buffer);
+        let title = tr(Locale::En, MessageId::ApprovalRequired);
+        assert!(rendered.contains(title), "{rendered}");
+        let popup = centered(
+            buffer.area,
+            layout_contract::APPROVAL_POPUP.0,
+            layout_contract::APPROVAL_POPUP.1,
+        );
+        let mut warning_border = 0usize;
+        let mut danger_border = 0usize;
+        for y in popup.y..popup.bottom() {
+            for x in popup.x..popup.right() {
+                if y > popup.y && y + 1 < popup.bottom() && x > popup.x && x + 1 < popup.right() {
+                    continue;
+                }
+                let cell = &buffer[(x, y)];
+                if cell.symbol() == " " || cell.fg == Color::Reset {
+                    continue;
+                }
+                if cell.fg == app.theme.warning {
+                    warning_border += 1;
+                }
+                if cell.fg == app.theme.danger {
+                    danger_border += 1;
+                }
+            }
+        }
+        assert!(
+            warning_border > 0,
+            "approval border should use warning\n{rendered}"
+        );
+        assert_eq!(
+            danger_border, 0,
+            "approval overlay must not paint a danger room\n{rendered}"
+        );
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -15665,6 +16289,7 @@ mod transcript_tests {
                 tool_expand_key: expand_key,
                 tool_inspect_key: inspect_key,
                 expanded_output_budget: layout_contract::TOOL_OUTPUT_MAX_BUDGET,
+                activity_elapsed_ms: 0,
             },
         );
         assert_ne!(density_refreshed[0].spans[0].content, "cached rows");
@@ -16670,6 +17295,76 @@ mod transcript_tests {
             lines[0].spans.last().unwrap().style,
             theme.transcript_metadata()
         );
+    }
+
+    #[test]
+    fn live_thinking_header_uses_a_width_locked_spinner() {
+        let mut thinking = block(BlockKind::Thinking, "Inspecting the renderer");
+        thinking.status.clear();
+        assert!(thinking.is_live_work());
+
+        let glyphs = Glyphs::new(GlyphMode::Unicode);
+        let live = Style::default().add_modifier(Modifier::BOLD);
+        let styles = TranscriptStyles {
+            glyphs,
+            live,
+            ..TranscriptStyles::default()
+        };
+        let first = format!("{} ", glyphs.activity_spinner(0));
+        let later = format!("{} ", glyphs.activity_spinner(33));
+        assert_eq!(UnicodeWidthStr::width(first.as_str()), 2);
+        assert_eq!(UnicodeWidthStr::width(later.as_str()), 2);
+        assert_eq!(
+            UnicodeWidthStr::width(first.as_str()),
+            UnicodeWidthStr::width(glyphs.disclosure_open())
+        );
+        assert_ne!(first, later);
+
+        let lines = transcript_lines_with_tool_key_and_density(
+            &thinking,
+            Locale::En,
+            styles,
+            80,
+            transcript_render_options(0),
+        );
+        assert_eq!(lines[0].spans[0].content, first);
+        assert_eq!(lines[0].spans[0].style, live);
+        let header = plain(&lines)[0].clone();
+        assert!(header.starts_with(&first));
+        assert!(header.contains("Thinking"));
+        assert!(!header.contains(glyphs.disclosure_open()));
+        assert!(!header.contains(glyphs.disclosure_closed()));
+
+        let advanced = plain(&transcript_lines_with_tool_key_and_density(
+            &thinking,
+            Locale::En,
+            styles,
+            80,
+            transcript_render_options(33),
+        ));
+        assert!(advanced[0].starts_with(&later));
+
+        let reduced = Glyphs::new_with_reduced_motion(GlyphMode::Unicode, true);
+        let frozen = format!("{} ", reduced.activity_spinner(1_000));
+        assert_eq!(frozen, first);
+        let reduced_header = plain(&transcript_lines_with_tool_key_and_density(
+            &thinking,
+            Locale::En,
+            TranscriptStyles {
+                glyphs: reduced,
+                live,
+                ..TranscriptStyles::default()
+            },
+            80,
+            transcript_render_options(1_000),
+        ));
+        assert!(reduced_header[0].starts_with(&frozen));
+
+        thinking.status = "complete".into();
+        assert!(!thinking.is_live_work());
+        let settled = plain(&transcript_lines(&thinking, Locale::En, styles, 80));
+        assert!(settled[0].starts_with(glyphs.disclosure_open()));
+        assert!(!settled[0].starts_with(&first));
     }
 
     #[test]

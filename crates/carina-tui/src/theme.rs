@@ -80,15 +80,42 @@ pub enum ThemePreference {
 }
 
 impl ThemePreference {
-    pub fn from_env() -> Self {
-        Self::parse(&env::var("CARINA_THEME").unwrap_or_default())
+    pub const ALL: [Self; 3] = [Self::Auto, Self::Dark, Self::Light];
+
+    pub fn from_env() -> Option<Self> {
+        let value = env::var("CARINA_THEME").ok()?;
+        let value = value.trim();
+        if value.is_empty() {
+            return None;
+        }
+        Some(Self::parse(value).unwrap_or(Self::Auto))
     }
 
-    fn parse(value: &str) -> Self {
-        match value.to_ascii_lowercase().as_str() {
-            "dark" => Self::Dark,
-            "light" => Self::Light,
-            _ => Self::Auto,
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "dark" => Some(Self::Dark),
+            "light" => Some(Self::Light),
+            _ => None,
+        }
+    }
+
+    pub const fn as_config_value(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Dark => "dark",
+            Self::Light => "light",
+        }
+    }
+
+    pub fn polarity(self, background: Option<[u8; 3]>) -> Polarity {
+        match self {
+            Self::Dark => Polarity::Dark,
+            Self::Light => Polarity::Light,
+            Self::Auto => background
+                .map(classify_polarity)
+                .or_else(polarity_from_colorfgbg)
+                .unwrap_or(Polarity::Dark),
         }
     }
 }
@@ -144,16 +171,19 @@ impl Theme {
     }
 
     pub fn detected(background: Option<[u8; 3]>) -> Self {
-        let preference = ThemePreference::from_env();
-        let polarity = match preference {
-            ThemePreference::Dark => Polarity::Dark,
-            ThemePreference::Light => Polarity::Light,
-            ThemePreference::Auto => background
-                .map(classify_polarity)
-                .or_else(polarity_from_colorfgbg)
-                .unwrap_or(Polarity::Dark),
-        };
-        Self::new(polarity, ColorLevel::detect())
+        Self::from_preference(
+            ThemePreference::from_env().unwrap_or(ThemePreference::Auto),
+            background,
+            ColorLevel::detect(),
+        )
+    }
+
+    pub fn from_preference(
+        preference: ThemePreference,
+        background: Option<[u8; 3]>,
+        level: ColorLevel,
+    ) -> Self {
+        Self::new(preference.polarity(background), level)
     }
 
     pub fn new(polarity: Polarity, level: ColorLevel) -> Self {
@@ -616,9 +646,19 @@ mod tests {
     }
     #[test]
     fn explicit_theme_preference_is_case_insensitive_and_safe() {
-        assert_eq!(ThemePreference::parse("LIGHT"), ThemePreference::Light);
-        assert_eq!(ThemePreference::parse("dark"), ThemePreference::Dark);
-        assert_eq!(ThemePreference::parse("unknown"), ThemePreference::Auto);
+        assert_eq!(ThemePreference::parse("LIGHT"), Some(ThemePreference::Light));
+        assert_eq!(ThemePreference::parse("dark"), Some(ThemePreference::Dark));
+        assert_eq!(ThemePreference::parse("auto"), Some(ThemePreference::Auto));
+        assert_eq!(ThemePreference::parse("unknown"), None);
+        assert_eq!(ThemePreference::Auto.as_config_value(), "auto");
+        assert_eq!(
+            ThemePreference::Dark.polarity(Some([250, 250, 250])),
+            Polarity::Dark
+        );
+        assert_eq!(
+            ThemePreference::Light.polarity(Some([10, 10, 10])),
+            Polarity::Light
+        );
     }
     #[test]
     fn color_level_detection_covers_every_fallback_and_host_promotion() {

@@ -3,6 +3,7 @@ use std::collections::{HashSet, VecDeque};
 use crate::component::Action;
 use crate::file_viewer::FileViewer;
 use crate::glyphs::GlyphPreference;
+use crate::theme::ThemePreference;
 use crate::i18n::MessageId;
 use crate::product_projection::ProductProjection;
 use crate::rpc::{
@@ -500,6 +501,8 @@ pub struct SettingsOverlay {
     pub page: SettingsPage,
     pub symbol_selected: usize,
     pub original_preference: GlyphPreference,
+    pub theme_selected: usize,
+    pub original_theme_preference: ThemePreference,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -507,25 +510,38 @@ pub enum SettingsPage {
     #[default]
     Root,
     Symbols,
+    Theme,
 }
 
 impl SettingsOverlay {
-    pub fn root(preference: GlyphPreference) -> Self {
+    pub fn root(glyph_preference: GlyphPreference, theme_preference: ThemePreference) -> Self {
         Self {
             selected: 0,
             page: SettingsPage::Root,
             symbol_selected: GlyphPreference::ALL
                 .iter()
-                .position(|candidate| *candidate == preference)
+                .position(|candidate| *candidate == glyph_preference)
                 .unwrap_or_default(),
-            original_preference: preference,
+            original_preference: glyph_preference,
+            theme_selected: ThemePreference::ALL
+                .iter()
+                .position(|candidate| *candidate == theme_preference)
+                .unwrap_or_default(),
+            original_theme_preference: theme_preference,
         }
     }
 
-    pub fn symbols(preference: GlyphPreference) -> Self {
+    pub fn symbols(glyph_preference: GlyphPreference, theme_preference: ThemePreference) -> Self {
         Self {
             page: SettingsPage::Symbols,
-            ..Self::root(preference)
+            ..Self::root(glyph_preference, theme_preference)
+        }
+    }
+
+    pub fn theme(glyph_preference: GlyphPreference, theme_preference: ThemePreference) -> Self {
+        Self {
+            page: SettingsPage::Theme,
+            ..Self::root(glyph_preference, theme_preference)
         }
     }
 
@@ -533,6 +549,12 @@ impl SettingsOverlay {
         GlyphPreference::ALL[self
             .symbol_selected
             .min(GlyphPreference::ALL.len().saturating_sub(1))]
+    }
+
+    pub fn theme_preference(&self) -> ThemePreference {
+        ThemePreference::ALL[self
+            .theme_selected
+            .min(ThemePreference::ALL.len().saturating_sub(1))]
     }
 }
 

@@ -562,7 +562,7 @@ fn context_engine_summary(map: &serde_json::Map<String, Value>) -> String {
         .and_then(Value::as_str)
         .unwrap_or("no bytes were transformed");
     if engine == "noop" || reason.contains("no-op") || reason.contains("no bytes") {
-        format!("engine={engine} — no bytes transformed")
+        format!("engine={engine} - no bytes transformed")
     } else {
         "Healthy".into()
     }

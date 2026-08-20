@@ -2,7 +2,13 @@
 source: crates/carina-tui/src/app/render.rs
 expression: rendered
 ---
-size=80x2
-⠋ Running focused checks 0s  Esc pause safely
+size=80x3
+─ ⠋ Running focused checks 0s  Esc pause safely─────────────────────────────────
+❯ Describe the change you want to make.
+────────────────────────────────────────────────────────────────────────────────
 styles:
-(0,0)..(45,0) (Rgb(142, 219, 210), Reset, NONE)
+(0,0)..(2,0) (Rgb(52, 65, 68), Reset, NONE)
+(2,0)..(47,0) (Rgb(142, 219, 210), Reset, NONE)
+(47,0)..(80,0) (Rgb(52, 65, 68), Reset, NONE)
+(0,1)..(80,1) (Rgb(150, 160, 156), Reset, NONE)
+(0,2)..(80,2) (Rgb(52, 65, 68), Reset, NONE)

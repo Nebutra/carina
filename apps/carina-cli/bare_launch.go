@@ -140,6 +140,10 @@ func prepareRustUILaunch(opts interactiveOptions) (rustUILaunch, error) {
 	if err != nil {
 		return rustUILaunch{}, err
 	}
+	theme, err := config.InspectTUITheme(home, workspace)
+	if err != nil {
+		return rustUILaunch{}, err
+	}
 	altScreen, err := config.InspectTUIAlternateScreen(home, workspace)
 	if err != nil {
 		return rustUILaunch{}, err
@@ -221,6 +225,8 @@ func prepareRustUILaunch(opts interactiveOptions) (rustUILaunch, error) {
 		density.PersistPath,
 		glyphs.Value,
 		glyphs.PersistPath,
+		theme.Value,
+		theme.PersistPath,
 		carinaBinary,
 		altScreen,
 	)
@@ -275,7 +281,7 @@ func buildRuntimeModeSetupArgs(opts interactiveOptions, home, carinaBinary strin
 	return args
 }
 
-func buildRustUIArgs(opts interactiveOptions, socket, workspace, locale, localePath, density, densityPath, glyphs, glyphsPath, carinaBinary, altScreen string) []string {
+func buildRustUIArgs(opts interactiveOptions, socket, workspace, locale, localePath, density, densityPath, glyphs, glyphsPath, theme, themePath, carinaBinary, altScreen string) []string {
 	args := []string{
 		"--socket", socket,
 		"--workspace", workspace,
@@ -297,6 +303,10 @@ func buildRustUIArgs(opts interactiveOptions, socket, workspace, locale, localeP
 	args = append(args, "--glyphs", glyphs)
 	if glyphsPath != "" {
 		args = append(args, "--glyphs-path", glyphsPath)
+	}
+	args = append(args, "--theme", theme)
+	if themePath != "" {
+		args = append(args, "--theme-path", themePath)
 	}
 	return appendTerminalArgs(args, opts, altScreen)
 }

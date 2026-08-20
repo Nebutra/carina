@@ -3,7 +3,7 @@ source: crates/carina-tui/src/app/render.rs
 expression: rendered
 ---
 size=120x24
-Carina ▾   ·  carina conversation                                                       model  ·  reasoning off   Build
+Carina ▾   ·  carina conversation                                                                         model   Build
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
                              ╭ Settings / Symbols ────────────────────────────────────────╮
                              │ Choose the row that stays aligned. Boxes or misaligned     │
@@ -28,7 +28,7 @@ Carina ▾   ·  carina conversation                                            
 styles:
 (0,0)..(9,0) (Reset, Reset, BOLD)
 (9,0)..(33,0) (Rgb(150, 160, 156), Reset, NONE)
-(87,0)..(112,0) (Rgb(150, 160, 156), Reset, NONE)
+(105,0)..(112,0) (Rgb(150, 160, 156), Reset, NONE)
 (113,0)..(120,0) (Rgb(142, 219, 210), Reset, BOLD)
 (0,1)..(120,1) (Rgb(52, 65, 68), Reset, NONE)
 (29,2)..(91,2) (Rgb(142, 219, 210), Reset, BOLD)

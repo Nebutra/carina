@@ -1,9 +1,9 @@
 # Competitive Research 2026-08 — Artifact Index
 
 > 取证日期：2026-08-02  
-> **现状刷新：2026-08-20 @ Carina v0.8.27** — 见 **[16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md)**  
+> **现状刷新：2026-08-20 @ Carina v0.8.28** — 诚实性见 **[16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md)**；审美见 **[17-tui-aesthetic-audit.md](./17-tui-aesthetic-audit.md)**  
 > 范围：Carina vs Jcode / Grok Build / Claude Code (notes) / Codex / Oh My Pi (OMP) / DeepSeek Harness（公开文档，本机无 clone）  
-> 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图 → **post-0.8.27：无新 P0/P1**
+> 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图 → **诚实性无新 P0/P1；审美程序 FAIL，见 17**
 
 ---
 
@@ -11,7 +11,8 @@
 
 | 文件 | 角色 |
 |------|------|
-| **[16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md)** | **现状真相**：0.8.27；无新 P0/P1 |
+| **[17-tui-aesthetic-audit.md](./17-tui-aesthetic-audit.md)** | **审美 FAIL**：好看标尺、表面盘点、Ugly Patterns、评分、P0 刀单；草案 [`crates/carina-tui/DESIGN.md`](../../../crates/carina-tui/DESIGN.md) |
+| **[16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md)** | **诚实性真相**：0.8.28 线；无新诚实性 P0/P1 |
 | [15-post-0.8.26-refresh.md](./15-post-0.8.26-refresh.md) | 历史：0.8.26 收口 |
 | [14-post-0.8.25-refresh.md](./14-post-0.8.25-refresh.md) | 历史：G25-01 TUI Goal 暂停文案 |
 | [13-post-0.8.24-refresh.md](./13-post-0.8.24-refresh.md) | 历史：0.8.24→0.8.25 Goal×stop + R-01 |
@@ -38,6 +39,7 @@
 | 4 | [04-prd-issues.md](./04-prd-issues.md) | Phase 4 | ISSUE-001…018 全量 PRD（P0–P2） |
 | 5 | [05-implementation-roadmap.md](./05-implementation-roadmap.md) | Phase 5 | 分阶段闭环计划 |
 | M | [00-MASTER-REPORT.md](./00-MASTER-REPORT.md) | Synthesis | 主报告（索引 + 内嵌 Top P0） |
+| 17 | [17-tui-aesthetic-audit.md](./17-tui-aesthetic-audit.md) | Aesthetic | TUI 审美专项：标尺 / 盘点 / FAIL 清单 / 评分 / P0–P2 |
 | 7 | [07-post-0.8-gap-refresh.md](./07-post-0.8-gap-refresh.md) | Post-ship | **0.8 GAP 刷新 + SWOT + 残余清单** |
 | 8 | [08-screen-mode-residual-slice.md](./08-screen-mode-residual-slice.md) | Residual | ScreenMode 回归铁门 + 操作者可见性 |
 | 9 | [09-steer-queue-residual-slice.md](./09-steer-queue-residual-slice.md) | Residual | Steer/interrupt 铁门 + queue inspect 面板 |

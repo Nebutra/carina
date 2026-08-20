@@ -24,7 +24,11 @@ borders, spacing, DIM, and focus styles instead of opaque surfaces.
 
 ## Detection and fallback
 
-`CARINA_THEME=dark|light|auto` owns polarity. Auto mode starts with the fast
+`tui_theme` persists `auto|dark|light`. `/theme` and the Settings Theme row
+open the same reversible live preview: polarity updates the whole surface
+immediately, Enter saves, Esc keeps the previous choice. This is not a theme
+catalog. `CARINA_THEME` is an explicit environment override and must be
+disclosed when it owns the active polarity. Auto mode starts with the fast
 `COLORFGBG` signal and accepts a bounded OSC 11 result collected before the
 event loop. Failure never delays launch beyond the probe deadline.
 
@@ -66,14 +70,30 @@ boundaries without inserted whitespace, hyphens, or mutated bytes.
 Production rendering and golden frames share `transcript_content`, which applies
 the `TRANSCRIPT_READING_MAX_WIDTH` measure instead of the wider product canvas.
 
-An empty transcript names the workspace, then teaches the live operating
-grammar (type a request, or `/help` · `/model` · `/status`). The composer
-keeps the change-request placeholder. Do not invent a second empty-state skin.
+An empty transcript is a one-shot identity, not a footer probe. When the
+transcript pane is wide and tall enough, it centers the canonical 10×5 braille
+mark, the product name, and one operating hint (`/help` · `/model` · `/status`).
+ASCII mode and short or narrow panes drop the mark and keep the name plus hint.
+The workspace name stays in the conversation header. After the first committed
+turn the identity is gone for that session. The composer keeps the
+change-request placeholder. Do not invent a second empty-state skin or a looping
+welcome poster.
 
 Composer chrome keeps persistent run/queue/HITL facts on their own row.
 Operator notices occupy a separate row above that chrome. An overlay that
 covers the notice must not count as the operator having seen it. Ambient
 tips yield when the run failed.
+
+Live tools, in-progress thinking, approvals, and failures own a one-cell outer
+accent rail (`┃` / `|`). Live thinking replaces the disclosure mark with the
+activity spinner, padded to two cells so settling back to `▾ `/`▸ ` does not
+shift the title. Composer-top and thinking-header spinners share one elapsed
+clock and one glyph class. Settled tools recede: no outer rail, only the semantic
+two-cell tree gutter on expanded detail. Assistant answers stay unboxed.
+Approval identity uses the warning/tool tone, not event-red; only failures use
+danger. Failure recovery actions render as `[ Retry ]`-style chips, not a flat
+sentence. The approval overlay uses a warning border and, in `NO_COLOR`, a
+reversed title so blocking remains structural without a red room.
 
 Expanded tool detail uses the semantic two-cell tree gutter on every source and
 continuation row. Related operational rows (tool/tool and tool/thinking in either
@@ -116,6 +136,11 @@ the Settings row open the same reversible live preview. Previewing or applying a
 choice may change glyph shapes, but it must not change transcript identity,
 drafts, selection, disclosure, ScreenMode, or hit geometry.
 
+`tui_theme` is the same kind of persisted presentation preference as density and
+symbols. Previewing or applying a polarity may change colors, but it must not
+change transcript identity, drafts, selection, disclosure, ScreenMode, or hit
+geometry.
+
 The renderer consumes one width-locked Unicode, Nerd Font, or ASCII registry.
 Automatic uses Unicode except for established legacy-terminal safety signals.
 It does not probe installed fonts and never selects Nerd Font; Nerd Font is an
@@ -139,7 +164,10 @@ disclosure form one width-locked product trigger that opens an anchored menu for
 New conversation, Conversations, Status, Settings, and Help. Below 24 cells the
 mark yields its three cells while the textual product trigger remains available.
 A paused run's Review/Resume action
-outranks the mode, followed by the model picker. Provider, reasoning, source,
+outranks the mode, followed by the model picker. The model action shows the
+model identity only; reasoning effort stays in Status and Settings. While the
+product menu is open, the product name owns the interaction accent and the mode
+chip recedes to muted so two accents never compete. Provider, reasoning, source,
 workspace, navigation, and shortcut tutorials remain available in their
 dedicated surfaces instead of being repeated above every turn. Hover/open state
 may change action style, never label, width, order, or hit geometry.
@@ -153,22 +181,24 @@ question, and plan-review overlays preempt and discard it. If resize, Inline
 mode, or a short terminal removes the rendered header anchor, the menu closes
 rather than inventing geometry.
 
-The composer is a bottom-anchored input track, not a form card. A single top
-hairline separates it from status chrome; a width-locked two-cell prompt glyph
-owns the leading column and the TextArea owns the remaining rectangle for
-rendering, wrapping, cursor placement, element hit-testing, and mouse input.
-Empty input consumes one content row and drafts grow upward to five. The full
-track focuses the composer, while clicks inside the TextArea must also place the
-cursor and composer drag/up events must complete selection. Focus remains
-structural in `NO_COLOR` through bold/reversed prompt treatment.
+The composer is a bottom-anchored open-sided field, not a four-sided form card.
+Top and bottom rails (`─` / `-`) bound the prompt; there are no left or right
+walls. A width-locked two-cell prompt glyph owns the leading column and the
+TextArea owns the remaining rectangle for rendering, wrapping, cursor placement,
+element hit-testing, and mouse input. Empty input consumes one content row and
+drafts grow upward to five. The full track focuses the composer, while clicks
+inside the TextArea must also place the cursor and composer drag/up events must
+complete selection. Focus remains structural in `NO_COLOR` through bold/reversed
+prompt treatment. Idle rails use the border token; focused rails use the
+interaction accent.
 
-Conversation state uses a state-derived zero-, one-, or two-row chrome directly
-above the bottom-anchored composer. Idle is quiet. Active work owns a narrative
-row for the current activity's elapsed time and interrupt hint, plus a compact
-Run/Queue row. Waiting, paused, failed, and unknown states use only the status
-row. A notice replaces routine narrative/status copy; a priority runtime notice
-uses the danger tone. Chrome changes compress or restore transcript height but
-never move the composer.
+Live run, queue, approval-wait, and interrupt copy occupy the **top rail**. Idle
+top rails are empty fill. Operator notices occupy a separate row above the
+composer. An overlay that covers the notice must not count as the operator
+having seen it. Ambient tips yield when the run failed. Notice rows compress or
+restore transcript height; moving status into the rails must not move the
+composer. Overlay dialogs may keep four-sided rounded borders. The conversation
+composer must not.
 
 Slots are unboxed semantic text runs separated by the canonical glyph separator.
 They use terminal-transparent backgrounds and existing muted, accent, warning,
@@ -195,10 +225,13 @@ then inference from the running model, and otherwise labels only the Next route.
 ## Motion
 
 Motion communicates liveness; it is not decoration. Activity such as a running
-execution advances at the shared 33ms scheduler/glyph cadence. Secondary status
-work such as provider validation advances at 80ms. Activity takes precedence
-when both demand classes are present, and the cadence constants that schedule a
-frame are the same constants that select its glyph.
+execution advances at the shared 33ms scheduler/glyph cadence. The same spinner
+class occupies the composer top rail and a live thinking header; both surfaces
+pad the one-cell glyph with a space so the prefix stays two cells. Secondary
+status work such as provider validation advances at 80ms. Activity takes
+precedence when both demand classes are present, and the cadence constants that
+schedule a frame are the same constants that select its glyph. Settled thinking
+restores disclosure and requests no animation.
 
 Idle, completed, failed, paused, approval-waiting, input-waiting, and unknown
 execution states do not request animation. Governance controls, borders, focus,

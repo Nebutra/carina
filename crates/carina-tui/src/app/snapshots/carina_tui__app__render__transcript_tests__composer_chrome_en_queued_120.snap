@@ -2,9 +2,15 @@
 source: crates/carina-tui/src/app/render.rs
 expression: rendered
 ---
-size=120x2
-⠋ Preparing follow-up work 0s  Esc pause safely
-queue 2
+size=120x3
+─ ⠋ Preparing follow-up work 0s  Esc pause safely · queue 2─────────────────────────────────────────────────────────────
+❯ Describe the change you want to make.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 styles:
-(0,0)..(47,0) (Rgb(142, 219, 210), Reset, NONE)
-(0,1)..(7,1) (Rgb(142, 219, 210), Reset, NONE)
+(0,0)..(2,0) (Rgb(52, 65, 68), Reset, NONE)
+(2,0)..(49,0) (Rgb(142, 219, 210), Reset, NONE)
+(49,0)..(52,0) (Rgb(150, 160, 156), Reset, NONE)
+(52,0)..(59,0) (Rgb(142, 219, 210), Reset, NONE)
+(59,0)..(120,0) (Rgb(52, 65, 68), Reset, NONE)
+(0,1)..(120,1) (Rgb(150, 160, 156), Reset, NONE)
+(0,2)..(120,2) (Rgb(52, 65, 68), Reset, NONE)

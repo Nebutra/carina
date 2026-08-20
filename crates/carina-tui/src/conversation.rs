@@ -1,57 +1,80 @@
 use std::path::Path;
 use std::time::Duration;
 
-use ratatui::layout::{Margin, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
-use crate::glyphs::Glyphs;
+use crate::glyphs::{GlyphMode, Glyphs};
 use crate::i18n::{format as tr_format, text as tr, Locale, MessageId};
+use crate::layout_contract;
 use crate::render_contract::truncate_width_with_glyphs;
 use crate::rpc::{ExecutionRun, LiveActivityUpdate, ModelContextTokens, Session, WireEvent};
+use crate::terminal_logo::{self, MARK_HEIGHT_CELLS, MARK_WIDTH_CELLS};
 use crate::theme::Theme;
 
-pub struct EmptyConversation<'a> {
-    pub workspace: &'a Path,
+pub const PRODUCT_NAME: &str = "Carina";
+
+pub struct EmptyConversation {
     pub locale: Locale,
 }
 
-impl EmptyConversation<'_> {
+impl EmptyConversation {
     pub fn render(&self, frame: &mut Frame<'_>, area: Rect, theme: Theme) {
-        let height = area.height.min(4);
-        let prompt_area = Rect::new(
-            area.x,
-            area.bottom().saturating_sub(height),
-            area.width,
-            height,
-        )
-        .inner(Margin::new(2, 0));
-        let workspace_name = self
-            .workspace
-            .file_name()
-            .and_then(|name| name.to_str())
-            .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| tr(self.locale, MessageId::WorkspaceFallback));
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let hint = tr(self.locale, MessageId::EmptyConversationHint);
+        let show_mark = theme.glyphs.mode != GlyphMode::Ascii
+            && area.width >= layout_contract::EMPTY_MARK_MIN_WIDTH
+            && area.height >= layout_contract::EMPTY_MARK_MIN_HEIGHT;
+        let copy_height = 2_u16;
+        let content_height = if show_mark {
+            MARK_HEIGHT_CELLS
+                .saturating_add(1)
+                .saturating_add(copy_height)
+        } else {
+            copy_height.min(area.height)
+        };
+        let origin_y = area.y + area.height.saturating_sub(content_height) / 2;
+        let mut y = origin_y;
+        if show_mark {
+            let mark_x = area.x + area.width.saturating_sub(MARK_WIDTH_CELLS) / 2;
+            for line in terminal_logo::lines(theme) {
+                frame.render_widget(
+                    Paragraph::new(line),
+                    Rect::new(mark_x, y, MARK_WIDTH_CELLS.min(area.width), 1),
+                );
+                y = y.saturating_add(1);
+            }
+            y = y.saturating_add(1);
+        }
+        if y >= area.bottom() {
+            return;
+        }
         frame.render_widget(
-            Paragraph::new(vec![
-                Line::from(Span::styled(
-                    tr_format(
-                        self.locale,
-                        MessageId::ReadyInWorkspace,
-                        &[("workspace", workspace_name)],
-                    ),
-                    Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
-                )),
-                Line::from(Span::styled(
-                    tr(self.locale, MessageId::EmptyConversationHint),
-                    Style::default().fg(theme.muted),
-                )),
-            ])
+            Paragraph::new(Line::from(Span::styled(
+                PRODUCT_NAME,
+                Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+            )))
+            .alignment(ratatui::layout::Alignment::Center),
+            Rect::new(area.x, y, area.width, 1),
+        );
+        y = y.saturating_add(1);
+        if y >= area.bottom() {
+            return;
+        }
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().fg(theme.muted),
+            )))
+            .alignment(ratatui::layout::Alignment::Center)
             .wrap(Wrap { trim: false }),
-            prompt_area,
+            Rect::new(area.x, y, area.width, 1),
         );
     }
 }
@@ -251,10 +274,11 @@ impl ComposerChrome {
             .collect()
     }
 
+    /// Rows reserved *above* the composer. Live run/queue status paints into
+    /// the composer top rail, so only operator notices consume this height.
     pub fn row_count(&self, width: u16) -> u16 {
+        let _ = width;
         u16::from(self.notice.is_some())
-            + u16::from(self.primary.is_some())
-            + u16::from(!self.visible_slots(width).is_empty())
     }
 
     fn slot_visible(&self, kind: ChromeSlotKind, _width: u16) -> bool {
@@ -1211,7 +1235,7 @@ mod tests {
                 background_work: false,
                 interrupt_key: "Esc",
                 priority_notice: false,
-            ambient_notice: false,
+                ambient_notice: false,
                 context: Some(&context),
                 locale,
                 screen_mode: "fullscreen",
@@ -1267,7 +1291,7 @@ mod tests {
                 background_work: false,
                 interrupt_key: "Esc",
                 priority_notice: false,
-            ambient_notice: false,
+                ambient_notice: false,
                 context: Some(&context),
                 locale: Locale::En,
                 screen_mode: "minimal",
@@ -1339,7 +1363,7 @@ mod tests {
                 background_work: false,
                 interrupt_key: "Esc",
                 priority_notice: false,
-            ambient_notice: false,
+                ambient_notice: false,
                 context: None,
                 locale: Locale::En,
                 screen_mode: "fullscreen",
@@ -1351,9 +1375,9 @@ mod tests {
         };
 
         assert_eq!(project("ready", "", 80), 0);
-        assert_eq!(project("running", "", 80), 1);
-        assert_eq!(project("waiting_approval", "", 80), 1);
-        assert_eq!(project("failed", "", 80), 1);
+        assert_eq!(project("running", "", 80), 0);
+        assert_eq!(project("waiting_approval", "", 80), 0);
+        assert_eq!(project("failed", "", 80), 0);
         assert_eq!(project("ready", "Message added", 60), 1);
         assert_eq!(project("ready", "Message added", 80), 1);
     }
@@ -1449,7 +1473,7 @@ mod tests {
                 background_work: false,
                 interrupt_key: "Esc",
                 priority_notice: false,
-            ambient_notice: false,
+                ambient_notice: false,
                 context: Some(&context),
                 locale,
                 screen_mode: "fullscreen",
@@ -1520,7 +1544,7 @@ mod tests {
                 animated: false,
             })
         );
-        assert_eq!(chrome.row_count(80), 3);
+        assert_eq!(chrome.row_count(80), 1);
     }
 
     #[test]
@@ -1536,7 +1560,7 @@ mod tests {
                 background_work: false,
                 interrupt_key: "Esc",
                 priority_notice: false,
-            ambient_notice: false,
+                ambient_notice: false,
                 context: None,
                 locale,
                 screen_mode: "fullscreen",
@@ -1616,5 +1640,51 @@ mod tests {
         });
         assert!(chrome.notice.is_none());
         assert!(chrome.primary.is_none());
+    }
+
+    fn render_empty(width: u16, height: u16, mode: crate::glyphs::GlyphMode) -> String {
+        let mut theme = Theme::carina(false);
+        theme.glyphs = Glyphs::new(mode);
+        let backend = ratatui::backend::TestBackend::new(width, height);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                EmptyConversation { locale: Locale::En }.render(frame, frame.area(), theme);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn empty_conversation_centers_identity_instead_of_a_workspace_probe() {
+        let wide = render_empty(80, 24, crate::glyphs::GlyphMode::Unicode);
+        assert!(wide.contains(PRODUCT_NAME));
+        assert!(wide.contains("Type a request, or /help"));
+        assert!(!wide.contains("Ready in"));
+        assert!(
+            wide.chars()
+                .any(|ch| ('\u{2801}'..='\u{28ff}').contains(&ch)),
+            "unicode empty state should show the braille mark\n{wide}"
+        );
+
+        let ascii = render_empty(80, 24, crate::glyphs::GlyphMode::Ascii);
+        assert!(ascii.contains(PRODUCT_NAME));
+        assert!(!ascii
+            .chars()
+            .any(|ch| ('\u{2801}'..='\u{28ff}').contains(&ch)));
+
+        let narrow = render_empty(40, 12, crate::glyphs::GlyphMode::Unicode);
+        assert!(narrow.contains(PRODUCT_NAME));
+        assert!(!narrow
+            .chars()
+            .any(|ch| ('\u{2801}'..='\u{28ff}').contains(&ch)));
     }
 }

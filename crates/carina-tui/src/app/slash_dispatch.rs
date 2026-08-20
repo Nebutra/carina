@@ -117,6 +117,18 @@ impl App {
                 self.open_settings();
             }
             CommandId::Density => self.apply_action(Action::ToggleDensity),
+            CommandId::Theme => {
+                if let Some(tail) = tail {
+                    let Some(preference) = crate::theme::ThemePreference::parse(tail) else {
+                        self.notice = Notice::localized(MessageId::ThemeUnknownChoice);
+                        return Some(false);
+                    };
+                    self.apply_action(Action::OpenThemePreview);
+                    self.apply_action(Action::PreviewThemePreference(preference));
+                } else {
+                    self.apply_action(Action::OpenThemePreview);
+                }
+            }
             CommandId::Symbols => self.apply_action(Action::OpenGlyphPreview),
             CommandId::Status => self.apply_action(Action::OpenStatus),
             CommandId::Context => {

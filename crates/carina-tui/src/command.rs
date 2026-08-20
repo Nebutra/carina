@@ -10,6 +10,7 @@ pub const COMMAND_MRU_LIMIT: usize = 20;
 pub enum CommandId {
     Settings,
     Density,
+    Theme,
     Symbols,
     Status,
     Context,
@@ -70,6 +71,12 @@ pub const COMMANDS: &[CommandSpec] = &[
         CommandId::Density,
         "/density",
         MessageId::CommandDensity,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::Theme,
+        "/theme",
+        MessageId::CommandTheme,
         AvailabilityRule::Always,
     ),
     command(
@@ -327,7 +334,7 @@ pub fn resolve_operator_input(input: &str) -> Option<(&'static CommandSpec, Opti
 pub fn accepts_arguments(id: CommandId) -> bool {
     matches!(
         id,
-        CommandId::Goal | CommandId::ApprovalMode | CommandId::Btw
+        CommandId::Goal | CommandId::ApprovalMode | CommandId::Btw | CommandId::Theme
     )
 }
 
@@ -979,6 +986,24 @@ mod tests {
             lookup("/symbols").map(|item| item.description),
             Some(MessageId::CommandSymbols)
         );
+    }
+
+    #[test]
+    fn theme_is_a_builtin_command_that_accepts_polarity_arguments() {
+        for has_active_execution in [false, true] {
+            assert!(matching("/th", has_active_execution)
+                .iter()
+                .any(|item| item.id == CommandId::Theme));
+            assert_eq!(
+                resolve("/theme", has_active_execution).map(|item| item.id),
+                Some(CommandId::Theme)
+            );
+        }
+        assert_eq!(
+            lookup("/theme").map(|item| item.description),
+            Some(MessageId::CommandTheme)
+        );
+        assert!(accepts_arguments(CommandId::Theme));
     }
 
     #[test]

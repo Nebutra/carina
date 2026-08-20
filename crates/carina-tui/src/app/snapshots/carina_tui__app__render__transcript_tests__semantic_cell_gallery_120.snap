@@ -7,22 +7,22 @@ size=120x40
 
  • I will keep routine work quiet and reviewable changes visible across every supported terminal width.
 
- ▾ Thinking  Inspecting the projection boundary
- │ Mapping lifecycle owners and render paths.
+┃⠋ Thinking  Inspecting the projection boundary
+┃│ Mapping lifecycle owners and render paths.
  • Read    Inspect the semantic cell contract  src/semantic_cell.rs
  ▸ Explored ×5 · README.md, workspace, …
 
- ! Action  Shell command needs approval  waiting for approval
- │ cargo test --workspace
+┃! Action  Shell command needs approval  waiting for approval
+┃│ cargo test --workspace
 
  ▸ Edit    Add typed skeletons  +1  applied
  │ src/semantic_cell.rs
  │ +1 · new file
  │    1 pub enum SemanticCellKind {}
 
- ✗ Execution failed  ·  provider/original-model  ·  2 attempts
- │ The provider stopped before returning a complete response
- │ Retry current  Replay original  Details  Copy ID
+┃✗ Execution failed  ·  provider/original-model  ·  2 attempts
+┃│ The provider stopped before returning a complete response
+┃│ [ Retry current ]  [ Replay original ]  [ Details ]  [ Copy ID ]
 
  • Diagnostic  Context compacted
  │ Older routine tool detail was summarized.

@@ -13,7 +13,7 @@ import (
 
 func TestBuildRustUIArgsUsesStructuredNonSecretFields(t *testing.T) {
 	opts := interactiveOptions{SessionID: " session-1 ", NoAltScreen: true}
-	got := buildRustUIArgs(opts, "/tmp/carina.sock", "/work/project", "zh-Hant", "/home/user/.carina/config.json", "comfortable", "/work/project/.carina/config.json", "nerd", "/work/project/.carina/config.json", "/opt/carina/bin/carina", "always")
+	got := buildRustUIArgs(opts, "/tmp/carina.sock", "/work/project", "zh-Hant", "/home/user/.carina/config.json", "comfortable", "/work/project/.carina/config.json", "nerd", "/work/project/.carina/config.json", "light", "/work/project/.carina/config.json", "/opt/carina/bin/carina", "always")
 	want := []string{
 		"--socket", "/tmp/carina.sock",
 		"--workspace", "/work/project",
@@ -25,6 +25,8 @@ func TestBuildRustUIArgsUsesStructuredNonSecretFields(t *testing.T) {
 		"--density-path", "/work/project/.carina/config.json",
 		"--glyphs", "nerd",
 		"--glyphs-path", "/work/project/.carina/config.json",
+		"--theme", "light",
+		"--theme-path", "/work/project/.carina/config.json",
 		"--no-alt-screen",
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -36,7 +38,7 @@ func TestBuildRustUIArgsUsesStructuredNonSecretFields(t *testing.T) {
 }
 
 func TestBuildRustUIArgsPassesConfiguredAltScreenPolicy(t *testing.T) {
-	got := buildRustUIArgs(interactiveOptions{}, "/tmp/carina.sock", "/work/project", "en", "", "compact", "", "auto", "", "/opt/carina/bin/carina", "never")
+	got := buildRustUIArgs(interactiveOptions{}, "/tmp/carina.sock", "/work/project", "en", "", "compact", "", "auto", "", "auto", "", "/opt/carina/bin/carina", "never")
 	joined := strings.Join(got, " ")
 	if !strings.Contains(joined, "--alt-screen never") {
 		t.Fatalf("launcher args %#v did not pass configured terminal policy", got)
@@ -44,7 +46,7 @@ func TestBuildRustUIArgsPassesConfiguredAltScreenPolicy(t *testing.T) {
 }
 
 func TestBuildRustUIArgsPassesFirstClassScreenMode(t *testing.T) {
-	got := buildRustUIArgs(interactiveOptions{ScreenMode: " fullscreen "}, "/tmp/carina.sock", "/work/project", "en", "", "compact", "", "auto", "", "/opt/carina/bin/carina", "never")
+	got := buildRustUIArgs(interactiveOptions{ScreenMode: " fullscreen "}, "/tmp/carina.sock", "/work/project", "en", "", "compact", "", "auto", "", "auto", "", "/opt/carina/bin/carina", "never")
 	joined := strings.Join(got, " ")
 	if !strings.Contains(joined, "--screen-mode fullscreen") {
 		t.Fatalf("launcher args %#v did not pass screen mode", got)

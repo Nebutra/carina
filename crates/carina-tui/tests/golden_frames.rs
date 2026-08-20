@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use carina_tui::{
     conversation::{ChromeTone, ComposerChrome, ComposerChromeInput, EmptyConversation},
     i18n::Locale,
@@ -381,7 +379,6 @@ fn render_empty_conversation(width: u16, height: u16) -> String {
     terminal
         .draw(|frame| {
             EmptyConversation {
-                workspace: Path::new("/tmp/workspace"),
                 locale: Locale::En,
             }
             .render(frame, frame.area(), theme);

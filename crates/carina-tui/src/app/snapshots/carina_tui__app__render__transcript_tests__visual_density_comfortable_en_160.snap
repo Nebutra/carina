@@ -9,8 +9,8 @@ size=160x40
                     • I will keep routine work quiet and reviewable changes visible across every supported terminal width.
 
 
-                    ▾ Thinking  Inspecting the projection boundary
-                    │ Mapping lifecycle owners and render paths.
+                   ┃⠋ Thinking  Inspecting the projection boundary
+                   ┃│ Mapping lifecycle owners and render paths.
 
                     • Read    Inspect the semantic cell contract  src/semantic_cell.rs
 
@@ -19,8 +19,8 @@ size=160x40
                     │ List    workspace
 
 
-                    ! Action  Shell command needs approval  waiting for approval
-                    │ cargo test --workspace
+                   ┃! Action  Shell command needs approval  waiting for approval
+                   ┃│ cargo test --workspace
 
 
                     ▸ Edit    Add typed skeletons  +1  applied
@@ -29,9 +29,9 @@ size=160x40
                     │    1 pub enum SemanticCellKind {}
 
 
-                    ✗ Execution failed  ·  provider/original-model  ·  2 attempts
-                    │ The provider stopped before returning a complete response
-                    │ Retry current  Replay original  Details  Copy ID
+                   ┃✗ Execution failed  ·  provider/original-model  ·  2 attempts
+                   ┃│ The provider stopped before returning a complete response
+                   ┃│ [ Retry current ]  [ Replay original ]  [ Details ]  [ Copy ID ]
 
 
                     • Diagnostic  Context compacted
@@ -41,7 +41,9 @@ styles:
 (20,0)..(22,0) (Rgb(195, 202, 198), Rgb(38, 43, 44), BOLD)
 (22,0)..(140,0) (Reset, Rgb(38, 43, 44), NONE)
 (20,3)..(22,3) (Rgb(90, 101, 99), Reset, NONE)
-(20,6)..(66,6) (Rgb(90, 101, 99), Reset, DIM | ITALIC)
+(19,6)..(22,6) (Rgb(232, 168, 95), Reset, BOLD)
+(22,6)..(66,6) (Rgb(90, 101, 99), Reset, DIM | ITALIC)
+(19,7)..(20,7) (Rgb(232, 168, 95), Reset, BOLD)
 (20,7)..(22,7) (Rgb(90, 101, 99), Reset, NONE)
 (22,7)..(64,7) (Rgb(90, 101, 99), Reset, DIM | ITALIC)
 (20,9)..(22,9) (Rgb(195, 202, 198), Reset, BOLD)
@@ -49,8 +51,9 @@ styles:
 (20,11)..(22,11) (Rgb(195, 202, 198), Reset, BOLD)
 (20,12)..(22,12) (Rgb(90, 101, 99), Reset, NONE)
 (20,13)..(22,13) (Rgb(90, 101, 99), Reset, NONE)
-(20,16)..(28,16) (Rgb(255, 124, 120), Reset, BOLD)
+(19,16)..(28,16) (Rgb(232, 168, 95), Reset, BOLD)
 (58,16)..(80,16) (Rgb(90, 101, 99), Reset, NONE)
+(19,17)..(20,17) (Rgb(232, 168, 95), Reset, BOLD)
 (20,17)..(22,17) (Rgb(90, 101, 99), Reset, NONE)
 (20,20)..(22,20) (Rgb(232, 168, 95), Reset, BOLD)
 (49,20)..(53,20) (Rgb(142, 219, 210), Reset, NONE)
@@ -58,16 +61,18 @@ styles:
 (20,21)..(22,21) (Rgb(90, 101, 99), Reset, NONE)
 (20,22)..(35,22) (Rgb(90, 101, 99), Reset, NONE)
 (20,23)..(27,23) (Rgb(90, 101, 99), Reset, NONE)
-(20,26)..(22,26) (Rgb(255, 124, 120), Reset, NONE)
+(19,26)..(22,26) (Rgb(255, 124, 120), Reset, NONE)
 (22,26)..(38,26) (Rgb(255, 124, 120), Reset, BOLD)
 (38,26)..(43,26) (Rgb(90, 101, 99), Reset, NONE)
 (66,26)..(81,26) (Rgb(90, 101, 99), Reset, NONE)
+(19,27)..(20,27) (Rgb(255, 124, 120), Reset, NONE)
 (20,27)..(22,27) (Rgb(90, 101, 99), Reset, NONE)
+(19,28)..(20,28) (Rgb(255, 124, 120), Reset, NONE)
 (20,28)..(22,28) (Rgb(90, 101, 99), Reset, NONE)
-(22,28)..(35,28) (Rgb(142, 219, 210), Reset, BOLD | UNDERLINED)
-(35,28)..(37,28) (Rgb(90, 101, 99), Reset, NONE)
-(37,28)..(52,28) (Reset, Reset, BOLD)
-(52,28)..(70,28) (Rgb(90, 101, 99), Reset, NONE)
+(22,28)..(39,28) (Rgb(142, 219, 210), Reset, BOLD | UNDERLINED)
+(39,28)..(41,28) (Rgb(90, 101, 99), Reset, NONE)
+(41,28)..(60,28) (Reset, Reset, BOLD)
+(60,28)..(86,28) (Rgb(90, 101, 99), Reset, NONE)
 (20,31)..(32,31) (Rgb(90, 101, 99), Reset, BOLD)
 (32,31)..(51,31) (Rgb(90, 101, 99), Reset, NONE)
 (20,32)..(63,32) (Rgb(90, 101, 99), Reset, NONE)
