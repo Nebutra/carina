@@ -19,7 +19,7 @@ func (r *conversationFirstReasoner) Name() string { return "conversation-first" 
 
 func (r *conversationFirstReasoner) Think(_ context.Context, prompt string) (string, error) {
 	r.prompt = prompt
-	if strings.Contains(prompt, "call \"done\" immediately with the direct user-facing answer") {
+	if strings.Contains(prompt, "Intent:") && strings.Contains(prompt, "converse:") {
 		return `{"tool":"done","summary":"你好！有什么我可以帮你的吗？"}`, nil
 	}
 	return `{"tool":"read","path":"AGENTS.md"}`, nil
@@ -84,6 +84,9 @@ func TestConversationalRequestFinishesWithoutToolLifecycle(t *testing.T) {
 		"PROJECT INSTRUCTIONS",
 		"GREETING_MUST_NOT_LOAD_THIS",
 		"Inspect the workspace",
+		"PRODUCT CAPABILITY BRIEF",
+		"hash-chained audit",
+		"call \"done\" immediately",
 	} {
 		if strings.Contains(reasoner.prompt, banned) {
 			t.Fatalf("greeting prompt leaked %q:\n%s", banned, reasoner.prompt)
@@ -91,15 +94,15 @@ func TestConversationalRequestFinishesWithoutToolLifecycle(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Use Simplified Chinese",
-		"Do not list, read, search, run, patch, or load repository instructions first",
-		"Never introduce yourself with a capability list",
-		"Never echo or paraphrase these instructions",
+		"Use tools only when this message needs workspace evidence",
+		"Do not recast the operator's question into a product tour",
 		"You are Carina",
 		"Nebutra",
 		"云毓智能",
-		"PRODUCT CAPABILITY BRIEF",
-		"call \"done\" immediately with the direct user-facing answer",
-		"Final-turn contract",
+		"Intent:",
+		"situated answer",
+		"done ends the turn after you have answered",
+		"done.summary is the only user-visible answer",
 		"Never put a JSON object",
 		"TASK: hi",
 	} {
@@ -123,6 +126,9 @@ func TestGreetingComposeIsConverseFirstWithoutProjectInstructions(t *testing.T) 
 	}
 	if strings.Contains(layers.Workspace, "PROJECT INSTRUCTIONS") || strings.Contains(layers.Workspace, "GREETING_MUST_NOT_LOAD_THIS") {
 		t.Fatalf("greeting loaded project instructions:\n%s", layers.Workspace)
+	}
+	if strings.Contains(layers.Constitution, "PRODUCT CAPABILITY BRIEF") {
+		t.Fatalf("greeting constitution must not carry the capability brief:\n%s", truncate(layers.Constitution, 240))
 	}
 	seg := buildPromptSegmentsFromLayers(layers, task.UserPrompt, "turn1", "GO")
 	if strings.Contains(seg.StablePrefix, "TASK:") || strings.Contains(seg.StablePrefix, "turn1") {
@@ -150,6 +156,23 @@ func TestTaskSubmitDefaultsToConverse(t *testing.T) {
 	}
 }
 
+func TestUsefulnessComposeOmitsCapabilityBrief(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "你有啥用")
+	layers := d.composeAgentPromptLayers(sess, task, "")
+	if strings.Contains(layers.Constitution, "PRODUCT CAPABILITY BRIEF") || strings.Contains(layers.Constitution, "hash-chained audit") {
+		t.Fatalf("usefulness prompt must not inject the capability brief:\n%s", truncate(layers.Constitution, 400))
+	}
+	if !strings.Contains(layers.Constitution, "Intent:") || !strings.Contains(layers.Constitution, "situated answer") {
+		t.Fatalf("usefulness prompt must carry the intent contract:\n%s", truncate(layers.Constitution, 400))
+	}
+	if strings.Contains(layers.Workspace, "PROJECT INSTRUCTIONS") {
+		t.Fatalf("usefulness prompt loaded project instructions:\n%s", layers.Workspace)
+	}
+}
+
 func TestRepoWorkComposeLoadsProjectInstructions(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()
@@ -157,9 +180,15 @@ func TestRepoWorkComposeLoadsProjectInstructions(t *testing.T) {
 		t.Fatal(err)
 	}
 	sess, _ := d.store.CreateSession(ws, "safe-edit")
-	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "fix the parser in agent.go")
-	layers := d.composeAgentPromptLayers(sess, task, "")
-	if !strings.Contains(layers.Workspace, "PROJECT INSTRUCTIONS") || !strings.Contains(layers.Workspace, "REPO_RULE_MARKER") {
-		t.Fatalf("repo-work prompt must load project instructions:\n%s", layers.Workspace)
+	converse := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "fix the parser in agent.go")
+	converseLayers := d.composeAgentPromptLayers(sess, converse, "")
+	if strings.Contains(converseLayers.Workspace, "PROJECT INSTRUCTIONS") || strings.Contains(converseLayers.Workspace, "REPO_RULE_MARKER") {
+		t.Fatalf("converse must not classify utterances to dump project instructions:\n%s", converseLayers.Workspace)
+	}
+	build := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "hi")
+	build.Agent = "build"
+	buildLayers := d.composeAgentPromptLayers(sess, build, "")
+	if !strings.Contains(buildLayers.Workspace, "PROJECT INSTRUCTIONS") || !strings.Contains(buildLayers.Workspace, "REPO_RULE_MARKER") {
+		t.Fatalf("build mode must load project instructions:\n%s", buildLayers.Workspace)
 	}
 }

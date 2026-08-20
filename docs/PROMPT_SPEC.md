@@ -1,11 +1,13 @@
 # Carina Prompt Spec (DRAFT LAW)
 
-> Status: **P0 law after audit 19**. Live evidence:
-> `docs/research/competitive-2026-08/19-prompt-context-audit.md`.
-> Implementation lives in `go/daemon/agent.go`, `promptcache.go`, `prompt_mode.go`,
+> Status: **P0 law**. Evidence: audit 19 (v0.8.30) and re-audit 21 (v0.8.33).
+> `docs/research/competitive-2026-08/19-prompt-context-audit.md`,
+> `docs/research/competitive-2026-08/21-prompt-context-re-audit.md`.
+> Code: `go/daemon/agent.go`, `promptcache.go`, `prompt_mode.go`,
 > `agents.go`, `tool_schema.go`, `grok_reasoner.go`.
 >
-> “There is a systemPrompt const” is not a pass.
+> S1–S6 shipped in 0.8.31. “There is a systemPrompt const” is still not a pass.
+> Constitution is still ~8.5 kB / ~2.1 k tok with `toolsHelp` ~1202 tok.
 
 Steal jobs, not strings. Do not copy Claude’s terracotta voice, OMP π, or
 GrokNight into Carina identity.
@@ -26,7 +28,7 @@ concatenated text but **must not** put constitution in a user blob labeled
 | C | Protocol | static | JSON ReAct or native-tools contract, **short** | full tool catalog examples |
 | D | Tools | static builtins | builtins only; MCP/skills as **index** | MCP JSON schemas, skill bodies |
 | E | Workspace | dynamic | cwd, os, locale, sandbox | AGENTS.md, TASK |
-| F | Project rules | dynamic, **demand** | CARINA.md / AGENTS.md | load on greeting |
+| F | Project rules | dynamic, **mode** | CARINA.md / AGENTS.md on build/plan | converse host-load; greetings |
 | G | Memory snapshot | dynamic, frozen/run | retrieved facts with budget | full memory dump |
 | H | TASK | volatile | operator message | constitution |
 | I | TRANSCRIPT | volatile | compacted model view | audit log |
@@ -42,8 +44,8 @@ but not every turn. H–J change every turn. Do not put H inside A–D.
 Default **interactive** agent is `converse`, not `build`.
 
 ```
-converse: Answer the operator. Call done immediately unless the message
-          requires workspace evidence or a side effect.
+converse: Answer the operator's actual intent. Tools only when the
+          message needs workspace evidence or a side effect.
 build:    Change the workspace. Inspect only what the task needs.
 plan:     Read-only. Answer or produce a plan. No edits, no shell.
 ```
@@ -68,8 +70,9 @@ Fixture G (acceptance): in this repo, with `AGENTS.md` present, prompt `hi`
 7. Tool catalog (D)
 8. Identity (A)
 
-If 2 and 4 conflict, mode wins until the operator asks for repo work.
-Do not dump F on a greeting to “be helpful”.
+If 2 and 4 conflict, mode wins. converse does not dump F; the model may
+read project instructions with a tool if the ask needs them. Do not
+classify operator phrases in the host to splice F back in.
 
 ---
 
@@ -87,7 +90,7 @@ Do not dump F on a greeting to “be helpful”.
 
 - Ranked bullets. No “always / never / be careful” stacks that fight B.
 - At most **five** standing negative rules in C.
-- PRODUCT CAPABILITY BRIEF stays demand-gated (already the intent).
+- PRODUCT CAPABILITY BRIEF stays out of the live constitution. Intent is meta, not a host-side phrase classifier.
 - `done.summary` is the only user-visible answer (keep).
 - Parallel batch of list/read/search is allowed **after** the model has
   decided the turn needs workspace evidence — not as the default first move.
@@ -109,14 +112,22 @@ is allowed to follow, or (b) vendor agent with vendor tools. Not both.
 
 ## 7. P0 knives
 
+**Landed in 0.8.31:** S1 converse default; S2 conversation-first above tools;
+S3 F demand-gated; S4 TASK in VolatileSuffix; S5 Grok JSON ReAct system;
+S6 search batch only after evidence is needed.
+
+**Landed in 0.8.34:** S9 capability brief out of live constitution. Intent is
+meta (situated answer, not a matrix). `prompt_mode` is a mode switch, not a
+phrase classifier. converse does not dump AGENTS.md.
+
+**Open after 0.8.34 (audit 21 remainder):**
+
 | ID | Problem | Change | Accept |
 |----|---------|--------|--------|
-| P0-S1 | Default build says inspect first | Interactive default = converse; build only when the operator asks to change the repo or `/agent build` | Fixture G: `hi` → `done`, 0 tools |
-| P0-S2 | Greeting rule buried in toolsHelp | Move conversation-first into section B, above tools | Stub-less test: real prompt prefix starts with converse |
-| P0-S3 | 8k AGENTS.md on every run | Load F only when mode is build/plan **or** the message matches repo-work heuristics | Greeting prompt contains no `PROJECT INSTRUCTIONS` |
-| P0-S4 | TASK in cache prefix | H–J stay in VolatileSuffix | `CacheBreakpoint` excludes TASK and transcript |
-| P0-S5 | Grok dual personality | Constitution as system (or clearly framed developer); ACP override must not contradict ReAct | Grok `hi` → `done`; no Explore×N |
-| P0-S6 | “Batch all independent search on first exploration” | Gate behind “if this turn needs workspace evidence” | No first-turn 46-wide search on a two-word chat |
+| P0-S7 | One `const systemPrompt` concat | Named A–D list; Anthropic `cache_control` per section | Tests assert section order; no single blob const |
+| P0-S8 | `toolsHelp` ~1202 tok with JSON examples | One-line builtins; protocol C ≤ 5 standing negatives | Constitution tokens without Workspace/F < 800 |
+| P0-S10 | Skill catalog keyed off `UserPrompt` | MCP index + skill names only; bodies via `skill://` | `CacheSections` independent of greeting wording |
+| P0-S11 | Native fallback can still carry JSON catalog | Native contract ≤ 200 B protocol, not 4.8 kB examples | `withToolContract` does not re-paste `toolsHelp` |
 
 Files: `go/daemon/agent.go`, `agents.go`, `promptcache.go`, `memory.go`,
 `grok_reasoner.go`, `tool_schema.go`, `conversation_first_test.go`.

@@ -135,7 +135,7 @@ func (d *Daemon) composeAgentPromptLayers(sess *sessionstore.Session, task *sche
 		workspace.WriteString("\n\n")
 	}
 	fmt.Fprintf(&workspace, "RUNTIME SCOPE (authoritative): workspace_root=%q; os_sandbox=%s. You can read and modify this workspace through governed tools. You cannot inspect the desktop or unrelated directories unless an explicit capability grants access.", sess.WorkspaceRoot, sandboxState)
-	if !d.safeMode && shouldLoadProjectInstructions(taskAgent(task), task.UserPrompt) {
+	if !d.safeMode && shouldLoadProjectInstructions(taskAgent(task)) {
 		if mem := loadMemory(sess.WorkspaceRoot); mem != "" {
 			workspace.WriteString("\n\nPROJECT INSTRUCTIONS (Nebutra/Carina — follow them):\n")
 			workspace.WriteString(mem)

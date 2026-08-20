@@ -123,12 +123,12 @@ func builtinAgentSpecs() map[string]*AgentSpec {
 	return map[string]*AgentSpec{
 		"converse": {
 			Name:         "converse",
-			Description:  "Default interactive agent. Answer first; inspect only when the message needs workspace evidence or a side effect.",
+			Description:  "Default interactive agent. Answer the operator's intent; inspect only when the message needs workspace evidence or a side effect.",
 			Profile:      "safe-edit",
 			Mode:         "primary",
 			MaxTurns:     8,
 			Source:       "built-in",
-			SystemPrompt: "converse: Answer the operator. Call \"done\" immediately unless the message requires workspace evidence or a side effect.",
+			SystemPrompt: "converse: Answer the operator's actual intent. Use tools only when the message needs workspace evidence or a side effect. done ends the turn; it is not a personality.",
 		},
 		"build": {
 			Name:         "build",

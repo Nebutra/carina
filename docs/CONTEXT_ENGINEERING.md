@@ -93,36 +93,38 @@ flowchart TD
   loadF --> layers
   skipF --> layers[composeAgentPromptLayers once]
   layers --> loop[Each turn]
-  loop --> compact{shouldCompact?}
-  compact -->|yes| trc[Transcript.compact snip/elide/summary]
-  compact -->|no| build
-  trc --> build[buildPromptSegmentsFromLayers]
-  build --> full["seg.full = cacheable prefix + TASK + transcript + closing"]
+  loop --> cheap["compact(nil) elide/collapse"]
+  cheap --> build[buildPromptSegmentsFromLayers]
+  build --> full["seg.full = prefix + TASK + transcript + closing"]
   full --> route{Reasoner}
   route -->|Anthropic| cache[CacheSections without TASK]
-  route -->|Grok ACP| stuff["system = Carina ReAct; user = framed request"]
-  route -->|OpenAI| blob[single blob]
+  route -->|Grok ACP| stuff["system = JSON ReAct; user = framed full()"]
+  route -->|OpenAI| blob["single blob; cache kind none"]
   cache --> act[JSON action or native tools]
   stuff --> act
   blob --> act
   act --> exec[Kernel + Zig tools]
   exec --> obs[Observation snip 2k]
-  obs --> loop
+  obs --> after[model summary after turn]
+  after --> loop
 ```
 
-**P0 landed:** converse default, F gated, TASK out of prefix, Grok ReAct
-envelope. Remaining waste: full `toolsHelp` in A; string rebuild every turn.
+**P0 landed (0.8.31–0.8.34):** converse default, F mode-gated (not a phrase
+classifier), TASK out of prefix, Grok ReAct envelope, compact summarizer off
+the Think stack, capability brief out of live constitution. Remaining waste:
+`toolsHelp` ~1202 tok in constitution; `full()` rebuild every turn; no AGENTS
+re-inject after compact.
 
 ---
 
 ## 7. P0 / P1 / P2
 
-**P0** (prompt law in `PROMPT_SPEC.md` S1–S6) plus:
+**P0** (prompt law `PROMPT_SPEC.md` S7–S11) plus:
 
 | ID | Item |
 |----|------|
-| P0-C1 | Measure Fixture G and Fixture R (repo task) input tokens / first 3 turns |
-| P0-C2 | Do not call compact a “context engine”; docs/CLI already say noop — keep them honest |
+| P0-C1 | Measure Fixture G and Fixture R input tokens / first 3 turns (constitution without F < 800 tok) |
+| P0-C2 | Do not call compact a “context engine”; `go/contextengine` stays noop until it is not |
 
 **P1**
 

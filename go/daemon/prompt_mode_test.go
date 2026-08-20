@@ -2,40 +2,21 @@ package daemon
 
 import "testing"
 
-func TestLooksLikeRepoWork(t *testing.T) {
+func TestShouldLoadProjectInstructionsByMode(t *testing.T) {
 	t.Parallel()
-	chatter := []string{"hi", "hello", "hey.", "你好", "thanks", "who are you", "what can you do"}
-	for _, prompt := range chatter {
-		if looksLikeRepoWork(prompt) {
-			t.Errorf("%q must not count as repo work", prompt)
-		}
-		if shouldLoadProjectInstructions("converse", prompt) {
-			t.Errorf("converse greeting %q must not load project instructions", prompt)
-		}
+	if shouldLoadProjectInstructions("converse") {
+		t.Fatal("converse must not dump project instructions; the model may read them if the ask needs them")
 	}
-	repo := []string{
-		"fix the parser in agent.go",
-		"implement tabs in the workspace",
-		"search the repo for composeAgentPromptLayers",
-		"看看代码",
-		"refactor promptcache.go",
-		"在桌面上创建一个新项目 用zig写一个ASCII版本的我的世界游戏",
+	if shouldLoadProjectInstructions("") {
+		t.Fatal("unnamed agent follows converse: no host utterance classifier")
 	}
-	for _, prompt := range repo {
-		if !looksLikeRepoWork(prompt) {
-			t.Errorf("%q must count as repo work", prompt)
-		}
-	}
-	if shouldLoadProjectInstructions("explore", "fix agent.go") {
+	if shouldLoadProjectInstructions("explore") {
 		t.Fatal("explore must never load project instructions")
 	}
-	if !shouldLoadProjectInstructions("build", "hi") {
+	if !shouldLoadProjectInstructions("build") {
 		t.Fatal("build mode always loads project instructions")
 	}
-	if !shouldLoadProjectInstructions("plan", "hi") {
+	if !shouldLoadProjectInstructions("plan") {
 		t.Fatal("plan mode always loads project instructions")
-	}
-	if looksLikeRepoWork("what is rust ownership") {
-		t.Fatal("a general question is not repo work")
 	}
 }

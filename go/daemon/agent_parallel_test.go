@@ -105,9 +105,9 @@ func TestReadOnlyToolClassification(t *testing.T) {
 
 func TestSystemPromptRequiresEconomicalCompletion(t *testing.T) {
 	for _, instruction := range []string{
-		"If this turn needs workspace evidence",
-		"use \"done\" immediately",
-		"Do not spend another turn rereading unchanged files",
+		"Use tools only when this message needs workspace evidence",
+		"After the ask is met, done",
+		"do not reread success",
 	} {
 		if !strings.Contains(systemPrompt, instruction) {
 			t.Fatalf("system prompt is missing execution-economy instruction %q", instruction)
@@ -117,11 +117,10 @@ func TestSystemPromptRequiresEconomicalCompletion(t *testing.T) {
 
 func TestSystemPromptRoutesRepositoryQuestionsToBoundedEvidence(t *testing.T) {
 	for _, instruction := range []string{
-		"Broad unfamiliar-repository overview, architecture, core modules, entry points, or relationships",
-		`call "code.map" first`,
-		"Exact metadata such as license, install steps, or package scripts",
-		"A targeted symbol question",
-		`Never use an unbounded workspace "list" as a substitute for "code.map"`,
+		"Gather only evidence that answers this ask",
+		"Prefer the smallest tool that fits",
+		`use "web.fetch". Never use run/curl/wget for read-only web access`,
+		"Do not walk the tree because a workspace exists",
 	} {
 		if !strings.Contains(systemPrompt, instruction) {
 			t.Fatalf("system prompt is missing repository evidence routing %q", instruction)
@@ -134,15 +133,16 @@ func TestSystemPromptCarriesNebutraCarinaProductIdentity(t *testing.T) {
 		"You are Carina",
 		"Nebutra",
 		"云毓智能",
-		"PRODUCT CAPABILITY BRIEF",
-		"transactional file patches",
-		"hash-chained audit",
-		"not: a full IDE",
-		"Do not self-identify as Claude, Codex, GPT",
+		"Intent:",
+		"situated answer",
+		"Not Claude, Codex, GPT",
 	} {
 		if !strings.Contains(systemPrompt, want) {
-			t.Fatalf("product identity/capability harness missing %q", want)
+			t.Fatalf("product identity/intent harness missing %q", want)
 		}
+	}
+	if strings.Contains(systemPrompt, "PRODUCT CAPABILITY BRIEF") {
+		t.Fatal("capability brief must not live in the always-on systemPrompt concat")
 	}
 	// Subagent tool sheet must stay lean: full product brief lives on main agent only.
 	if strings.Contains(toolsHelp, "hash-chained audit") || strings.Contains(toolsHelp, "BYOK") {

@@ -55,8 +55,8 @@ func TestAgentLoopFeedsCodeMapObservationIntoTargetedRead(t *testing.T) {
 	if len(reasoner.prompts) != 3 {
 		t.Fatalf("map observation did not drive map -> targeted read -> done; prompts = %d", len(reasoner.prompts))
 	}
-	if !strings.Contains(reasoner.prompts[0], `call "code.map" first`) {
-		t.Fatal("initial broad-repository prompt is missing the code.map routing contract")
+	if !strings.Contains(reasoner.prompts[0], "smallest tool that fits") || !strings.Contains(reasoner.prompts[0], "map for structure") {
+		t.Fatal("initial broad-repository prompt is missing the bounded-evidence contract")
 	}
 	if !strings.Contains(reasoner.prompts[1], "OverviewEntryPoint") || !strings.Contains(reasoner.prompts[1], "main.go") {
 		t.Fatalf("code.map observation was not visible to the next model turn:\n%s", reasoner.prompts[1])
