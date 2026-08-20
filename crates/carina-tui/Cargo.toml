@@ -1,6 +1,6 @@
 [package]
 name = "carina-tui"
-version = "0.8.28"
+version = "0.8.29"
 edition = "2024"
 license.workspace = true
 repository.workspace = true
