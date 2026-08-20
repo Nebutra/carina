@@ -1,8 +1,8 @@
 # Post-0.8.27 Harness Audit Refresh
 
 > **取证日期**：2026-08-20  
-> **产品锚点**：`go/product/version.go` → **0.8.34**  
-> **工作树**：干净 — Intent-Meta（S9）随 0.8.34 发版  
+> **产品锚点**：`go/product/version.go` → **0.8.35**  
+> **工作树**：干净 — 会话上文 hydrate + 对话表拆箱随 0.8.35 发版  
 > **方法**：本仓库源码 + `CAPABILITIES.md` + 本机竞品树（未漂）+ DeepSeek 公开 README（无 clone）  
 > **前序**：`15-post-0.8.26-refresh.md` 过时，**以本文为现状真相**  
 > **未做**：并排 PTY、同机 RAM PSS、DeepSeek 行号级 DNA

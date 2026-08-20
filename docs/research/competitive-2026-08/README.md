@@ -1,7 +1,7 @@
 # Competitive Research 2026-08 — Artifact Index
 
 > 取证日期：2026-08-02  
-> **现状刷新：2026-08-20 @ Carina v0.8.34** — **Harness SSOT：[22-post-0.8.34-harness-re-audit.md](./22-post-0.8.34-harness-re-audit.md)**；审美见 **[18](./18-tui-aesthetic-post-0.8.29.md)**；Prompt 见 **[21](./21-prompt-context-re-audit.md)**（S9 已随 0.8.34 发）；热路径见 **[20](./20-hot-path-latency-audit.md)**；0.8.27 诚实性切片见 **[16](./16-post-0.8.27-refresh.md)**（「无 P0」已被后续日用刀证伪，勿当现状）  
+> **现状刷新：2026-08-20 @ Carina v0.8.35** — **Harness SSOT：[22-post-0.8.34-harness-re-audit.md](./22-post-0.8.34-harness-re-audit.md)**；审美见 **[18](./18-tui-aesthetic-post-0.8.29.md)**；Prompt 见 **[21](./21-prompt-context-re-audit.md)**（S9 已随 0.8.34 发）；热路径见 **[20](./20-hot-path-latency-audit.md)**；0.8.27 诚实性切片见 **[16](./16-post-0.8.27-refresh.md)**（「无 P0」已被后续日用刀证伪，勿当现状）  
 > 范围：Carina vs Jcode / Grok Build / Claude Code (notes) / Codex / Oh My Pi (OMP) / DeepSeek Harness（公开文档，本机无 clone）  
 > 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图 → **日用 P0 剩余 = Prompt 结构 S7/S8/S10；审美/compact 为 P1；SaaS/ACP/皮肤否决**
 
