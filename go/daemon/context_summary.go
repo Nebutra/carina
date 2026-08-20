@@ -180,6 +180,18 @@ func (d *Daemon) contextLedger(sess *sessionstore.Session, task *scheduler.Execu
 		userPrompt = task.UserPrompt
 	}
 	seg := buildPromptSegmentsFromLayers(layers, userPrompt, visible, instruction)
+	viewTokens := estimateTokens(visible)
+	viewEstimated := true
+	viewMethod := "chars/4"
+	if d != nil && d.usage != nil && task != nil {
+		if usage, ok := d.usage.latestTaskContext(task.RunID); ok {
+			viewTokens = accountedTokens(usage, visible)
+			if !usage.Estimated && usage.InputTokens > 0 {
+				viewEstimated = false
+				viewMethod = "provider_usage"
+			}
+		}
+	}
 	layer := func(id, text, layerCache string) map[string]any {
 		return map[string]any{
 			"id":               id,
@@ -193,12 +205,12 @@ func (d *Daemon) contextLedger(sess *sessionstore.Session, task *scheduler.Execu
 	ledger := map[string]any{
 		"available":                      tr != nil,
 		"cache":                          cache,
-		"estimate_method":                "chars/4",
-		"estimated":                      true,
+		"estimate_method":                viewMethod,
+		"estimated":                      viewEstimated,
 		"model_visible":                  visible,
 		"model_visible_bytes":            len(visible),
 		"model_visible_sha256":           sha256Hex(visible),
-		"model_visible_tokens_estimated": estimateTokens(visible),
+		"model_visible_tokens_estimated": viewTokens,
 		"layers": append(compactPromptLedgerLayers(layer, cache, []struct{ id, text string }{
 			{"mode", layers.Mode},
 			{"identity", layers.Identity},

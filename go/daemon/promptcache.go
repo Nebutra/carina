@@ -10,14 +10,16 @@ import (
 	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
 
-// promptLayers are the stable prefix sections. They stay byte-identical
-// across turns of one run. Anthropic-compatible adapters attach a cache
-// breakpoint to each named A–D section (capped at 4); Grok CLI still
-// receives the stuffed full() prompt and does not claim prefix cache.
+// promptLayers are the stable prefix sections plus turn-local requested
+// skills. Prefix sections stay byte-identical across turns of one run and
+// across greetings that share the same workspace. Anthropic-compatible
+// adapters attach a cache breakpoint to each named A–D section (capped at
+// 4); Grok CLI still receives the stuffed full() prompt and does not claim
+// prefix cache.
 //
 // Wire order: Mode (B, first operative line, Intent sits with it) → Identity
-// (A) → Protocol (C) → Tools (D) → Workspace (E/F/G) → Catalog. TASK,
-// TRANSCRIPT, and the closing instruction are volatile.
+// (A) → Protocol (C) → Tools (D) → Workspace (E/F/G) → Catalog. REQUESTED
+// skills, TASK, TRANSCRIPT, and the closing instruction are volatile.
 type promptLayers struct {
 	Mode         string // B
 	Identity     string // A
@@ -27,6 +29,7 @@ type promptLayers struct {
 	Constitution string // concat A–D for Grok full() and tests
 	Workspace    string
 	Catalog      string
+	Requested    string // SKILL WARNING + REQUESTED SKILLS; volatile
 }
 
 func (p promptLayers) constitutionParts() []string {
@@ -46,15 +49,23 @@ func (p promptLayers) constitutionText() string {
 
 func (p promptLayers) withToolContract(next string) promptLayers {
 	next = strings.TrimSpace(next)
-	if p.Mode != "" || p.Identity != "" || p.Protocol != "" || p.Tools != "" {
-		p.Protocol = next
-		p.Tools = ""
+	named := p.Mode != "" || p.Identity != "" || p.Intent != "" || p.Protocol != "" || p.Tools != ""
+	p.Protocol = next
+	p.Tools = ""
+	if named {
 		p.Constitution = p.constitutionText()
 		return p
 	}
-	if next != "" && strings.Contains(p.Constitution, toolsHelp) {
-		p.Constitution = strings.Replace(p.Constitution, toolsHelp, next, 1)
+	// Legacy single-blob constitution (subagents): drop the JSON tool sheet
+	// even when it is not a contiguous toolsHelp substring, then attach the
+	// native envelope. Never concatenate native contract on top of the catalog.
+	blob := p.Constitution
+	for _, sheet := range []string{toolsHelp, toolsCatalog, harnessProtocol} {
+		if sheet != "" {
+			blob = strings.ReplaceAll(blob, sheet, "")
+		}
 	}
+	p.Constitution = joinPromptPrefix(strings.TrimSpace(blob), next)
 	return p
 }
 
@@ -69,6 +80,7 @@ type promptSegments struct {
 	Constitution   string
 	Workspace      string
 	Catalog        string
+	Requested      string
 	taskTrailer    string
 	StablePrefix   string
 	VolatileSuffix string
@@ -95,6 +107,7 @@ func buildPromptSegmentsFromLayers(layers promptLayers, userPrompt, transcript, 
 	}
 	workspace := strings.TrimSpace(layers.Workspace)
 	catalog := strings.TrimSpace(layers.Catalog)
+	requested := strings.TrimSpace(layers.Requested)
 	seg := promptSegments{
 		Mode:         strings.TrimSpace(joinPromptPrefix(layers.Mode, layers.Intent)),
 		Identity:     strings.TrimSpace(layers.Identity),
@@ -103,10 +116,14 @@ func buildPromptSegmentsFromLayers(layers promptLayers, userPrompt, transcript, 
 		Constitution: constitution,
 		Workspace:    workspace,
 		Catalog:      catalog,
+		Requested:    requested,
 		taskTrailer:  trailer,
 	}
 	seg.StablePrefix = joinPromptPrefix(append(append([]string{}, parts...), workspace, catalog)...)
 	suffix := trailer + transcript + "\n" + closing
+	if requested != "" {
+		suffix = requested + "\n\n" + suffix
+	}
 	if seg.StablePrefix != "" {
 		seg.VolatileSuffix = "\n\n" + suffix
 	} else {
@@ -132,8 +149,8 @@ func compactNonEmpty(parts ...string) []string {
 
 // CacheSections returns Anthropic-compatible cached text blocks: named A–D
 // when present, otherwise the legacy constitution blob, then workspace and
-// catalog. TASK and transcript stay out. The Anthropic adapter attaches at
-// most four cache_control breakpoints (API cap).
+// catalog. REQUESTED skills, TASK, and transcript stay out. The Anthropic
+// adapter attaches at most four cache_control breakpoints (API cap).
 func (s promptSegments) CacheSections() []string {
 	parts := compactNonEmpty(s.Mode, s.Identity, s.Protocol, s.Tools)
 	if len(parts) == 0 && s.Constitution != "" {
@@ -210,15 +227,17 @@ func (d *Daemon) composeAgentPromptLayers(sess *sessionstore.Session, task *sche
 			catalog.WriteString("Use {\"tool\":\"mcp_find\",\"query\":\"free text\"} to search these MCP tools and fetch their full input schemas before calling one.\n")
 		}
 	}
-	if skills := buildDynamicSkillPrompt(sess.WorkspaceRoot, task.UserPrompt, d.commandSpecs(sess.WorkspaceRoot), d.safeMode); skills != "" {
+	skillCatalog, skillRequested := buildDynamicSkillPrompt(sess.WorkspaceRoot, task.UserPrompt, d.commandSpecs(sess.WorkspaceRoot), d.safeMode)
+	if skillCatalog != "" {
 		if catalog.Len() > 0 {
 			catalog.WriteString("\n")
 		}
-		catalog.WriteString(skills)
+		catalog.WriteString(skillCatalog)
 	}
 
 	layers.Workspace = strings.TrimSpace(workspace.String())
 	layers.Catalog = strings.TrimSpace(catalog.String())
+	layers.Requested = strings.TrimSpace(skillRequested)
 	return layers
 }
 

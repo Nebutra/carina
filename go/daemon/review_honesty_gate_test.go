@@ -16,9 +16,10 @@ func TestReviewTurnHonestyGate(t *testing.T) {
 	t.Run("catalog_does_not_teach_skill_review", func(t *testing.T) {
 		ws := isolatedSkillWorkspace(t)
 		writeProjectSkill(t, ws, "review", "description: Skill review\n", "SHOULD NOT BE CATALOGED")
-		got := buildDynamicSkillPrompt(ws, "Please review authentication", builtinCommandSpecs(), false)
-		if !strings.Contains(got, "- command /review") || !strings.Contains(got, "(slash command; not skill://)") {
-			t.Fatalf("catalog must keep /review as a slash command:\n%s", got)
+		catalog, requested := buildDynamicSkillPrompt(ws, "Please review authentication", builtinCommandSpecs(), false)
+		got := joinPromptPrefix(catalog, requested)
+		if !strings.Contains(catalog, "- command /review") || !strings.Contains(catalog, "(slash command; not skill://)") {
+			t.Fatalf("catalog must keep /review as a slash command:\n%s", catalog)
 		}
 		if strings.Contains(got, "skill://review") {
 			t.Fatalf("catalog must not advertise skill://review:\n%s", got)
@@ -26,17 +27,24 @@ func TestReviewTurnHonestyGate(t *testing.T) {
 		if strings.Contains(got, "SHOULD NOT BE CATALOGED") {
 			t.Fatalf("review skill body leaked into the catalog:\n%s", got)
 		}
+		if requested != "" {
+			t.Fatalf("plain 'review' must not request a skill:\n%s", requested)
+		}
 	})
 
 	t.Run("explicit_review_mention_stays_slash", func(t *testing.T) {
 		ws := isolatedSkillWorkspace(t)
 		writeProjectSkill(t, ws, "review", "description: Skill review\n", "SHOULD NOT BE REQUESTED")
-		got := buildDynamicSkillPrompt(ws, "Use $review on this branch", builtinCommandSpecs(), false)
+		catalog, requested := buildDynamicSkillPrompt(ws, "Use $review on this branch", builtinCommandSpecs(), false)
+		got := joinPromptPrefix(catalog, requested)
 		if strings.Contains(got, "skill://review") || strings.Contains(got, "SHOULD NOT BE REQUESTED") {
 			t.Fatalf("$review must not request skill://review:\n%s", got)
 		}
 		if strings.Contains(got, "SKILL WARNING") && strings.Contains(got, "$review") {
 			t.Fatalf("owned slash name must not warn as a missing skill:\n%s", got)
+		}
+		if requested != "" {
+			t.Fatalf("owned slash name must not emit REQUESTED skills:\n%s", requested)
 		}
 	})
 

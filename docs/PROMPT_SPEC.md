@@ -6,10 +6,10 @@
 > Code: `go/daemon/agent.go`, `promptcache.go`, `prompt_mode.go`,
 > `agents.go`, `tool_schema.go`, `grok_reasoner.go`.
 >
-> S1–S6 shipped in 0.8.31. S8: one-line builtins, protocol C ≤ 5 standing
-> negatives, constitution without Workspace/F < 800 tok (`len/4`). S7: named
-> A–D list, Anthropic `cache_control` per section (cap 4). Remaining P0: S10
-> (REQUESTED skills out of Catalog).
+> S1–S11 prompt-law P0 is closed. S8: constitution without Workspace/F < 800
+> tok (`len/4`). S7: named A–D. S10: REQUESTED skills out of Catalog. S11:
+> native envelope ≤ 200 B. Context-engineering C1–C2 closed (Fixture G/R
+> first 3 turns; compact is not a context engine).
 
 Steal jobs, not strings. Do not copy Claude’s terracotta voice, OMP π, or
 GrokNight into Carina identity.
@@ -83,7 +83,8 @@ classify operator phrases in the host to splice F back in.
 - Builtins: one line each. Examples belong in tests, not constitution.
 - Native schemas: same names as JSON actions; do not also paste `toolsHelp`.
 - MCP: names + 60–120 char blurbs; full schema only after `mcp_find`.
-- Skills: catalog + `skill://` body. Skill text never grants tools.
+- Skills: stable catalog of names + slash commands. Bodies via `skill://`
+  read. REQUESTED SKILLS / SKILL WARNING are volatile (before TASK), not Catalog.
 - Explore subagent: keep lean `exploreToolsHelp`. Do not give it F.
 
 ---
@@ -124,20 +125,45 @@ phrase classifier. converse does not dump AGENTS.md.
 
 **Landed (S8):** builtins are one line each; protocol C is five standing
 bullets; JSON examples stay in tests. Converse constitution without
-Workspace/F is under 800 tok (`len/4`). Native HTTP still swaps `toolsHelp`
-for `nativeToolsContract` — do not paste the catalog back.
+Workspace/F is under 800 tok (`len/4`). Native HTTP swaps protocol C for a
+≤ 200 B envelope and drops tools D — do not paste the catalog back.
 
 **Landed (S7):** constitution is a named list (Mode, Identity, Protocol,
 Tools), not `const systemPrompt`. Anthropic attaches `cache_control` to A–D
 (API cap 4). Grok/OpenAI still consume `full()` concat with cache kind `none`.
 `withToolContract` replaces protocol C and drops tools D.
 
-**Open after S7:**
+**Landed (S10):** skill Catalog is MCP index + skill names + slash commands
+only. REQUESTED SKILLS and SKILL WARNING sit in VolatileSuffix before TASK.
+`CacheSections` is independent of greeting wording (`hi` vs `Use $pdf`).
+Skill bodies stay behind `skill://` read. Implicit triggers stay opt-in
+(`CARINA_IMPLICIT_SKILL_PROMPTS`). `/review` stays a slash command
+(ISSUE-030).
 
-| ID | Problem | Change | Accept |
-|----|---------|--------|--------|
-| P0-S10 | Skill catalog keyed off `UserPrompt` | MCP index + skill names only; bodies via `skill://` | `CacheSections` independent of greeting wording |
-| P0-S11 | Native fallback can still carry JSON catalog | Native contract ≤ 200 B protocol, not 4.8 kB examples | `withToolContract` does not re-paste `toolsHelp` |
+**Landed (S11):** `nativeToolsContract` is envelope-only (≤ 200 B). Schemas
+stay in the HTTP tools array. `withToolContract` replaces protocol C, drops
+tools D, and strips `toolsHelp` / `toolsCatalog` from legacy constitution
+blobs. JSON ReAct catalog returns only on native requery fallback.
+
+**Landed (T-S1 web.search):** public web query after host approval; HTTPS /
+SSRF / untrusted / fail-closed same as `web.fetch`; plan+explore blocked;
+never `run`/`curl`. Dispatch + native schema.
+
+**Landed (T-S2 todo / update_plan):** real session checklist tools (dispatch +
+schema). Plan mode allows them (`isReadOnlyTool`); explore does not. Empty
+call echoes; empty slice clears. Not a phrase classifier.
+
+**Landed (T-S3):** search groups by file (count + first line); list rolls up
+dirs + sample files. Raw 50-line grep / 200-file trees are not the observation.
+
+Prompt-law P0 (S1–S11) is closed. Tool-surface P0 (T-S1 web.search, T-S2
+todo/update_plan, T-S3 search/list extract, S10) is closed. Context-engineering
+P0 (C1 Fixture G/R constitution < 800 tok on the first 3 live turns; C2
+`go/contextengine` identity, compact is not a context engine) is closed.
+Post-compact cited-file rebuild is volatile (P1-C1). Provider usage drives
+pressure when present (P1-C2). Remaining items are labeled P1/P2 or deferred
+(`full()` rebuild, EWMA compact, 奏折, git-first-class, browser) — no unmarked
+P0 knife rows.
 
 Files: `go/daemon/agent.go`, `agents.go`, `promptcache.go`, `memory.go`,
 `grok_reasoner.go`, `tool_schema.go`, `conversation_first_test.go`.

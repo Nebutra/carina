@@ -79,7 +79,7 @@ func TestParseActionDeduplicatesRepeatedProviderOutput(t *testing.T) {
 }
 
 func TestReadOnlyToolClassification(t *testing.T) {
-	for _, tool := range []string{"list", "read", "search", "code.search", "code.map"} {
+	for _, tool := range []string{"list", "read", "search", "code.search", "code.map", "todo", "update_plan"} {
 		if !isReadOnlyTool(tool) {
 			t.Errorf("%q should be read-only", tool)
 		}
@@ -131,6 +131,62 @@ func TestConstitutionWithoutWorkspaceStaysUnder800Tokens(t *testing.T) {
 	}
 	if tok := len(layers.Constitution) / 4; tok >= 800 {
 		t.Fatalf("converse constitution tokens = %d (len=%d), want < 800", tok, len(layers.Constitution))
+	}
+}
+
+func TestFixtureGAndRConstitutionStaysUnder800AcrossFirstTurns(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	if err := os.WriteFile(filepath.Join(ws, "AGENTS.md"), []byte("GREETING_MUST_NOT_LOAD_THIS\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+
+	assertConstitution := func(t *testing.T, prompt string, layers promptLayers) {
+		t.Helper()
+		if strings.Contains(layers.Constitution, "PROJECT INSTRUCTIONS") || strings.Contains(layers.Constitution, "GREETING_MUST_NOT_LOAD_THIS") {
+			t.Fatal("constitution must not include Workspace/F")
+		}
+		if tok := len(layers.Constitution) / 4; tok >= 800 {
+			t.Fatalf("converse constitution tokens = %d (len=%d), want < 800", tok, len(layers.Constitution))
+		}
+		if strings.Contains(prompt, "PROJECT INSTRUCTIONS") || strings.Contains(prompt, "GREETING_MUST_NOT_LOAD_THIS") {
+			t.Fatalf("live prompt leaked project instructions:\n%s", truncate(prompt, 400))
+		}
+	}
+
+	for _, fixture := range []struct {
+		name   string
+		prompt string
+	}{
+		{name: "G", prompt: "hi"},
+		{name: "R", prompt: "fix the parser in agent.go"},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			spy := &promptSpyReasoner{scriptedReasoner: scriptedReasoner{steps: []string{
+				`{"tool":"todo","intent":"track","todos":[{"content":"step one","status":"in_progress"}]}`,
+				`{"tool":"todo","intent":"track","todos":[{"content":"step one","status":"completed"}]}`,
+				`{"tool":"done","summary":"ok"}`,
+			}}}
+			d.SetReasoner(spy)
+			task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, fixture.prompt)
+			layers := d.composeAgentPromptLayers(sess, task, "")
+			d.runTask(sess, task)
+			if len(spy.prompts) < 3 {
+				t.Fatalf("want at least 3 live turns, got %d", len(spy.prompts))
+			}
+			for i, prompt := range spy.prompts[:3] {
+				if !strings.HasPrefix(strings.TrimSpace(prompt), "converse:") {
+					t.Fatalf("turn %d must stay converse-first: %q", i+1, truncate(prompt, 80))
+				}
+				assertConstitution(t, prompt, layers)
+			}
+			again := d.composeAgentPromptLayers(sess, task, "")
+			if again.Constitution != layers.Constitution {
+				t.Fatal("constitution must stay frozen across the first turns")
+			}
+		})
 	}
 }
 

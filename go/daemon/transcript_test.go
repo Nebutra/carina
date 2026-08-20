@@ -804,6 +804,9 @@ func TestCompactionKeptTurnsSurviveCheckpointRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(gotReceipt.KeyFiles, []string{"f0.go"}) {
 		t.Fatalf("KeyFiles must round-trip: %+v", gotReceipt.KeyFiles)
 	}
+	if len(gotReceipt.CitedFiles) == 0 {
+		t.Fatalf("CitedFiles must round-trip: %+v", gotReceipt)
+	}
 	keptOut := loaded.Transcript.Turns[:len(loaded.Transcript.Turns)-tr.policy.KeepRecent]
 	if gotReceipt.KeptSHA256 != turnsSHA256(keptOut) {
 		t.Fatalf("KeptSHA256 must verify against the reloaded kept turns: %+v", gotReceipt)

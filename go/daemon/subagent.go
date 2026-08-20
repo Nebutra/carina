@@ -283,7 +283,7 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 		if receipt := tr.compact(func(head string) (string, error) {
 			return thinkWithRetry(ctx, d.summarizeReasoner(), "Summarize concisely:\n"+head)
 		}); receipt != nil {
-			d.record(sess.SessionID, "ContextCompacted", task.RunID, "go", contextCompactedPayload(receipt, nil), "")
+			d.recordCompactRebuild(sess, task, tr, receipt, nil)
 		}
 		seg := buildPromptSegmentsFromLayers(layers, task.UserPrompt, tr.render(), "Next action as one JSON object.")
 
@@ -301,7 +301,14 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 			map[string]any{"turn": turn, "text": truncate(sanitizeModelResponseForAudit(raw), 300)}, "")
 
 		// Per-subagent token budget (whale-session protection).
-		d.sched.AddTokens(task.RunID, estimateTokens(seg.full())+estimateTokens(raw))
+		turnTokens := result.Usage.totalTokens()
+		if turnTokens == 0 {
+			turnTokens = estimateTokens(seg.full()) + estimateTokens(raw)
+		}
+		d.sched.AddTokens(task.RunID, turnTokens)
+		if !result.Usage.Estimated {
+			tr.noteObservedInputTokens(result.Usage.InputTokens)
+		}
 		if mtt := d.maxTaskTokens.Load(); mtt > 0 {
 			if t, ok := d.sched.Get(task.RunID); ok && int64(t.TokensUsed) > mtt {
 				d.sched.SetStatus(task.RunID, "degraded")

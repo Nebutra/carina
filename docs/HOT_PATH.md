@@ -23,7 +23,7 @@ flowchart TD
   rpc --> layers[composeAgentPromptLayers once/run]
   layers --> turn[Each ReAct turn]
   turn --> compact[Transcript.compact on the loop]
-  compact --> full["seg.full = prefix + TASK + transcript"]
+  compact --> full["seg.full = prefix + requested + TASK + transcript"]
   full --> think{Reasoner}
   think -->|Grok| isol[newIsolation + grok inspect + ACP]
   think -->|Anthropic| cache[CacheSections]

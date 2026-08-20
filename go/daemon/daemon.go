@@ -203,6 +203,8 @@ type Daemon struct {
 	readProv   map[string]map[string]string // session -> relpath -> sha256 of last read (dirty-write guard)
 	readProvMu sync.Mutex
 
+	todos sync.Map // session_id -> []todoItem (operator-visible checklist; not a workspace effect)
+
 	restrictedTools sync.Map // session -> map[string]bool of tool verbs this session's loop must never dispatch (set for best-of-n candidate drafters)
 
 	indexBuilt sync.Map // session -> true once the code index was lazily built (code.* tools)

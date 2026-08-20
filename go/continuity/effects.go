@@ -24,7 +24,7 @@ func NewEffectContract(class EffectClass, idempotencyKey string) EffectContract 
 func ClassifyTool(tool string, arguments map[string]any) EffectContract {
 	key, _ := arguments["idempotency_key"].(string)
 	switch tool {
-	case "read", "list", "search", "code.search", "code.symbols", "code.map", "code.def", "code.refs", "code.impact", "mcp_find":
+	case "read", "list", "search", "code.search", "code.symbols", "code.map", "code.def", "code.refs", "code.impact", "mcp_find", "todo", "update_plan":
 		return NewEffectContract(EffectPure, "")
 	case "patch", "edit":
 		return NewEffectContract(EffectWorkspaceTransactional, "")
@@ -32,7 +32,7 @@ func ClassifyTool(tool string, arguments map[string]any) EffectContract {
 		return NewEffectContract(EffectIdempotentExternal, key)
 	case "ask_user":
 		return NewEffectContract(EffectNonIdempotent, "")
-	case "web.fetch":
+	case "web.fetch", "web.search":
 		return NewEffectContract(EffectNonIdempotent, "")
 	default:
 		return NewEffectContract(EffectUnknown, "")

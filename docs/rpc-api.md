@@ -105,6 +105,8 @@ the capability kernel.
 
 Carina owns the context-engine boundary and does not bundle or start an external
 compression runtime. Auto mode resolves to the local no-op implementation.
+This adapter is identity: it must not be called a compressor, and it is not
+`Transcript.compact` (the in-loop product compressor).
 
 The context RPCs are local-only:
 

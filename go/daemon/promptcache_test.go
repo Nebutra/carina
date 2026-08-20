@@ -77,6 +77,21 @@ func TestPromptSectionsKeepOrderAndOmitEmpty(t *testing.T) {
 		t.Fatalf("TASK leaked into cache sections: %#v", emptyCatalog.CacheSections())
 	}
 
+	withRequested := buildPromptSegmentsFromLayers(promptLayers{
+		Constitution: "C", Catalog: "CATALOG", Requested: "REQUESTED SKILLS\n- skill://pdf (explicit)",
+	}, "Use $pdf", "turn1", "GO")
+	if strings.Contains(withRequested.StablePrefix, "REQUESTED SKILLS") {
+		t.Fatal("REQUESTED skills must not live in the stable prefix")
+	}
+	if !strings.Contains(withRequested.VolatileSuffix, "REQUESTED SKILLS") || !strings.Contains(withRequested.VolatileSuffix, "TASK: Use $pdf") {
+		t.Fatalf("REQUESTED skills belong in the suffix before TASK: %q", withRequested.VolatileSuffix)
+	}
+	for _, section := range withRequested.CacheSections() {
+		if strings.Contains(section, "REQUESTED SKILLS") || strings.Contains(section, "TASK:") {
+			t.Fatalf("CacheSections leaked volatile text: %#v", withRequested.CacheSections())
+		}
+	}
+
 	blob := buildPromptSegments("SYS", "task", "t", "GO")
 	if blob.Constitution != "SYS" || blob.Workspace != "" || blob.Catalog != "" {
 		t.Fatalf("legacy blob must stay one constitution section: %+v", blob)
@@ -153,5 +168,51 @@ func TestConstitutionSectionsAreNamedAndOrdered(t *testing.T) {
 	}
 	if strings.Contains(native.Constitution, toolsCatalog) {
 		t.Fatal("native constitution must not re-paste tools catalog")
+	}
+	if strings.Contains(native.Constitution, toolsHelp) || strings.Contains(native.Protocol, toolsHelp) {
+		t.Fatal("withToolContract must not re-paste toolsHelp")
+	}
+}
+
+func TestNativeToolContractIsEnvelopeOnly(t *testing.T) {
+	if len(nativeToolsContract) > 200 {
+		t.Fatalf("native protocol = %d B, want ≤ 200", len(nativeToolsContract))
+	}
+	if strings.Contains(nativeToolsContract, `{"tool":`) || strings.Contains(nativeToolsContract, "Available tools:") {
+		t.Fatalf("native protocol must not carry the JSON catalog:\n%s", nativeToolsContract)
+	}
+	if strings.Contains(nativeToolsContract, toolsHelp) || strings.Contains(nativeToolsContract, toolsCatalog) {
+		t.Fatal("native protocol must not embed toolsHelp")
+	}
+
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "hi")
+	named := d.composeAgentPromptLayers(sess, task, "").withToolContract(nativeToolsContract)
+	if named.Tools != "" || strings.Contains(named.Constitution, toolsCatalog) || strings.Contains(named.Constitution, toolsHelp) {
+		t.Fatal("named native layers re-pasted the JSON catalog")
+	}
+	if !strings.Contains(named.Constitution, nativeToolsContract) {
+		t.Fatal("named native layers dropped the envelope")
+	}
+	if strings.Contains(named.Constitution, "Reply with ONLY the JSON object") {
+		t.Fatal("native envelope must not keep the JSON ReAct protocol")
+	}
+
+	legacy := promptLayers{Constitution: "SUBAGENT\n\n" + toolsHelp}.withToolContract(nativeToolsContract)
+	if strings.Contains(legacy.Constitution, toolsHelp) || strings.Contains(legacy.Constitution, toolsCatalog) || strings.Contains(legacy.Constitution, `{"tool":`) {
+		t.Fatalf("legacy withToolContract re-pasted the JSON catalog:\n%s", legacy.Constitution)
+	}
+	if !strings.Contains(legacy.Constitution, "SUBAGENT") || !strings.Contains(legacy.Constitution, nativeToolsContract) {
+		t.Fatalf("legacy native constitution drifted: %q", legacy.Constitution)
+	}
+
+	unordered := promptLayers{Constitution: coreConstitution()}.withToolContract(nativeToolsContract)
+	if strings.Contains(unordered.Constitution, toolsCatalog) || strings.Contains(unordered.Constitution, harnessProtocol) {
+		t.Fatalf("unordered blob kept JSON catalog/protocol:\n%s", unordered.Constitution)
+	}
+	if !strings.Contains(unordered.Constitution, nativeToolsContract) {
+		t.Fatal("unordered blob dropped the native envelope")
 	}
 }

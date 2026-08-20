@@ -27,8 +27,14 @@ func TestToolEffectRegistryFailsClosed(t *testing.T) {
 	if got := ClassifyTool("web.fetch", nil); got.Class != EffectNonIdempotent || got.ReplaySafe {
 		t.Fatalf("web.fetch is time-varying external input and must not replay: %+v", got)
 	}
+	if got := ClassifyTool("web.search", nil); got.Class != EffectNonIdempotent || got.ReplaySafe {
+		t.Fatalf("web.search is time-varying external input and must not replay: %+v", got)
+	}
 	if got := ClassifyTool("edit", nil); got.Class != EffectWorkspaceTransactional || !got.ReplaySafe {
 		t.Fatalf("edit must share patch's workspace-transactional contract, got %+v", got)
+	}
+	if got := ClassifyTool("todo", nil); got.Class != EffectPure || !got.ReplaySafe {
+		t.Fatalf("todo is session bookkeeping, got %+v", got)
 	}
 }
 

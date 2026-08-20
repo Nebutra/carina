@@ -40,7 +40,7 @@ var exploreToolNames = []string{
 var exploreRestrictedTools = map[string]bool{
 	"patch": true, "edit": true, "run": true, "memory": true,
 	"spawn": true, "workflow": true, "mcp": true, "best_of_n": true,
-	"web.fetch": true, "ask_user": true,
+	"web.fetch": true, "web.search": true, "ask_user": true,
 }
 
 func isExploreSubagent(spec *AgentSpec) bool {

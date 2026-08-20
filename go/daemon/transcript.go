@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +18,9 @@ const (
 	observationSnipInlineEnv    = "CARINA_INLINE_TOOL_OUTPUT"
 	pinnedObservationMaxChars   = 1 << 20
 	observationSnipPointerSlack = 220
+	maxRebuildFiles             = 5
+	maxRebuildFileBytes         = 20_000 // 5k tok ceiling per file
+	maxRebuildTotalBytes        = 8000   // do not refill the window compact just freed
 )
 
 // The agent's view of history is a *bounded projection* of the append-only
@@ -64,6 +68,7 @@ type Turn struct {
 type Transcript struct {
 	Task               string
 	Summary            string // rolling summary of compacted-away head turns
+	Rebuild            string `json:"rebuild,omitempty"` // post-compact cited-file rehydrate; volatile; not prefix
 	Turns              []Turn
 	CompactionReceipts []CompactionReceipt      `json:"compaction_receipts,omitempty"`
 	CompactionBudget   CompactionBudgetSnapshot `json:"compaction_budget,omitempty"`
@@ -71,6 +76,10 @@ type Transcript struct {
 	policy             CompactionPolicy
 	artifacts          *artifact.Store
 	artifactScope      artifact.Scope
+	// observedInputTokens is the last provider-reported prompt size for this
+	// view. Zero means pressure falls back to chars/4. Not checkpointed:
+	// after resume, usage is absent until the next provider response.
+	observedInputTokens int
 }
 
 func (t *Transcript) bindArtifacts(store *artifact.Store, scope artifact.Scope) {
@@ -134,6 +143,7 @@ type CompactionReceipt struct {
 	KeptTurnIndices    []int          `json:"kept_turn_indices,omitempty"`
 	KeptSHA256         string         `json:"kept_sha256,omitempty"`
 	KeyFiles           []string       `json:"key_files,omitempty"`
+	CitedFiles         []string       `json:"cited_files,omitempty"`
 	PolicyVersion      string         `json:"policy_version,omitempty"`
 	WindowTokens       int            `json:"window_tokens,omitempty"`
 	ReserveTokens      int            `json:"reserve_tokens,omitempty"`
@@ -321,13 +331,23 @@ func (t *Transcript) supersedeStaleReads(path string) int {
 
 // render projects the transcript into the prompt body the model sees.
 func (t *Transcript) render() string {
-	return renderTranscript(t.Summary, t.Turns)
+	if t == nil {
+		return ""
+	}
+	return renderTranscriptRebuild(t.Summary, t.Rebuild, t.Turns)
 }
 
 func renderTranscript(summary string, turns []Turn) string {
+	return renderTranscriptRebuild(summary, "", turns)
+}
+
+func renderTranscriptRebuild(summary, rebuild string, turns []Turn) string {
 	var b strings.Builder
 	if summary != "" {
 		fmt.Fprintf(&b, "SUMMARY OF EARLIER WORK:\n%s\n\n", summary)
+	}
+	if rebuild != "" {
+		fmt.Fprintf(&b, "%s\n\n", rebuild)
 	}
 	for _, turn := range turns {
 		obs := turn.Obs.Content
@@ -391,22 +411,19 @@ func (t *Transcript) triggerChars() int {
 
 // shouldCompact is the single combiner both of compact()'s gates below call:
 // compaction is due once EITHER the char-based trigger (triggerChars, see
-// above) OR the token-estimate trigger (MaxTokens, via agent.go's
-// estimateTokens helper) fires. MaxTokens=0 (the default) makes the
-// token-estimate side of the OR permanently false, so shouldCompact() reduces
-// to the plain t.size() > triggerChars() check that predates this field —
-// byte-identical to prior behavior for every existing caller/policy.
+// above) OR the token trigger (MaxTokens) fires. MaxTokens=0 (the default)
+// makes the token side of the OR permanently false, so shouldCompact()
+// reduces to the plain t.size() > triggerChars() check that predates this
+// field — byte-identical to prior behavior for every existing caller/policy
+// when no provider usage has been noted.
 //
-// This mirrors codebuff's token-triggered compaction while staying scoped to
-// carina's existing char-budget machinery rather than replacing it: carina
-// has no cheap exact token count (see the CompactionPolicy doc comment), so
-// MaxTokens is an additional early-fire signal layered on top of the
-// char-based trigger, not a replacement for it.
+// The token side prefers the last provider-reported input count
+// (noteObservedInputTokens). chars/4 is the fallback when usage is absent.
 func (t *Transcript) shouldCompact() bool {
 	if t.size() > t.triggerChars() {
 		return true
 	}
-	if t.policy.MaxTokens > 0 && estimateTokens(t.render()) > t.policy.MaxTokens {
+	if t.policy.MaxTokens > 0 && t.viewTokens() > t.policy.MaxTokens {
 		return true
 	}
 	return false
@@ -414,12 +431,29 @@ func (t *Transcript) shouldCompact() bool {
 
 func (t *Transcript) compactionPressure() float64 {
 	if t.policy.MaxTokens > 0 {
-		return float64(estimateTokens(t.render())) / float64(t.policy.MaxTokens)
+		return float64(t.viewTokens()) / float64(t.policy.MaxTokens)
 	}
 	if trigger := t.triggerChars(); trigger > 0 {
 		return float64(t.size()) / float64(trigger)
 	}
 	return 0
+}
+
+func (t *Transcript) noteObservedInputTokens(n int) {
+	if t == nil || n <= 0 {
+		return
+	}
+	t.observedInputTokens = n
+}
+
+func (t *Transcript) viewTokens() int {
+	if t != nil && t.observedInputTokens > 0 {
+		return t.observedInputTokens
+	}
+	if t == nil {
+		return 0
+	}
+	return estimateTokens(t.render())
 }
 
 func (t *Transcript) compactionMode(pressure float64) CompactionMode {
@@ -507,8 +541,11 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 	preCompactionTurns := append([]Turn(nil), t.Turns...)
 	preRender := t.render()
 	charsBefore := len(preRender)
-	tokensBefore := estimateTokens(preRender)
+	tokensBefore := t.viewTokens()
 	pressureBefore := t.compactionPressure()
+	// The view is about to change; stale provider input tokens must not
+	// force a summary after cheap elision. Next Think will note usage again.
+	t.observedInputTokens = 0
 	// Step 1: elide.
 	cutoff := len(t.Turns) - t.policy.KeepRecent
 	for i := 0; i < cutoff; i++ {
@@ -614,6 +651,7 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 			Version: receiptVersion, CreatedAt: time.Now().UTC(), FirstTurn: firstTurn, LastTurn: lastTurn,
 			RemovedTurns: len(folded), PreimageSHA256: preimageHash, SummarySHA256: sha256Hex(summary),
 			KeptTurnIndices: keptIdx, KeyFiles: keyFiles(folded, 5),
+			CitedFiles: citedFiles(folded, maxRebuildFiles),
 			PolicyVersion: t.policy.PolicyVersion, WindowTokens: t.policy.WindowTokens,
 			ReserveTokens: t.policy.ReserveTokens, MetadataSource: t.policy.MetadataSource,
 			PressureBefore: pressureBefore, PressureAfter: t.compactionPressure(),
@@ -727,6 +765,54 @@ func keyFiles(turns []Turn, k int) []string {
 		order = order[:k]
 	}
 	return order
+}
+
+// citedFiles is the newest-first unique path list a post-compact rebuild
+// re-reads: read Path (or "read <path>" briefs) plus patch/edit briefs.
+// skill:// and traversal paths stay out. Cap k. Pure function of folded turns.
+func citedFiles(turns []Turn, k int) []string {
+	if k <= 0 {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for i := len(turns) - 1; i >= 0 && len(out) < k; i-- {
+		path, ok := rebuildRelPath(citedPath(turns[i]))
+		if !ok || seen[path] {
+			continue
+		}
+		seen[path] = true
+		out = append(out, path)
+	}
+	return out
+}
+
+func citedPath(turn Turn) string {
+	switch turn.Tool {
+	case "read":
+		if strings.TrimSpace(turn.Path) != "" {
+			return turn.Path
+		}
+		return strings.TrimSpace(strings.TrimPrefix(turn.ActionBrief, "read "))
+	case "patch", "edit":
+		return strings.TrimSpace(strings.TrimPrefix(turn.ActionBrief, turn.Tool+" "))
+	default:
+		return ""
+	}
+}
+
+func rebuildRelPath(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.Contains(raw, "..") {
+		return "", false
+	}
+	if _, ok := parseSkillURI(raw); ok {
+		return "", false
+	}
+	if strings.Contains(raw, "://") || filepath.IsAbs(raw) {
+		return "", false
+	}
+	return raw, true
 }
 
 // SummaryContent is the structured shape of a compaction summary: Cline

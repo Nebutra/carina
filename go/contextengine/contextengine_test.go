@@ -91,3 +91,26 @@ func TestAutoCompressIsIdentity(t *testing.T) {
 		t.Fatalf("auto compress missing identity reason: %q", res.Reason)
 	}
 }
+
+func TestNoopIdentityNamesTranscriptCompactNotAContextEngine(t *testing.T) {
+	if !strings.Contains(NoopIdentityReason, "Transcript.compact") {
+		t.Fatalf("identity reason must name Transcript.compact: %q", NoopIdentityReason)
+	}
+	if strings.Contains(NoopIdentityReason, "is a context engine") {
+		t.Fatalf("identity reason must not call compact a context engine: %q", NoopIdentityReason)
+	}
+	m, err := New(Config{ContextEngine: ModeAuto})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := m.Compress(context.Background(), CompressRequest{Content: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Transformed || res.Content != "hello" || res.Engine != ModeNoop {
+		t.Fatalf("auto compress must stay identity: %+v", res)
+	}
+	if res.Reason != NoopIdentityReason {
+		t.Fatalf("compress reason = %q", res.Reason)
+	}
+}

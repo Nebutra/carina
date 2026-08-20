@@ -456,7 +456,7 @@ func toolKind(tool string) string {
 	switch tool {
 	case "read", "list", "search", "code.search", "code.symbols", "code.map", "code.def", "code.refs", "code.impact", "mcp_find":
 		return "read"
-	case "web.fetch":
+	case "web.fetch", "web.search":
 		return "network"
 	case "patch", "edit", "memory":
 		return "write"
@@ -468,6 +468,8 @@ func toolKind(tool string) string {
 		return "mcp"
 	case "ask_user":
 		return "interaction"
+	case "todo", "update_plan":
+		return "plan"
 	default:
 		return "unknown"
 	}
@@ -482,6 +484,9 @@ func redactedToolArguments(act *action) map[string]any {
 		args["pattern"] = act.Pattern
 	case "web.fetch":
 		args["host"] = webFetchHost(act.URL)
+	case "web.search":
+		args["host"] = webSearchHost
+		args["query"] = brief(act.Query, 80)
 	case "run":
 		args["argc"] = len(act.Command)
 		if len(act.Command) > 0 {
@@ -500,6 +505,12 @@ func redactedToolArguments(act *action) map[string]any {
 		args["target"] = act.Target
 	case "ask_user":
 		args["option_count"] = len(act.Options)
+	case "todo", "update_plan":
+		if items, ok := act.incomingChecklist(); ok {
+			if normalized, err := coerceTodoItems(items); err == nil {
+				args["todos"] = normalized
+			}
+		}
 	case "code.search", "mcp_find":
 		args["query"] = act.Query
 	case "code.symbols", "code.def", "code.refs", "code.impact":

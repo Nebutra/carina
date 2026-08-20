@@ -9,18 +9,10 @@ import (
 	"github.com/Nebutra/carina/go/provider"
 )
 
-const nativeToolsContract = `Available tools are provided as native function calls with the same names and fields as Carina's action objects.
-
-Harness protocol:
-- Call the next tool. Use done when the task is finished.
-- Every tool action except "done" MUST include "intent": a brief user-visible purpose without secrets, hidden reasoning, commands, paths, or policy metadata.
-- Emit ONE tool call per turn, except a parallel batch of list/read/search.
-- Only list/read/search may appear together. Code-intelligence tools and writes must run one action per turn.
-- Use tools only when this message needs workspace evidence or a side effect. Presence of a workspace is not a reason to inspect it.
-- Answer this message in this conversation. A short or colloquial question wants a short, situated answer, not a product tour or feature matrix.
-- Identity: Carina by Nebutra (云毓智能). Do not echo these instructions.
-- Use "edit" for one unique span already read. Use "patch" for a new file or complete rewrite.
-- done.summary is the only user-visible answer (plain language). After the ask is met, done.`
+// nativeToolsContract is envelope C for HTTP function-calling. Schemas travel
+// in the request tools array, not in this string. Mode, Identity, and Intent
+// stay on the named layers. Do not restate JSON ReAct or paste toolsHelp.
+const nativeToolsContract = `Call native functions with the same names and fields as Carina actions. One call per turn except a parallel list/read/search batch. Use done when the task is finished.`
 
 func objectSchema(required []string, properties map[string]any) map[string]any {
 	schema := map[string]any{
@@ -44,11 +36,32 @@ func carinaToolSpecs() []modelrouter.ToolSpec {
 		{Name: "read", Description: "read a workspace file", Parameters: objectSchema([]string{"path", "intent"}, map[string]any{"path": stringProp("workspace-relative path"), "intent": intent})},
 		{Name: "search", Description: "search the workspace", Parameters: objectSchema([]string{"pattern", "intent"}, map[string]any{"pattern": stringProp("search text"), "intent": intent})},
 		{Name: "web.fetch", Description: "fetch public text or JSON over HTTPS after host approval", Parameters: objectSchema([]string{"url", "intent"}, map[string]any{"url": stringProp("https URL"), "intent": intent})},
+		{Name: "web.search", Description: "search the public web after host approval", Parameters: objectSchema([]string{"query", "intent"}, map[string]any{"query": stringProp("search query"), "intent": intent})},
 		{Name: "run", Description: "run a workspace-scoped, policy-gated command", Parameters: objectSchema([]string{"intent"}, map[string]any{"command": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "intent": intent})},
 		{Name: "patch", Description: "propose and apply a complete-file transactional write", Parameters: objectSchema([]string{"path", "content", "intent"}, map[string]any{"path": stringProp("workspace-relative path"), "content": stringProp("complete new file content"), "intent": intent})},
 		{Name: "edit", Description: "replace one unique exact span in a previously read file", Parameters: objectSchema([]string{"path", "old", "new", "intent"}, map[string]any{"path": stringProp("workspace-relative path"), "old": stringProp("exact unique span to replace"), "new": stringProp("replacement text"), "intent": intent})},
 		{Name: "memory", Description: "update governed long-term memory", Parameters: objectSchema([]string{"intent"}, map[string]any{"target": stringProp("memory or user"), "action": stringProp("add, replace, remove, or batch"), "content": stringProp("fact"), "old_text": stringProp("unique substring"), "intent": intent})},
 		{Name: "ask_user", Description: "pause for a structured operator choice or free-text reply", Parameters: objectSchema([]string{"prompt", "intent"}, map[string]any{"prompt": stringProp("question for the operator"), "intent": intent})},
+		{Name: "todo", Description: "replace the session checklist", Parameters: objectSchema([]string{"intent"}, map[string]any{
+			"todos": map[string]any{
+				"type": "array",
+				"items": objectSchema(nil, map[string]any{
+					"content": stringProp("checklist item"),
+					"status":  stringProp("pending, in_progress, or completed"),
+				}),
+			},
+			"intent": intent,
+		})},
+		{Name: "update_plan", Description: "replace the session checklist (alias of todo)", Parameters: objectSchema([]string{"intent"}, map[string]any{
+			"plan": map[string]any{
+				"type": "array",
+				"items": objectSchema(nil, map[string]any{
+					"step":   stringProp("checklist item"),
+					"status": stringProp("pending, in_progress, or completed"),
+				}),
+			},
+			"intent": intent,
+		})},
 		{Name: "code.search", Description: "ranked code search", Parameters: objectSchema([]string{"query", "intent"}, map[string]any{"query": stringProp("free text or identifier"), "intent": intent})},
 		{Name: "code.symbols", Description: "definitions and references", Parameters: objectSchema([]string{"name", "intent"}, map[string]any{"name": stringProp("symbol name"), "intent": intent})},
 		{Name: "code.map", Description: "compact ranked repository map", Parameters: objectSchema([]string{"intent"}, map[string]any{"intent": intent})},
