@@ -1,6 +1,6 @@
 # Carina Hot Path (DRAFT LAW)
 
-> Status: **P0 H1–H7 landing in this source line**. Live evidence:
+> Status: **P0 H1–H7 shipped in v0.8.33**. Live evidence:
 > `docs/research/competitive-2026-08/20-hot-path-latency-audit.md`.
 > Code: `go/daemon/agent.go`, `promptcache.go`, `subagent.go`, `grok_reasoner.go`,
 > `go/kernel/kernel.go`, `go/rpc/client.go`, `zig/carina-scan`,
@@ -13,7 +13,7 @@ into Carina identity. Hash-chained audit and fail-closed kernel stay.
 
 ---
 
-## 1. Live pipeline (as shipped v0.8.32)
+## 1. Live pipeline (as shipped v0.8.33)
 
 ```mermaid
 flowchart TD
