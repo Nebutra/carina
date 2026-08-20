@@ -9,7 +9,7 @@ func TestVersionIsReleaseSemver(t *testing.T) {
 	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`).MatchString(Version) {
 		t.Fatalf("product version %q is not release semver", Version)
 	}
-	if Version != "0.8.36" {
-		t.Fatalf("next release version = %s, want 0.8.36", Version)
+	if Version != "0.8.37" {
+		t.Fatalf("next release version = %s, want 0.8.37", Version)
 	}
 }

@@ -1,7 +1,7 @@
 # Competitive Research 2026-08 — Artifact Index
 
 > 取证日期：2026-08-02  
-> **现状刷新：2026-08-20 @ Carina v0.8.36** — **Harness SSOT：[24-post-0.8.36-harness-re-audit.md](./24-post-0.8.36-harness-re-audit.md)**；审美见 **[18](./18-tui-aesthetic-post-0.8.29.md)** / 长文 **[23](./23-assistant-markdown-document.md)**（A015/A016 已发）；Prompt 见 **[21](./21-prompt-context-re-audit.md)**；热路径见 **[20](./20-hot-path-latency-audit.md)**；`16`/`22` 为历史  
+> **现状刷新：2026-08-20 @ Carina v0.8.37** — **Harness SSOT：[24-post-0.8.36-harness-re-audit.md](./24-post-0.8.36-harness-re-audit.md)**；审美见 **[18](./18-tui-aesthetic-post-0.8.29.md)** / 长文 **[23](./23-assistant-markdown-document.md)**（A015/A016 已发）；Prompt 见 **[21](./21-prompt-context-re-audit.md)**；热路径见 **[20](./20-hot-path-latency-audit.md)**；`16`/`22` 为历史  
 > 范围：Carina vs Jcode / Grok Build / Claude Code (notes) / Codex / Oh My Pi (OMP) / DeepSeek Harness（公开文档，本机无 clone）  
 > 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图 → **日用 P0 剩余 = S10；Index 预热与 chip 为 P1；SaaS/ACP/皮肤否决**
 
@@ -11,7 +11,7 @@
 
 | 文件 | 角色 |
 |------|------|
-| **[24-post-0.8.36-harness-re-audit.md](./24-post-0.8.36-harness-re-audit.md)** | **Harness SSOT v0.8.36**：对话跨 run、表拆箱、rewind fork、S8 constitution &lt;800 tok、S7 命名 A–D 已发；剩余 P0 = S10 |
+| **[24-post-0.8.36-harness-re-audit.md](./24-post-0.8.36-harness-re-audit.md)** | **Harness SSOT v0.8.36 取证**：对话跨 run、表拆箱、rewind fork、S8/S7 随 **0.8.37** 发；剩余 P0 = S10 |
 | **[23-assistant-markdown-document.md](./23-assistant-markdown-document.md)** | 长文答案排版：A015/A016 随 **0.8.35** 发；A017 标题层级仍开 |
 | **[22-post-0.8.34-harness-re-audit.md](./22-post-0.8.34-harness-re-audit.md)** | **Harness 全维度再审计 v0.8.34**：模块地图 + 六家 job + scorecard + 分类清单；剩余 P0 = S7/S8/S10 |
 | **[21-prompt-context-re-audit.md](./21-prompt-context-re-audit.md)** | **Prompt 再审计 v0.8.33 FAIL ~5.5/10**：S1–S6 已发；S9 随 **0.8.34** 发；S7–S8/S10 开；S11 并入 S8；法：`docs/PROMPT_SPEC.md` |
@@ -59,7 +59,7 @@
 | 16 | [16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md) | **0.8.27** | paste-chip 已发；无新产品刀（历史切片） |
 | 22 | [22-post-0.8.34-harness-re-audit.md](./22-post-0.8.34-harness-re-audit.md) | **0.8.34** | 历史 Harness：Intent-Meta 已发 |
 | 23 | [23-assistant-markdown-document.md](./23-assistant-markdown-document.md) | 长文 | A015/A016 随 0.8.35 发 |
-| 24 | [24-post-0.8.36-harness-re-audit.md](./24-post-0.8.36-harness-re-audit.md) | **0.8.36** | **Harness SSOT**：上文/表/rewind/S8/S7 已发；P0 = S10 |
+| 24 | [24-post-0.8.36-harness-re-audit.md](./24-post-0.8.36-harness-re-audit.md) | **0.8.36** | **Harness SSOT**：上文/表/rewind；S8/S7 随 0.8.37 发；P0 = S10 |
 
 ---
 
