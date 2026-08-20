@@ -1,7 +1,7 @@
 # Carina Prompt / Context Engineering Audit
 
 > Date: 2026-08-20
-> Carina: **v0.8.30** audit. P0 knives S1–S6 landed in this source line.
+> Carina: **v0.8.30** audit. P0 knives S1–S6 shipped in **v0.8.31**.
 > Role: Context Engineering Architect. “Agent can reply” is not a pass.
 > **Verdict at audit: FAIL.** Default **build** plus dumped `AGENTS.md` plus
 > “batch all independent search on first exploration” sent a two-word

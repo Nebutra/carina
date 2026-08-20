@@ -5,9 +5,8 @@
 > `styles.md` is the renderer contract. When a P0 slice ships, rewrite the
 > matching `styles.md` section. Do not keep two competing empty-state stories.
 >
-> Baseline: Carina v0.8.30. Chrome P0 (empty, composer rails, header, live
-> rail, approval, thinking spinner, `/theme`) and conversation-document P0
-> (user pills, unboxed answers, receding receipts, leftover rest) **landed**.
+> Baseline: Carina v0.8.31. Chrome P0, conversation-document P0, recovered
+> failures leaving the page, and collapse-clear **landed**.
 > Steal principles, not pixels.
 > Rejected wholesale: GrokNight / TokyoNight, OMP π branding, Claude terracotta
 > as Carina identity, Jcode idle donut, Buddy/pets, Codex 36-frame ASCII loops.
@@ -411,5 +410,8 @@ Shipped on 0.8.30:
 | A012 | Policy-denied tools recede | shipped 0.8.30 |
 | A011 | Assistant answer louder than settled tools | shipped 0.8.30 |
 | A013 | Leftover height is rest, never a donut | shipped 0.8.30 |
+
+Shipped on 0.8.31: recovered/settled-retry failures leave the reading column;
+collapsing a tool clears wrap remnants from the unread gutter.
 
 Do not start A102 shine or a theme catalog until Fixture A is the daily binary.

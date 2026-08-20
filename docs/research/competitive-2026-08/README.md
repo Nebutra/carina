@@ -1,9 +1,9 @@
 # Competitive Research 2026-08 — Artifact Index
 
 > 取证日期：2026-08-02  
-> **现状刷新：2026-08-20 @ Carina v0.8.30** — 诚实性见 **[16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md)**；审美见 **[18-tui-aesthetic-post-0.8.29.md](./18-tui-aesthetic-post-0.8.29.md)**；Prompt/Context 见 **[19-prompt-context-audit.md](./19-prompt-context-audit.md)**  
+> **现状刷新：2026-08-20 @ Carina v0.8.31** — 诚实性见 **[16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md)**；审美见 **[18-tui-aesthetic-post-0.8.29.md](./18-tui-aesthetic-post-0.8.29.md)**；Prompt/Context 见 **[19-prompt-context-audit.md](./19-prompt-context-audit.md)**  
 > 范围：Carina vs Jcode / Grok Build / Claude Code (notes) / Codex / Oh My Pi (OMP) / DeepSeek Harness（公开文档，本机无 clone）  
-> 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图 → **诚实性无新 P0/P1；审美 A010–A013 随 0.8.30 发；Prompt/Context P0 S1–S6 在本源码线落地**
+> 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图 → **诚实性无新 P0/P1；审美 A010–A013 随 0.8.30 发；Prompt/Context P0 S1–S6 随 0.8.31 发**
 
 ---
 
@@ -11,7 +11,7 @@
 
 | 文件 | 角色 |
 |------|------|
-| **[19-prompt-context-audit.md](./19-prompt-context-audit.md)** | Prompt/Context 审计 FAIL 取证；P0 S1–S6 已在本源码线落地（converse 默认、问候不灌 AGENTS.md、TASK 出 cache、Grok ReAct 信封） |
+| **[19-prompt-context-audit.md](./19-prompt-context-audit.md)** | Prompt/Context 审计 FAIL 取证；P0 S1–S6 随 **0.8.31** 发（converse 默认、问候不灌 AGENTS.md、TASK 出 cache、Grok ReAct 信封） |
 | **[18-tui-aesthetic-post-0.8.29.md](./18-tui-aesthetic-post-0.8.29.md)** | 审美 SSOT：0.8.29 框 + 0.8.30 对话文档刀 A010–A013；P1 仍开 |
 | [17-tui-aesthetic-audit.md](./17-tui-aesthetic-audit.md) | 历史：竞品 DNA + 被证伪的 chrome-first P0（A001–A007 已发，不够） |
 | **[16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md)** | **诚实性真相**：0.8.30 线；无新诚实性 P0/P1 |
