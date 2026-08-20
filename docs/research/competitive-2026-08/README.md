@@ -1,9 +1,9 @@
 # Competitive Research 2026-08 — Artifact Index
 
 > 取证日期：2026-08-02  
-> **现状刷新：2026-08-19 @ Carina v0.8.26** — 见 **[15-post-0.8.26-refresh.md](./15-post-0.8.26-refresh.md)**  
+> **现状刷新：2026-08-20 @ Carina v0.8.27** — 见 **[16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md)**  
 > 范围：Carina vs Jcode / Grok Build / Claude Code (notes) / Codex / Oh My Pi (OMP) / DeepSeek Harness（公开文档，本机无 clone）  
-> 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图 → **post-0.8.26 收口：无新 P0/P1**
+> 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图 → **post-0.8.27：无新 P0/P1**
 
 ---
 
@@ -11,7 +11,8 @@
 
 | 文件 | 角色 |
 |------|------|
-| **[15-post-0.8.26-refresh.md](./15-post-0.8.26-refresh.md)** | **现状真相**：0.8.26 收口；无新 P0/P1 |
+| **[16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md)** | **现状真相**：0.8.27；无新 P0/P1 |
+| [15-post-0.8.26-refresh.md](./15-post-0.8.26-refresh.md) | 历史：0.8.26 收口 |
 | [14-post-0.8.25-refresh.md](./14-post-0.8.25-refresh.md) | 历史：G25-01 TUI Goal 暂停文案 |
 | [13-post-0.8.24-refresh.md](./13-post-0.8.24-refresh.md) | 历史：0.8.24→0.8.25 Goal×stop + R-01 |
 | [12-post-0.8.23-refresh.md](./12-post-0.8.23-refresh.md) | 历史：0.8.23→0.8.24 |
@@ -45,7 +46,8 @@
 | 12 | [12-post-0.8.23-refresh.md](./12-post-0.8.23-refresh.md) | 0.8.23 | 历史：握手/compact/Goal disarm |
 | 13 | [13-post-0.8.24-refresh.md](./13-post-0.8.24-refresh.md) | 0.8.24 | 历史：Goal disarm / Esc |
 | 14 | [14-post-0.8.25-refresh.md](./14-post-0.8.25-refresh.md) | 0.8.25 | 历史：TUI Goal 暂停文案 |
-| 15 | [15-post-0.8.26-refresh.md](./15-post-0.8.26-refresh.md) | **0.8.26** | 收口：无新 P0/P1 |
+| 15 | [15-post-0.8.26-refresh.md](./15-post-0.8.26-refresh.md) | 0.8.26 | 历史：收口无 P0/P1 |
+| 16 | [16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md) | **0.8.27** | paste-chip 已发；无新产品刀 |
 
 ---
 

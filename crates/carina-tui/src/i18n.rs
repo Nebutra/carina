@@ -1957,14 +1957,21 @@ pub fn localize_operator_failure_reason(locale: Locale, reason: &str) -> String 
             let rest_l = rest.to_ascii_lowercase();
             if rest_l.contains("check the provider and network") {
                 MessageId::FailureReasonGenericTurn
-            } else if generic_grok_update_clause(&rest_l) {
+            } else if rest_l.contains("unsafe settings") {
+                MessageId::FailureReasonGrokIsolation
+            } else if generic_grok_update_clause(&rest_l)
+                || rest_l.contains("update grok")
+                || rest_l.contains("grok doctor")
+            {
                 MessageId::FailureReasonGrokDoctor
-            } else {
+            } else if locale == Locale::En {
                 return format!(
                     "{} {}",
                     text(locale, MessageId::FailureReasonGenericTurn),
                     rest
                 );
+            } else {
+                MessageId::FailureReasonGenericTurn
             }
         } else {
             MessageId::FailureReasonGenericTurn
@@ -8107,9 +8114,22 @@ mod tests {
             "The model could not complete this turn. authenticate: Grok Build emitted an unsafe settings update. update Grok Build or choose another provider.",
         );
         assert!(
-            grok_detail.contains("unsafe settings update"),
+            grok_detail.contains("隔离") || grok_detail.contains("grok"),
             "grok_detail={grok_detail}"
         );
+        assert!(
+            !grok_detail.contains("unsafe settings"),
+            "grok_detail={grok_detail}"
+        );
+        let mixed = localize_operator_failure_reason(
+            Locale::ZhHans,
+            "The model could not complete this turn. unique daemon fingerprint xyz.",
+        );
+        assert_eq!(
+            mixed,
+            text(Locale::ZhHans, MessageId::FailureReasonGenericTurn)
+        );
+        assert!(!mixed.contains("fingerprint"), "mixed={mixed}");
         let unavailable = localize_operator_failure_reason(
             Locale::ZhHans,
             "The model provider was temporarily unavailable. retry or choose another provider.",

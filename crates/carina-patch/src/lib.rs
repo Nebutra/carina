@@ -5,8 +5,8 @@
 //! `Failed` from any pre-commit state. Illegal transitions are rejected —
 //! a patch can never end up half-applied.
 //!
-//! Phase 0 models the state machine, hashing, and conflict detection.
-//! Atomic filesystem apply is delegated to `zig/carina-patch-native` in Phase 1.
+//! The state machine, hashing, and conflict detection live here. Atomic
+//! filesystem apply is delegated to `zig/carina-patch-native`.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
