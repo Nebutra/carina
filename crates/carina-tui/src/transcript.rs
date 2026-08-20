@@ -124,6 +124,10 @@ impl ToolGroupMember {
     pub fn is_failure(&self) -> bool {
         is_failure_status(&self.lifecycle)
     }
+
+    pub fn is_policy_denied(&self) -> bool {
+        self.lifecycle.trim().eq_ignore_ascii_case("denied")
+    }
 }
 
 #[derive(Debug, Clone)]

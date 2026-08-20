@@ -1,12 +1,15 @@
 # Carina TUI Aesthetic Design System (DRAFT)
 
-> Status: **draft law for aesthetic work**. `styles.md` remains the current
-> renderer contract until the P0 list in
-> `docs/research/competitive-2026-08/17-tui-aesthetic-audit.md` lands.
-> When a P0 slice ships, rewrite the corresponding `styles.md` section to
-> match this file. Do not keep two competing empty-state stories.
+> Status: **draft law for aesthetic work**. Live SSOT:
+> `docs/research/competitive-2026-08/18-tui-aesthetic-post-0.8.29.md`.
+> `styles.md` is the renderer contract. When a P0 slice ships, rewrite the
+> matching `styles.md` section. Do not keep two competing empty-state stories.
 >
-> Baseline: Carina v0.8.28. Steal principles, not pixels.
+> Baseline: Carina v0.8.29 chrome plus the conversation-document knives in
+> this source line. Empty identity, composer rails, header, live rail,
+> approval, thinking spinner, and `/theme` stay. Daily chat is now pills,
+> unboxed answers, receding receipts, and leftover rest.
+> Steal principles, not pixels.
 > Rejected wholesale: GrokNight / TokyoNight, OMP π branding, Claude terracotta
 > as Carina identity, Jcode idle donut, Buddy/pets, Codex 36-frame ASCII loops.
 
@@ -47,8 +50,8 @@ Renderers consume helpers on `Theme`. Never `Color::Rgb` outside `theme.rs`.
 | Token | Role | Where it may appear |
 |-------|------|---------------------|
 | `text` (`Reset`) | Body | Assistant answer, user body, overlay body |
-| `gray_bright` | User identity, settled tool title | User `❯`, completed tool verb |
-| `gray` / `muted` | Secondary | Descriptions, placeholders, separators |
+| `gray_bright` | User identity | User `❯` |
+| `gray` / `muted` | Secondary, settled receipts | Descriptions, completed tool titles |
 | `gray_dim` | Tertiary / meta | Thinking, timestamps, paths, chrome rest |
 | `brand` | Mark only | 10×5 braille glyph. Never composer, never buttons |
 | `accent` | Interaction / live / add | Focus ring, focused composer border, live activity, `+` lines, links |
@@ -238,14 +241,15 @@ receipts. Risk is never collapsed away.
 
 | Cell | Mark | Color | Enclosure |
 |------|------|-------|-----------|
-| User | `❯ ` | `gray_bright` + user band | none |
-| Assistant | `• ` | mark `accent` for final; body `Reset` | none |
+| User | `❯ ` | `gray_bright` + band on occupied cells only | none |
+| Assistant | `• ` | quiet mark; body `Reset` | none |
 | Thinking live | `⠋ ` (spinner + space) | spinner `warning`+bold; label DIM/ITALIC | rail `┃` |
 | Thinking settled | `▾ Thinking` | `gray_dim` + DIM/ITALIC | tree `│ ` |
 | Tool live | `▸ {Intent}` | `warning` title | 1-col `┃` accent rail |
-| Tool settled | `▸ {Intent}` | `gray_bright` title | tree `│ ` or none |
+| Tool settled | `▸ {Intent}` | `gray` title, no bold | tree `│ ` or none |
 | Tool group | `▸ Explored ×N · a, b` | settled | none |
-| Approval | `! Action` | `warning` (not danger) until denied | rail |
+| Approval | `! Action` | `warning` (not danger) until resolved | rail while waiting |
+| Denied tool | settled `▸`/`Run` | settled title; muted `已拒绝` | none |
 | Patch | `▸ Edit` + `+N`/`-N` | cyan / red counts | rail while applying |
 | Failure | `✗ ` | `danger` mark, body Reset | rail |
 | Compact/notice | `• ` | `gray_dim` | none |
@@ -328,16 +332,24 @@ ASCII.
 
 ## 10. Information hierarchy (scan test)
 
-A trained operator, 3 seconds, 80×24, fixture of 8 tools + 1 patch + 1
-failure, must name without hunting:
+A trained operator, 3 seconds, 80×24, **two fixtures**:
 
-1. What is live (composer top rule).
-2. What the user asked (user band).
-3. What the answer is (unboxed assistant body).
-4. Whether anything is waiting or broken (warning/danger marks).
+**Fixture A — four short user turns + one denied Run + one assistant answer.**
+This is the daily product. They must name without hunting:
+
+1. What they asked (user **pills**, not full-width slabs).
+2. What the answer is (unboxed body, louder than tools).
+3. That the Run was refused (muted settled receipt, not a crash rail).
+4. That leftover height is rest, not a missing widget.
+
+**Fixture B — 8 tools + 1 patch + 1 failure.** They must name:
+
+1. What is live (composer top rule / thinking spinner / tool `┃`).
+2. Whether anything is waiting or broken (warning/danger marks).
 
 If they have to read provider names, reasoning levels, or `ctx 12k/200k` to
-know those four facts, the layout has failed.
+know those facts, the layout has failed. If Fixture A still looks like a
+syslog with a signed composer, **chrome P0 was not the product**.
 
 ---
 
@@ -371,13 +383,34 @@ transcript budget, brand-rose as mark-not-interaction.
   hole.
 - The composer is a signed field at rest and in focus, including `NO_COLOR`.
 - Status is scannable from the composer top rule; notices never steal it.
+- A 4-turn short chat is a document: user pills, unboxed answer, leftover
+  rest. It must not look like a syslog with a pretty footer.
 - Settled tools are quieter than live tools and quieter than the answer.
+- Policy-denied tools recede. Only `FailurePresentation` uses danger rail.
 - Live thinking uses the activity spinner at two cells; settled thinking
   restores disclosure without shifting the title.
 - `/theme` and Settings preview `auto|dark|light` live without a catalog.
 - Approval does not paint a red room. Failure is a mark plus a sentence.
 - Reduced motion and `NO_COLOR` keep layout and rank.
-- Golden frames at 80 / 120 / 160 × EN / zh-Hans record the new empty,
-  idle composer, running composer, and live-tool rail.
+- Golden frames at 80 / 120 / 160 × EN / zh-Hans record empty, idle
+  composer, running composer, live-tool rail, **and** a short-chat fixture.
 
 Functional and still ugly remains **FAIL**.
+
+---
+
+## 14. Open P0 (conversation document)
+
+Shipped on 0.8.29 and **kept**: empty identity, open-sided composer, quiet
+header, live `┃`, approval warning, thinking spinner, `/theme`.
+
+Conversation-document P0 in this source line:
+
+| ID | Knife | Status |
+|----|-------|--------|
+| A010 | User band on occupied cells only | this source line |
+| A012 | Policy-denied tools recede | this source line |
+| A011 | Assistant answer louder than settled tools | this source line |
+| A013 | Leftover height is rest, never a donut | this source line |
+
+Do not start A102 shine or a theme catalog until Fixture A is the daily binary.

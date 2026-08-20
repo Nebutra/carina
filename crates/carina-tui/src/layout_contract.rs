@@ -88,8 +88,10 @@ pub const TRANSCRIPT_TOOL_GUTTER_WIDTH: usize = 2;
 pub const TRANSCRIPT_TOOL_LABEL_WIDTH: usize = 6;
 pub const TRANSCRIPT_RELATED_GAP: usize = 0;
 pub const TRANSCRIPT_BLOCK_GAP: usize = 1;
+pub const TRANSCRIPT_ANSWER_EXTRA: usize = 1;
 pub const TRANSCRIPT_FINAL_GAP: usize = TRANSCRIPT_BLOCK_GAP;
 const _: () = assert!(TRANSCRIPT_RELATED_GAP < TRANSCRIPT_BLOCK_GAP);
+const _: () = assert!(TRANSCRIPT_ANSWER_EXTRA > 0);
 
 pub const COMPLETION_MAX_WIDTH: u16 = 88;
 pub const COMPLETION_MIN_ROWS: usize = 1;
@@ -561,6 +563,10 @@ mod tests {
         assert_eq!(TRANSCRIPT_FULL_ROLE_MIN_WIDTH, 72);
         assert_eq!(TRANSCRIPT_TOOL_GUTTER_WIDTH, TRANSCRIPT_ROLE_MARK_WIDTH);
         assert_eq!(TRANSCRIPT_FINAL_GAP, TRANSCRIPT_BLOCK_GAP);
+        assert_eq!(
+            TRANSCRIPT_BLOCK_GAP + TRANSCRIPT_ANSWER_EXTRA,
+            TRANSCRIPT_BLOCK_GAP + 1
+        );
         assert_eq!(
             transcript_content(Rect::new(10, 3, PRODUCT_MAX_WIDTH, 20)),
             Rect::new(40, 3, TRANSCRIPT_READING_MAX_WIDTH, 20)

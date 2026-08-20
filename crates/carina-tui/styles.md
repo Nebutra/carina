@@ -53,9 +53,13 @@ Identity lives in the product header.
 
 The user mark is the same width-locked prompt glyph as the composer (`❯ ` /
 `> `). The assistant mark is the quiet two-cell bullet. User turns paint the
-sanctioned `user_message_bg` band behind the prompt and body so turns stay
-scannable; selection replaces that band. Basic and no-color modes keep the
-background Reset.
+sanctioned `user_message_bg` band only behind occupied prompt and body cells.
+The band must not fill leftover cells in the reading column; a short "你好"
+is a short pill, not a table row. Selection may still own the full hit
+rectangle. Basic and no-color modes keep the background Reset. Leftover
+transcript height below the last turn is rest (`Color::Reset`), not a surface
+to fill. Policy-denied tools are settled receipts, not failure cells: no
+danger rail, no live-tool warning title.
 
 Steer turns keep the steer mark and the localized "You steered" metadata; they
 do not add a second speaker word. Imported history may show its source marker
@@ -98,7 +102,10 @@ reversed title so blocking remains structural without a red room.
 Expanded tool detail uses the semantic two-cell tree gutter on every source and
 continuation row. Related operational rows (tool/tool and tool/thinking in either
 order) use the related-row gap; unrelated conversation objects use the normal
-block gap. Selection chrome remains outside the content rectangle. Pointer hover
+block gap. An assistant answer takes one extra beat before operational rows
+(thinking, tools, patches, failures, notices) so the answer stays the page
+and receipts recede. User↔assistant pairing keeps the normal block gap.
+Selection chrome remains outside the content rectangle. Pointer hover
 may patch the semantic interaction style onto a collapsible header, but it must
 not change wrapping, retained heights, visible copy, or pointer hit geometry.
 The last pointer position is re-resolved after every frame rebuild so hover can
@@ -114,7 +121,7 @@ persist `tui_density` without replacing unrelated configuration keys.
 
 | Projection | Compact | Comfortable |
 |------------|---------|-------------|
-| unrelated / related / final gap | 1 / 0 / 1 | 2 / 1 / 2 |
+| unrelated / related / answer-to-ops / final gap | 1 / 0 / 2 / 1 | 2 / 1 / 3 / 2 |
 | default routine tool detail | collapsed | collapsed |
 | collapsed group members | 0 | 2 |
 | collapsed plain-output lines | 0 | 3 |
@@ -274,13 +281,14 @@ ineligible.
 
 The main transcript uses no more than three saturated foreground hues at once:
 
-- `ion-cyan`: assistant identity, links, headings, and added-line emphasis;
-- `copper-amber`: active tool, review, and warning emphasis; settled routine
-  tool receipts return to `gray_bright` so completed operations do not compete
-  with live work or risk;
+- `ion-cyan`: links, headings, and added-line emphasis;
+- `copper-amber`: live tool, review, and warning emphasis; settled routine
+  tool receipts return to `gray` (muted, no bold) so completed operations
+  recede behind the assistant answer;
 - `event-red`: governance, diagnostics, destructive/error state, and removals.
 
-User identity is `gray_bright`, never the interaction accent. Assistant identity
+User identity is `gray_bright`, never the interaction accent. Assistant body
+stays `Reset`; the quiet bullet is not ion-cyan. Assistant identity
 must never use `spectral-green`; green remains available to non-transcript success
 state. Metadata uses `gray_dim`, the quietest neutral step. Thinking uses the same
 neutral hierarchy with `DIM | ITALIC`; basic/no-color fallback is

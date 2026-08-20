@@ -23,7 +23,12 @@ pub enum SemanticCellKind {
 
 impl SemanticCellKind {
     pub fn from_block(block: &TranscriptBlock) -> Self {
-        if block.failure.is_some() || block.tool_members.iter().any(|member| member.is_failure()) {
+        if block.failure.is_some()
+            || block
+                .tool_members
+                .iter()
+                .any(|member| member.is_failure() && !member.is_policy_denied())
+        {
             return Self::Failure;
         }
         if block.id.starts_with("compact:") {
@@ -190,5 +195,18 @@ mod tests {
         tool.body = "diagnostic reasoning assistant".into();
         tool.status = "error".into();
         assert_eq!(SemanticCellKind::from_block(&tool), SemanticCellKind::Tool);
+    }
+
+    #[test]
+    fn policy_denied_tools_are_not_failure_cells() {
+        let mut denied = block(BlockKind::Tool);
+        denied.status = "denied".into();
+        denied.tool_members = vec![member(BlockBodyKind::Plain, "denied")];
+        assert!(denied.tool_members[0].is_policy_denied());
+        assert_eq!(
+            SemanticCellKind::from_block(&denied),
+            SemanticCellKind::Tool
+        );
+        assert!(!denied.is_live_work());
     }
 }

@@ -7,6 +7,7 @@ size=120x40
 
  • I will keep routine work quiet and reviewable changes visible across every supported terminal width.
 
+
 ┃⠋ Thinking  Inspecting the projection boundary
 ┃│ Mapping lifecycle owners and render paths.
  • Read    Inspect the semantic cell contract  src/semantic_cell.rs

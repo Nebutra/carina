@@ -384,7 +384,7 @@ impl Theme {
             .add_modifier(Modifier::BOLD)
     }
     pub fn transcript_tool_settled(self) -> Style {
-        self.bright_muted().add_modifier(Modifier::BOLD)
+        self.muted()
     }
     pub fn transcript_danger(self) -> Style {
         Style::default()
@@ -646,7 +646,10 @@ mod tests {
     }
     #[test]
     fn explicit_theme_preference_is_case_insensitive_and_safe() {
-        assert_eq!(ThemePreference::parse("LIGHT"), Some(ThemePreference::Light));
+        assert_eq!(
+            ThemePreference::parse("LIGHT"),
+            Some(ThemePreference::Light)
+        );
         assert_eq!(ThemePreference::parse("dark"), Some(ThemePreference::Dark));
         assert_eq!(ThemePreference::parse("auto"), Some(ThemePreference::Auto));
         assert_eq!(ThemePreference::parse("unknown"), None);
@@ -730,7 +733,11 @@ mod tests {
             assert_ne!(theme.transcript_assistant().fg, Some(theme.success));
             assert_eq!(theme.transcript_metadata().fg, Some(theme.gray_dim));
             assert_eq!(theme.transcript_tool().fg, Some(theme.warning));
-            assert_eq!(theme.transcript_tool_settled().fg, Some(theme.gray_bright));
+            assert_eq!(theme.transcript_tool_settled().fg, Some(theme.gray));
+            assert!(!theme
+                .transcript_tool_settled()
+                .add_modifier
+                .contains(Modifier::BOLD));
             assert!(theme
                 .transcript_thinking()
                 .add_modifier

@@ -3029,14 +3029,13 @@ impl App {
                 }
                 SemanticCellKind::Assistant => self.theme.transcript_metadata(),
                 SemanticCellKind::Thinking => self.theme.transcript_thinking(),
-                SemanticCellKind::Tool | SemanticCellKind::ToolGroup
-                    if !block.tool_members.is_empty()
-                        && block.tool_members.iter().all(|member| !member.is_running()) =>
+                SemanticCellKind::Tool | SemanticCellKind::ToolGroup | SemanticCellKind::Patch
+                    if block.is_live_work() =>
                 {
-                    self.theme.transcript_tool_settled()
+                    self.theme.transcript_tool()
                 }
                 SemanticCellKind::Tool | SemanticCellKind::ToolGroup | SemanticCellKind::Patch => {
-                    self.theme.transcript_tool()
+                    self.theme.transcript_tool_settled()
                 }
                 SemanticCellKind::Approval => self.theme.transcript_tool(),
                 SemanticCellKind::Failure => self.theme.transcript_danger(),
@@ -3057,6 +3056,13 @@ impl App {
                     SemanticCellKind::Thinking => self.theme.transcript_thinking(),
                     SemanticCellKind::Notice | SemanticCellKind::Compact => {
                         self.theme.transcript_metadata()
+                    }
+                    SemanticCellKind::Tool
+                    | SemanticCellKind::ToolGroup
+                    | SemanticCellKind::Patch
+                        if !block.is_live_work() =>
+                    {
+                        self.theme.transcript_tool_settled()
                     }
                     _ => Style::default().fg(self.theme.text),
                 }
@@ -3162,10 +3168,13 @@ impl App {
             } else {
                 Style::default()
             };
+            if user_band {
+                paint_occupied_user_band(&mut lines, band);
+            }
             let style = if block.selected {
                 self.theme.selected().add_modifier(Modifier::BOLD)
             } else {
-                band
+                Style::default()
             };
             // Chrome lives in the outer gutter and never changes the content
             // width. Live work and risk get a 1-cell accent rail; settled tools
@@ -3202,8 +3211,7 @@ impl App {
                 Style::default().fg(accent)
             } else {
                 Style::default()
-            }
-            .patch(band);
+            };
             frame.render_widget(
                 Paragraph::new(vec![
                     Line::styled(chrome_glyph, chrome_style);
@@ -8561,6 +8569,14 @@ struct TranscriptStyles {
     live: Style,
 }
 
+fn paint_occupied_user_band(lines: &mut [Line<'static>], band: Style) {
+    for line in lines {
+        for span in &mut line.spans {
+            span.style = span.style.patch(band);
+        }
+    }
+}
+
 fn truncate_cells(value: &str, max_width: usize, glyphs: Glyphs) -> String {
     crate::render_contract::truncate_width_with_glyphs(value, max_width, glyphs)
 }
@@ -10457,9 +10473,15 @@ fn transcript_gap_for_density(
             | (BlockKind::Thinking, BlockKind::Tool)
     );
     if related {
-        density.profile().related_gap
+        return density.profile().related_gap;
+    }
+    let gap = density.profile().block_gap;
+    if previous.kind == BlockKind::Assistant
+        && !matches!(next.kind, BlockKind::Assistant | BlockKind::User)
+    {
+        gap.saturating_add(layout_contract::TRANSCRIPT_ANSWER_EXTRA)
     } else {
-        density.profile().block_gap
+        gap
     }
 }
 
@@ -14379,6 +14401,237 @@ mod transcript_tests {
     }
 
     #[test]
+    fn user_turn_band_follows_glyphs_instead_of_filling_the_row() {
+        let (mut app, root, server) = production_render_app();
+        app.theme = crate::theme::Theme::new(
+            crate::theme::Polarity::Dark,
+            crate::theme::ColorLevel::TrueColor,
+        );
+        app.theme.glyphs = Glyphs::new(GlyphMode::Unicode);
+        let mut user = block(BlockKind::User, "你好");
+        user.id = "user:short".into();
+        user.status.clear();
+        user.title.clear();
+        app.blocks = vec![user];
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 16)).unwrap();
+        terminal
+            .draw(|frame| app.render_transcript(frame, frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let band = app.theme.user_message_bg;
+        let mut matched = false;
+        for y in 0..buffer.area.height {
+            let mut row = String::new();
+            let mut x = 0_u16;
+            while x < buffer.area.width {
+                let cell = &buffer[(x, y)];
+                row.push_str(cell.symbol());
+                x = x.saturating_add(UnicodeWidthStr::width(cell.symbol()).max(1) as u16);
+            }
+            if !row.contains("你好") {
+                continue;
+            }
+            matched = true;
+            let mut band_cells = 0_u16;
+            let mut trailing_reset = 0_u16;
+            x = 0;
+            while x < buffer.area.width {
+                let cell = &buffer[(x, y)];
+                let width = UnicodeWidthStr::width(cell.symbol()).max(1) as u16;
+                if cell.bg == band {
+                    assert_eq!(
+                        trailing_reset, 0,
+                        "user band resumed after empty cells at {x}"
+                    );
+                    band_cells = band_cells.saturating_add(width);
+                } else if band_cells > 0 && cell.symbol() != "" {
+                    assert_eq!(cell.bg, ratatui::style::Color::Reset);
+                    trailing_reset = trailing_reset.saturating_add(width);
+                }
+                x = x.saturating_add(width);
+            }
+            assert!(band_cells > 0);
+            assert!(
+                trailing_reset > 20,
+                "short user turns must not paint a full-width slab: band={band_cells} rest={trailing_reset}"
+            );
+        }
+        assert!(matched, "expected the short user turn to be visible");
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn policy_denied_run_recedes_instead_of_shouting_failure() {
+        let (mut app, root, server) = production_render_app();
+        app.theme = crate::theme::Theme::new(
+            crate::theme::Polarity::Dark,
+            crate::theme::ColorLevel::TrueColor,
+        );
+        app.theme.glyphs = Glyphs::new(GlyphMode::Unicode);
+        let mut denied = block(BlockKind::Tool, "当前策略不允许这条命令。");
+        denied.id = "tool:denied-run".into();
+        denied.tool_kind = Some(crate::tool_projection::ToolKind::Run);
+        denied.title = crate::tool_projection::format_tool_title("Run", "查询北京天气");
+        denied.status = "denied".into();
+        denied.collapsible = false;
+        denied.tool_members = vec![tool_member(
+            "denied-run",
+            "查询北京天气",
+            "denied",
+            "denied",
+            "当前策略不允许这条命令。",
+        )];
+        assert_eq!(
+            SemanticCellKind::from_block(&denied),
+            SemanticCellKind::Tool
+        );
+        assert!(!denied.is_live_work());
+        app.blocks = vec![denied];
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 16)).unwrap();
+        terminal
+            .draw(|frame| app.render_transcript(frame, frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let danger = app.theme.danger;
+        let rail = app.theme.glyphs.accent_rail();
+        let mut danger_cells = 0_u16;
+        let mut rail_cells = 0_u16;
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                let cell = &buffer[(x, y)];
+                if cell.fg == danger {
+                    danger_cells += 1;
+                }
+                if cell.symbol() == rail {
+                    rail_cells += 1;
+                }
+            }
+        }
+        assert_eq!(
+            danger_cells, 0,
+            "denied tools must not use the failure mark color"
+        );
+        assert_eq!(
+            rail_cells, 0,
+            "denied tools must recede without an accent rail"
+        );
+        let text = rendered_frame_text(buffer);
+        assert!(text.contains("已拒绝") || text.contains("denied"));
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn settled_tool_receipts_recede_behind_the_answer() {
+        let (mut app, root, server) = production_render_app();
+        app.theme = crate::theme::Theme::new(
+            crate::theme::Polarity::Dark,
+            crate::theme::ColorLevel::TrueColor,
+        );
+        app.theme.glyphs = Glyphs::new(GlyphMode::Unicode);
+        let mut answer = block(BlockKind::Assistant, "the page stays Reset");
+        answer.id = "answer:page".into();
+        answer.status.clear();
+        answer.title.clear();
+        answer.assistant_phase = Some(crate::rpc::AssistantMessagePhase::FinalAnswer);
+        let mut tool = block(BlockKind::Tool, "");
+        tool.id = "tool:read".into();
+        tool.tool_kind = Some(crate::tool_projection::ToolKind::Read);
+        tool.title = crate::tool_projection::format_tool_title(
+            "Read",
+            "Inspect the semantic cell contract",
+        );
+        tool.status.clear();
+        tool.collapsible = false;
+        tool.tool_members = vec![tool_member(
+            "tool:read",
+            "src/semantic_cell.rs",
+            "completed",
+            "completed",
+            "",
+        )];
+        app.blocks = vec![answer, tool];
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 16)).unwrap();
+        terminal
+            .draw(|frame| app.render_transcript(frame, frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let muted = app.theme.gray;
+        let mut answer_reset = 0_u16;
+        let mut tool_muted = 0_u16;
+        let mut last_content_y = 0_u16;
+        for y in 0..buffer.area.height {
+            let mut row = String::new();
+            let mut x = 0_u16;
+            while x < buffer.area.width {
+                let cell = &buffer[(x, y)];
+                row.push_str(cell.symbol());
+                x = x.saturating_add(UnicodeWidthStr::width(cell.symbol()).max(1) as u16);
+            }
+            if row.chars().any(|ch| !ch.is_whitespace()) {
+                last_content_y = y;
+            }
+            for (needle, expect, counter) in [
+                (
+                    "the page stays Reset",
+                    ratatui::style::Color::Reset,
+                    &mut answer_reset,
+                ),
+                (
+                    "Inspect the semantic cell contract",
+                    muted,
+                    &mut tool_muted,
+                ),
+            ] {
+                let Some(idx) = row.find(needle) else {
+                    continue;
+                };
+                let start = UnicodeWidthStr::width(&row[..idx]) as u16;
+                let end = start.saturating_add(UnicodeWidthStr::width(needle) as u16);
+                x = 0;
+                while x < buffer.area.width {
+                    let cell = &buffer[(x, y)];
+                    let width = UnicodeWidthStr::width(cell.symbol()).max(1) as u16;
+                    if x >= start && x < end {
+                        assert_eq!(
+                            cell.fg, expect,
+                            "{needle:?} must use {expect:?} at {x},{y}"
+                        );
+                        *counter = counter.saturating_add(width);
+                    }
+                    x = x.saturating_add(width);
+                }
+            }
+        }
+        assert!(answer_reset > 0, "expected the assistant answer to be visible");
+        assert!(tool_muted > 0, "expected the settled tool title to be visible");
+        assert!(
+            last_content_y + 1 < buffer.area.height,
+            "fixture must leave leftover transcript height"
+        );
+        for y in last_content_y.saturating_add(1)..buffer.area.height {
+            for x in 0..buffer.area.width {
+                let cell = &buffer[(x, y)];
+                assert_eq!(
+                    (cell.fg, cell.bg, cell.modifier),
+                    (
+                        ratatui::style::Color::Reset,
+                        ratatui::style::Color::Reset,
+                        Modifier::empty()
+                    ),
+                    "leftover height is rest, not a fill at {x},{y}"
+                );
+            }
+        }
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn plan_review_visual_matrix_owns_wrapping_comments_and_actions() {
         for (locale_name, locale, anchor) in [
             ("en", Locale::En, "Preserve comment ownership"),
@@ -17412,7 +17665,10 @@ mod transcript_tests {
         );
 
         assert_eq!(layout.items[1].height, 0);
-        assert_eq!(layout.items[2].top, layout.items[0].height + 1);
+        assert_eq!(
+            layout.items[2].top,
+            layout.items[0].height + layout_contract::TRANSCRIPT_BLOCK_GAP + layout_contract::TRANSCRIPT_ANSWER_EXTRA
+        );
         assert_eq!(
             layout.total_height,
             layout.items[2].top + layout.items[2].height + layout_contract::TRANSCRIPT_FINAL_GAP
@@ -17447,6 +17703,35 @@ mod transcript_tests {
         second.kind = BlockKind::Assistant;
         assert_eq!(
             transcript_gap(&first, &second),
+            layout_contract::TRANSCRIPT_BLOCK_GAP
+        );
+    }
+
+    #[test]
+    fn assistant_answer_takes_a_beat_before_operational_rows() {
+        let answer = block(BlockKind::Assistant, "the page");
+        let tool = block(BlockKind::Tool, "receipt");
+        let thinking = block(BlockKind::Thinking, "work");
+        let user = block(BlockKind::User, "next ask");
+        let next_answer = block(BlockKind::Assistant, "another page");
+        assert_eq!(
+            transcript_gap(&answer, &tool),
+            layout_contract::TRANSCRIPT_BLOCK_GAP + layout_contract::TRANSCRIPT_ANSWER_EXTRA
+        );
+        assert_eq!(
+            transcript_gap(&answer, &thinking),
+            layout_contract::TRANSCRIPT_BLOCK_GAP + layout_contract::TRANSCRIPT_ANSWER_EXTRA
+        );
+        assert_eq!(
+            transcript_gap(&answer, &user),
+            layout_contract::TRANSCRIPT_BLOCK_GAP
+        );
+        assert_eq!(
+            transcript_gap(&answer, &next_answer),
+            layout_contract::TRANSCRIPT_BLOCK_GAP
+        );
+        assert_eq!(
+            transcript_gap(&user, &answer),
             layout_contract::TRANSCRIPT_BLOCK_GAP
         );
     }
