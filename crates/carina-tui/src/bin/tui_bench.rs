@@ -2,7 +2,7 @@
 //!
 //! Usage: `cargo run -p carina-tui --bin tui_bench -- --iterations 20`
 
-use carina_tui::bench_harness::{format_result_jsonl, run_render_scenario};
+use carina_tui::bench_harness::{format_result_jsonl, run_pty_first_frame, run_render_scenario};
 
 fn main() {
     let iterations = std::env::args()
@@ -15,6 +15,6 @@ fn main() {
                 .and_then(|value| value.parse().ok())
         })
         .unwrap_or(20);
-    let result = run_render_scenario(iterations);
-    println!("{}", format_result_jsonl(&result));
+    println!("{}", format_result_jsonl(&run_render_scenario(iterations)));
+    println!("{}", format_result_jsonl(&run_pty_first_frame()));
 }

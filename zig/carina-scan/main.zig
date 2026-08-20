@@ -25,11 +25,19 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(allocator);
     var root: []const u8 = ".";
     var max_size: u64 = 5 * 1024 * 1024; // 5 MiB default
+    var max_files: u64 = 0;
+    var max_depth: u64 = 0;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "--max-size") and i + 1 < args.len) {
             i += 1;
             max_size = std.fmt.parseInt(u64, args[i], 10) catch max_size;
+        } else if (std.mem.eql(u8, args[i], "--max-files") and i + 1 < args.len) {
+            i += 1;
+            max_files = std.fmt.parseInt(u64, args[i], 10) catch max_files;
+        } else if (std.mem.eql(u8, args[i], "--max-depth") and i + 1 < args.len) {
+            i += 1;
+            max_depth = std.fmt.parseInt(u64, args[i], 10) catch max_depth;
         } else {
             root = args[i];
         }
@@ -49,29 +57,47 @@ pub fn main() !void {
     var ctx = ScanCtx{
         .allocator = allocator,
         .max_size = max_size,
+        .max_files = max_files,
+        .max_depth = max_depth,
         .patterns = patterns.items,
     };
     try scanDir(&ctx, dir, "");
 
     try jsonl.printLine(
         allocator,
-        "{{\"summary\":{{\"files\":{d},\"skipped\":{d},\"ignored\":{d}}}}}",
-        .{ ctx.files, ctx.skipped, ctx.ignored },
+        "{{\"summary\":{{\"files\":{d},\"skipped\":{d},\"ignored\":{d},\"truncated\":{}}}}}",
+        .{ ctx.files, ctx.skipped, ctx.ignored, ctx.truncated },
     );
 }
 
 const ScanCtx = struct {
     allocator: std.mem.Allocator,
     max_size: u64,
+    max_files: u64,
+    max_depth: u64,
     patterns: []const []const u8,
     files: u64 = 0,
     skipped: u64 = 0,
     ignored: u64 = 0,
+    truncated: bool = false,
 };
+
+fn relDepth(rel: []const u8) u64 {
+    if (rel.len == 0) return 0;
+    var depth: u64 = 1;
+    for (rel) |c| {
+        if (c == '/') depth += 1;
+    }
+    return depth;
+}
 
 fn scanDir(ctx: *ScanCtx, dir: std.fs.Dir, rel: []const u8) !void {
     var it = dir.iterate();
     while (it.next() catch null) |entry| {
+        if (ctx.max_files > 0 and ctx.files >= ctx.max_files) {
+            ctx.truncated = true;
+            return;
+        }
         const child_rel = if (rel.len == 0)
             entry.name
         else
@@ -85,6 +111,10 @@ fn scanDir(ctx: *ScanCtx, dir: std.fs.Dir, rel: []const u8) !void {
             continue;
         }
         if (entry.kind == .directory) {
+            if (ctx.max_depth > 0 and relDepth(child_rel) >= ctx.max_depth) {
+                ctx.ignored += 1;
+                continue;
+            }
             var child = dir.openDir(entry.name, .{ .iterate = true }) catch {
                 ctx.skipped += 1;
                 continue;

@@ -590,11 +590,15 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 			}
 			receiptVersion = 2
 			mode = compactionModeSummary
-		} else if summarize != nil {
+		} else {
 			if summary == "" {
 				summary = collapseActionSkeleton(preCompactionSummary, folded)
 			}
-			transforms = []string{"elide_tool_output", "collapse_action_skeleton", "summarizer_failed"}
+			if summarize == nil {
+				transforms = []string{"elide_tool_output", "collapse_action_skeleton"}
+			} else {
+				transforms = []string{"elide_tool_output", "collapse_action_skeleton", "summarizer_failed"}
+			}
 			receiptVersion = 3
 			mode = compactionModeCollapseOnly
 		}

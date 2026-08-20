@@ -21,6 +21,7 @@ import (
 	"github.com/Nebutra/carina/go/runtimecontract"
 	"github.com/Nebutra/carina/go/scheduler"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
+	"github.com/Nebutra/carina/go/toolchain"
 	"github.com/Nebutra/carina/go/toolnorm"
 )
 
@@ -31,6 +32,8 @@ const (
 	maxAgentTurns     = 64
 	maxRequeries      = 3
 	maxVerifyAttempts = 3
+	listFileCap       = 200
+	listDepthCap      = 4
 )
 
 // productIdentity is the stable product self-model for the main agent harness.
@@ -135,6 +138,7 @@ func outputLanguagePrompt(locale string) string {
 // "action" object (see parseAction).
 type action struct {
 	lifecycleCallID string
+	authorizedRead  *kernel.Decision
 	Thought         string               `json:"thought"`
 	Tool            string               `json:"tool"`
 	Intent          string               `json:"intent,omitempty"`
@@ -324,6 +328,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		structuredOutput: len(activeOutputSchema(task.OutputSchema)) > 0,
 	}
 	assistantStream := newReasonerStreamController(streamPublisher.publish)
+	ctx = withExecutionKeepalive(ctx, d, sess.SessionID, task.RunID)
 	// A cheap summarizer for compaction: reuse the reasoner on the head. The
 	// prompt asks for the structured Goal/State(Done|InProgress|Blocked)/
 	// Highlights/Next shape (matching Cline's compaction summary template —
@@ -376,8 +381,9 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			return
 		}
 
-		// Bound the model view (audit log keeps everything).
-		if receipt := tr.compact(summarize); receipt != nil {
+		// Bound the model view (audit log keeps everything). Cheap elide/
+		// collapse only — a model summary must not sit in front of Think.
+		if receipt := tr.compact(nil); receipt != nil {
 			d.record(sess.SessionID, "ContextCompacted", task.RunID, "go", contextCompactedPayload(receipt, nil), "")
 		}
 		nativeEligible := d.nativeToolsEligible(d.reasoner, task.Model)
@@ -743,6 +749,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			if !d.persistTurnCheckpoint(sess, task, tr, turn, memorySnapshot) {
 				return
 			}
+			d.summarizeTranscriptAfterTurn(sess, task, tr, summarize)
 			continue
 		}
 
@@ -821,9 +828,56 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		if !d.persistTurnCheckpoint(sess, task, tr, turn, memorySnapshot) {
 			return
 		}
+		d.summarizeTranscriptAfterTurn(sess, task, tr, summarize)
 	}
 
 	d.degrade(sess, task, tr, "reached max turns without done")
+}
+
+func (d *Daemon) summarizeTranscriptAfterTurn(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, summarize func(string) (string, error)) {
+	if receipt := tr.compact(summarize); receipt != nil {
+		d.record(sess.SessionID, "ContextCompacted", task.RunID, "go", contextCompactedPayload(receipt, nil), "")
+	}
+}
+
+func (d *Daemon) fileReadDecision(sess *sessionstore.Session, task *scheduler.ExecutionRun, resource string, pre *kernel.Decision) (*kernel.Decision, error) {
+	if pre != nil {
+		return pre, nil
+	}
+	return d.kern.Request(sess.SessionID, "FileRead", resource, task.RunID)
+}
+
+func (d *Daemon) listWorkspaceOutcome(sess *sessionstore.Session, task *scheduler.ExecutionRun, pre *kernel.Decision) toolExecutionOutcome {
+	dec, err := d.fileReadDecision(sess, task, sess.WorkspaceRoot, pre)
+	if err != nil {
+		return toolFailed("error: "+err.Error(), "governance_error")
+	}
+	if dec.Decision != "allowed" {
+		return toolDenied("DENIED: cannot read workspace", "policy_denied")
+	}
+	files, truncated, err := d.tools.ScanBounded(sess.WorkspaceRoot, listFileCap, listDepthCap)
+	if err != nil {
+		return toolFailed("error: "+err.Error(), "tool_error")
+	}
+	d.record(sess.SessionID, "FileRead", task.RunID, "zig", map[string]any{"resource": sess.WorkspaceRoot, "bytes": len(files), "truncated": truncated}, dec.DecisionID)
+	return toolCompleted(formatListObservation(files, truncated))
+}
+
+func formatListObservation(files []toolchain.FileEntry, truncated bool) string {
+	var b strings.Builder
+	n := len(files)
+	if n > listFileCap {
+		n = listFileCap
+		truncated = true
+	}
+	for i := 0; i < n; i++ {
+		f := files[i]
+		fmt.Fprintf(&b, "%s (%d bytes, %s)\n", f.Path, f.Size, f.Language)
+	}
+	if truncated {
+		fmt.Fprintf(&b, "… truncated at %d files, depth %d; use search or code.map for the rest\n", listFileCap, listDepthCap)
+	}
+	return b.String()
 }
 
 func (d *Daemon) checkpointPendingSteers(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, completedTurn int, memorySnapshot string) (bool, bool) {
@@ -1167,12 +1221,20 @@ func (d *Daemon) executeBatch(sess *sessionstore.Session, task *scheduler.Execut
 	if bad := nonParallelBatchTools(acts); len(bad) > 0 {
 		return "parallel batch rejected; run one action per turn: " + strings.Join(bad, ", ")
 	}
+	dec, err := d.kern.Request(sess.SessionID, "FileRead", sess.WorkspaceRoot, task.RunID)
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	if dec.Decision != "allowed" {
+		return "DENIED: cannot read workspace"
+	}
 	results := make([]string, len(acts))
 	var wg sync.WaitGroup
 	for i := range acts {
 		wg.Add(1)
 		go func(i int, sub action) {
 			defer wg.Done()
+			sub.authorizedRead = dec
 			results[i] = d.executeAction(sess, task, &sub)
 		}(i, acts[i])
 	}
@@ -1225,6 +1287,9 @@ func (d *Daemon) executeActionOutcome(sess *sessionstore.Session, task *schedule
 		}
 		return outcome.display, outcome
 	}
+	toolCtx, cancelTool := context.WithCancel(context.Background())
+	defer cancelTool()
+	defer d.startExecutionKeepalive(toolCtx, sess.SessionID, task.RunID, "tool:"+act.Tool)()
 	outcome := d.dispatchActionOutcome(sess, task, act)
 	switch d.activeToolTerminal(task.RunID) {
 	case "cancelled":
@@ -1283,32 +1348,13 @@ func (d *Daemon) dispatchActionOutcome(sess *sessionstore.Session, task *schedul
 	}
 	switch act.Tool {
 	case "list":
-		dec, err := d.kern.Request(sess.SessionID, "FileRead", sess.WorkspaceRoot, task.RunID)
-		if err != nil {
-			return toolFailed("error: "+err.Error(), "governance_error")
-		}
-		if dec.Decision != "allowed" {
-			return toolDenied("DENIED: cannot read workspace", "policy_denied")
-		}
-		files, err := d.tools.Scan(sess.WorkspaceRoot)
-		if err != nil {
-			return toolFailed("error: "+err.Error(), "tool_error")
-		}
-		d.record(sess.SessionID, "FileRead", task.RunID, "zig", map[string]any{"resource": sess.WorkspaceRoot, "bytes": len(files)}, dec.DecisionID)
-		var b strings.Builder
-		for i, f := range files {
-			if i >= 200 {
-				break
-			}
-			fmt.Fprintf(&b, "%s (%d bytes, %s)\n", f.Path, f.Size, f.Language)
-		}
-		return toolCompleted(b.String())
+		return d.listWorkspaceOutcome(sess, task, act.authorizedRead)
 	case "read":
 		if _, ok := parseSkillURI(act.Path); ok {
 			return d.readSkillURI(sess, task, act.Path)
 		}
 		abs := resolveIn(sess.WorkspaceRoot, act.Path)
-		dec, err := d.kern.Request(sess.SessionID, "FileRead", abs, task.RunID)
+		dec, err := d.fileReadDecision(sess, task, abs, act.authorizedRead)
 		if err != nil {
 			return toolFailed("error: "+err.Error(), "governance_error")
 		}
@@ -1335,7 +1381,7 @@ func (d *Daemon) dispatchActionOutcome(sess *sessionstore.Session, task *schedul
 		}
 		return toolCompleted(string(content))
 	case "search":
-		dec, err := d.kern.Request(sess.SessionID, "FileRead", sess.WorkspaceRoot, task.RunID)
+		dec, err := d.fileReadDecision(sess, task, sess.WorkspaceRoot, act.authorizedRead)
 		if err != nil {
 			return toolFailed("error: "+err.Error(), "governance_error")
 		}
@@ -1396,31 +1442,14 @@ func (d *Daemon) dispatchActionOutcome(sess *sessionstore.Session, task *schedul
 func (d *Daemon) dispatchAction(sess *sessionstore.Session, task *scheduler.ExecutionRun, act *action) string {
 	switch act.Tool {
 	case "list":
-		dec, err := d.kern.Request(sess.SessionID, "FileRead", sess.WorkspaceRoot, task.RunID)
-		if err != nil || dec.Decision != "allowed" {
-			return "DENIED: cannot read workspace"
-		}
-		files, err := d.tools.Scan(sess.WorkspaceRoot)
-		if err != nil {
-			return "error: " + err.Error()
-		}
-		d.record(sess.SessionID, "FileRead", task.RunID, "zig",
-			map[string]any{"resource": sess.WorkspaceRoot, "bytes": len(files)}, dec.DecisionID)
-		var b strings.Builder
-		for i, f := range files {
-			if i >= 200 {
-				break
-			}
-			fmt.Fprintf(&b, "%s (%d bytes, %s)\n", f.Path, f.Size, f.Language)
-		}
-		return b.String()
+		return d.listWorkspaceOutcome(sess, task, act.authorizedRead).display
 
 	case "read":
 		if _, ok := parseSkillURI(act.Path); ok {
 			return d.readSkillURI(sess, task, act.Path).display
 		}
 		abs := resolveIn(sess.WorkspaceRoot, act.Path)
-		dec, err := d.kern.Request(sess.SessionID, "FileRead", abs, task.RunID)
+		dec, err := d.fileReadDecision(sess, task, abs, act.authorizedRead)
 		if err != nil {
 			return "error: " + err.Error()
 		}
@@ -1447,7 +1476,7 @@ func (d *Daemon) dispatchAction(sess *sessionstore.Session, task *scheduler.Exec
 		return string(content)
 
 	case "search":
-		dec, err := d.kern.Request(sess.SessionID, "FileRead", sess.WorkspaceRoot, task.RunID)
+		dec, err := d.fileReadDecision(sess, task, sess.WorkspaceRoot, act.authorizedRead)
 		if err != nil || dec.Decision != "allowed" {
 			return "DENIED: cannot search workspace"
 		}

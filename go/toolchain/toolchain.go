@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -97,18 +98,42 @@ func (t *Toolchain) Available() bool {
 
 // Scan walks the workspace tree via carina-scan.
 func (t *Toolchain) Scan(root string) ([]FileEntry, error) {
-	out, err := t.runJSONLines(30*time.Second, nil, t.tool("carina-scan"), root)
+	files, _, err := t.ScanBounded(root, 0, 0)
+	return files, err
+}
+
+// ScanBounded walks the tree but stops after maxFiles entries or maxDepth
+// path components (0 means unlimited). truncated reports a cap was hit.
+func (t *Toolchain) ScanBounded(root string, maxFiles, maxDepth int) ([]FileEntry, bool, error) {
+	args := []string{root}
+	if maxFiles > 0 {
+		args = append(args, "--max-files", strconv.Itoa(maxFiles))
+	}
+	if maxDepth > 0 {
+		args = append(args, "--max-depth", strconv.Itoa(maxDepth))
+	}
+	out, err := t.runJSONLines(30*time.Second, nil, t.tool("carina-scan"), args...)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	var files []FileEntry
+	truncated := false
 	for _, raw := range out {
 		var f FileEntry
 		if err := json.Unmarshal(raw, &f); err == nil && f.Path != "" {
 			files = append(files, f)
+			continue
+		}
+		var summary struct {
+			Summary struct {
+				Truncated bool `json:"truncated"`
+			} `json:"summary"`
+		}
+		if json.Unmarshal(raw, &summary) == nil && summary.Summary.Truncated {
+			truncated = true
 		}
 	}
-	return files, nil
+	return files, truncated, nil
 }
 
 // Grep searches via carina-grep (which walks directories natively).

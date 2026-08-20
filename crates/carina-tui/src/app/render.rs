@@ -3099,7 +3099,11 @@ impl App {
                     .execution_activity
                     .current()
                     .map(|(_, elapsed)| elapsed.as_millis())
-                    .or_else(|| self.execution_timer.elapsed().map(|elapsed| elapsed.as_millis()))
+                    .or_else(|| {
+                        self.execution_timer
+                            .elapsed()
+                            .map(|elapsed| elapsed.as_millis())
+                    })
                     .unwrap_or(0),
             };
             let mut lines = if dimmed
@@ -3423,13 +3427,7 @@ impl App {
             Style::default().fg(self.theme.border)
         };
         let (inner, queue) = if area.height >= layout_contract::COMPOSER_CHROME_ROWS + 1 {
-            self.paint_composer_rails(
-                frame,
-                area,
-                chrome,
-                rail_style,
-                attachment_title.as_deref(),
-            )
+            self.paint_composer_rails(frame, area, chrome, rail_style, attachment_title.as_deref())
         } else {
             (area, None)
         };
@@ -3478,12 +3476,7 @@ impl App {
         });
         if area.height >= layout_contract::COMPOSER_CHROME_ROWS + 1 {
             let top = Rect::new(area.x, area.y, area.width, 1);
-            let bottom = Rect::new(
-                area.x,
-                area.bottom().saturating_sub(1),
-                area.width,
-                1,
-            );
+            let bottom = Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1);
             self.interactions.register(HitRegion {
                 component,
                 area: top,
@@ -4271,13 +4264,11 @@ impl App {
             .map(UnicodeWidthStr::width)
             .unwrap_or(0)
             .min(area.width as usize);
-        let status_budget = (area.width as usize).saturating_sub(
-            if attachment_width == 0 {
-                0
-            } else {
-                attachment_width.saturating_add(1)
-            },
-        );
+        let status_budget = (area.width as usize).saturating_sub(if attachment_width == 0 {
+            0
+        } else {
+            attachment_width.saturating_add(1)
+        });
         let (status, queue) = self.composer_rail_status(chrome, status_budget, rail_style);
         if !status.spans.is_empty() {
             frame.render_widget(Paragraph::new(status), top);
@@ -4296,7 +4287,8 @@ impl App {
                 area.x,
                 area.y.saturating_add(1),
                 area.width,
-                area.height.saturating_sub(layout_contract::COMPOSER_CHROME_ROWS),
+                area.height
+                    .saturating_sub(layout_contract::COMPOSER_CHROME_ROWS),
             ),
             queue,
         )
@@ -4374,7 +4366,8 @@ impl App {
                 } else {
                     chrome_tone_style(slot.tone, self.theme)
                 };
-                let text = truncate_cells(&slot.text, width.saturating_sub(used), self.theme.glyphs);
+                let text =
+                    truncate_cells(&slot.text, width.saturating_sub(used), self.theme.glyphs);
                 let text_width = UnicodeWidthStr::width(text.as_str());
                 if text_width == 0 {
                     break;
@@ -5090,27 +5083,24 @@ impl App {
                     &self.command_registry.revision,
                     &self.command_mru,
                 );
-                crate::command::apply_registry_state(
-                    &mut discovered,
-                    &self.command_registry.state,
-                );
+                crate::command::apply_registry_state(&mut discovered, &self.command_registry.state);
                 let commands = discovered
-                .into_iter()
-                .filter(|command| command.unavailable_reason.is_none())
-                .map(|command| crate::help::HelpEntry {
-                    key: command.name,
-                    description: match command.description {
-                        crate::command::SuggestionDescription::Localized(id) => {
-                            tr(self.ui_locale(), id).to_owned()
-                        }
-                        crate::command::SuggestionDescription::Plain(value) => self
-                            .theme
-                            .glyphs
-                            .sanitize_free_text(std::borrow::Cow::Borrowed(value.as_str()))
-                            .into_owned(),
-                    },
-                })
-                .collect();
+                    .into_iter()
+                    .filter(|command| command.unavailable_reason.is_none())
+                    .map(|command| crate::help::HelpEntry {
+                        key: command.name,
+                        description: match command.description {
+                            crate::command::SuggestionDescription::Localized(id) => {
+                                tr(self.ui_locale(), id).to_owned()
+                            }
+                            crate::command::SuggestionDescription::Plain(value) => self
+                                .theme
+                                .glyphs
+                                .sanitize_free_text(std::borrow::Cow::Borrowed(value.as_str()))
+                                .into_owned(),
+                        },
+                    })
+                    .collect();
                 let surface =
                     crate::help::build_help_surface(self.keybindings, commands, self.ui_locale());
                 let help_title = if let Some(reason) =
@@ -7072,7 +7062,9 @@ impl App {
                 Span::styled("  ", Style::default()),
                 Span::styled(
                     tr(locale, MessageId::Open),
-                    Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(self.theme.accent)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled("  ", Style::default()),
                 Span::styled(
@@ -7115,11 +7107,7 @@ impl App {
                     Style::default().fg(self.theme.border),
                 ),
                 Span::styled(
-                    tr_format(
-                        locale,
-                        MessageId::ThemeEffective,
-                        &[("polarity", polarity)],
-                    ),
+                    tr_format(locale, MessageId::ThemeEffective, &[("polarity", polarity)]),
                     Style::default().fg(self.theme.accent),
                 ),
             ])];
@@ -8468,10 +8456,7 @@ fn workspace_relative(parent: &str, child: &str) -> String {
         return child.to_owned();
     }
     let prefix = format!("{parent}/");
-    child
-        .strip_prefix(&prefix)
-        .unwrap_or(child)
-        .to_owned()
+    child.strip_prefix(&prefix).unwrap_or(child).to_owned()
 }
 
 fn localized_activity_kind(locale: Locale, kind: ActivityKind<'_>) -> String {
@@ -9218,8 +9203,8 @@ fn transcript_lines_with_tool_key_and_density(
     }
     let label = transcript_label(locale, block.kind);
     let live_thinking = cell_kind == SemanticCellKind::Thinking && block.is_live_work();
-    let live_marker = live_thinking
-        .then(|| format!("{} ", glyphs.activity_spinner(options.activity_elapsed_ms)));
+    let live_marker =
+        live_thinking.then(|| format!("{} ", glyphs.activity_spinner(options.activity_elapsed_ms)));
     let marker = if let Some(marker) = live_marker.as_deref() {
         marker
     } else if block.is_collapsible() {
@@ -10899,17 +10884,6 @@ mod transcript_tests {
                         ]}
                     }),
                 ),
-                (
-                    "model.list",
-                    serde_json::json!({
-                        "default_model": "test/model",
-                        "reasoner": {"available": true},
-                        "providers": [{
-                            "id": "test", "registered": true, "available": true,
-                            "models": [{"id": "test/model", "available": true}]
-                        }]
-                    }),
-                ),
                 ("session.list", serde_json::json!([])),
             ] {
                 let mut line = String::new();
@@ -10976,6 +10950,18 @@ mod transcript_tests {
             scrollback_wrap: crate::native_scrollback::ScrollbackWrap::PreWrap,
         })
         .unwrap();
+        app.inventory = serde_json::from_value(serde_json::json!({
+            "default_model": "test/model",
+            "reasoner": {"available": true},
+            "providers": [{
+                "id": "test", "registered": true, "available": true,
+                "models": [{"id": "test/model", "available": true}]
+            }]
+        }))
+        .unwrap();
+        app.models = app.inventory.available_models();
+        app.selected_model = "test/model".into();
+        app.model_index = 0;
         app.phase = Phase::Conversation;
         (app, root, server)
     }
@@ -11345,10 +11331,7 @@ mod transcript_tests {
             80,
             "Ctrl+O",
         ));
-        assert!(user[0].starts_with(&format!(
-            "{}Claude Code import",
-            Glyphs::default().prompt()
-        )));
+        assert!(user[0].starts_with(&format!("{}Claude Code import", Glyphs::default().prompt())));
         assert!(assistant[0].starts_with(&format!(
             "{}Claude Code import",
             Glyphs::default().role_prefix()
@@ -12158,7 +12141,8 @@ mod transcript_tests {
         let queue_position = (0..3).find_map(|y| {
             (0..width).find_map(|x| {
                 let position = Position::new(x, y);
-                (app.interactions.action_at(position) == Some(Action::OpenQueue)).then_some(position)
+                (app.interactions.action_at(position) == Some(Action::OpenQueue))
+                    .then_some(position)
             })
         });
         let rendered = rendered_frame_contract(terminal.backend().buffer());
@@ -12844,7 +12828,8 @@ mod transcript_tests {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 28)).unwrap();
         app.notice = crate::i18n::Notice::localized(MessageId::RuntimeUnavailable);
-        app.overlays.replace(Overlay::Help(crate::overlay::HelpOverlay { scroll: 0 }));
+        app.overlays
+            .replace(Overlay::Help(crate::overlay::HelpOverlay { scroll: 0 }));
         terminal.draw(|frame| app.render(frame)).unwrap();
         assert!(!app.notice_seen, "occluded notice must not count as seen");
         assert!(app.overlays.close_non_governance());
@@ -13906,10 +13891,11 @@ mod transcript_tests {
         };
         app.theme = crate::theme::Theme::new(polarity, color_level);
         app.theme.glyphs = Glyphs::new(glyph_mode);
-        app.overlays.replace(Overlay::Settings(SettingsOverlay::symbols(
-            preference,
-            crate::theme::ThemePreference::Auto,
-        )));
+        app.overlays
+            .replace(Overlay::Settings(SettingsOverlay::symbols(
+                preference,
+                crate::theme::ThemePreference::Auto,
+            )));
 
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
@@ -14552,10 +14538,8 @@ mod transcript_tests {
         let mut tool = block(BlockKind::Tool, "");
         tool.id = "tool:read".into();
         tool.tool_kind = Some(crate::tool_projection::ToolKind::Read);
-        tool.title = crate::tool_projection::format_tool_title(
-            "Read",
-            "Inspect the semantic cell contract",
-        );
+        tool.title =
+            crate::tool_projection::format_tool_title("Read", "Inspect the semantic cell contract");
         tool.status.clear();
         tool.collapsible = false;
         tool.tool_members = vec![tool_member(
@@ -14593,11 +14577,7 @@ mod transcript_tests {
                     ratatui::style::Color::Reset,
                     &mut answer_reset,
                 ),
-                (
-                    "Inspect the semantic cell contract",
-                    muted,
-                    &mut tool_muted,
-                ),
+                ("Inspect the semantic cell contract", muted, &mut tool_muted),
             ] {
                 let Some(idx) = row.find(needle) else {
                     continue;
@@ -14609,18 +14589,21 @@ mod transcript_tests {
                     let cell = &buffer[(x, y)];
                     let width = UnicodeWidthStr::width(cell.symbol()).max(1) as u16;
                     if x >= start && x < end {
-                        assert_eq!(
-                            cell.fg, expect,
-                            "{needle:?} must use {expect:?} at {x},{y}"
-                        );
+                        assert_eq!(cell.fg, expect, "{needle:?} must use {expect:?} at {x},{y}");
                         *counter = counter.saturating_add(width);
                     }
                     x = x.saturating_add(width);
                 }
             }
         }
-        assert!(answer_reset > 0, "expected the assistant answer to be visible");
-        assert!(tool_muted > 0, "expected the settled tool title to be visible");
+        assert!(
+            answer_reset > 0,
+            "expected the assistant answer to be visible"
+        );
+        assert!(
+            tool_muted > 0,
+            "expected the settled tool title to be visible"
+        );
         assert!(
             last_content_y + 1 < buffer.area.height,
             "fixture must leave leftover transcript height"
@@ -14932,22 +14915,16 @@ mod transcript_tests {
         app.phase = Phase::Conversation;
         app.last_submitted_draft = Some("ship the review".into());
         app.composer.set_text("");
-        app.handle_event(Event::Key(KeyEvent::new(
-            KeyCode::Esc,
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
+        app.handle_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+            .unwrap();
         assert_eq!(app.composer.text(), "ship the review");
         assert!(app.notice.is_localized(MessageId::RestoredLastPrompt));
         assert!(app.rewind_primed_at.is_none());
         assert!(app.last_submitted_draft.is_none());
 
         app.composer.set_text("");
-        app.handle_event(Event::Key(KeyEvent::new(
-            KeyCode::Esc,
-            KeyModifiers::NONE,
-        )))
-        .unwrap();
+        app.handle_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)))
+            .unwrap();
         assert!(
             !app.notice.is_localized(MessageId::RestoredLastPrompt),
             "second Esc falls through to history rewind, not a second restore"
@@ -15653,19 +15630,20 @@ mod transcript_tests {
             crate::theme::ColorLevel::TrueColor,
         );
         app.theme.glyphs = Glyphs::new(crate::glyphs::GlyphMode::Unicode);
-        app.overlays.replace(Overlay::Approval(crate::overlay::ApprovalOverlay {
-            decision_id: "dec-1".into(),
-            run_id: "run-1".into(),
-            capability: "shell.exec".into(),
-            resource: "cargo test".into(),
-            reason: "Network access".into(),
-            label: "Run tests".into(),
-            diff: String::new(),
-            scope: ApprovalScope::Once,
-            resolving: false,
-            error: String::new(),
-            scroll: 0,
-        }));
+        app.overlays
+            .replace(Overlay::Approval(crate::overlay::ApprovalOverlay {
+                decision_id: "dec-1".into(),
+                run_id: "run-1".into(),
+                capability: "shell.exec".into(),
+                resource: "cargo test".into(),
+                reason: "Network access".into(),
+                label: "Run tests".into(),
+                diff: String::new(),
+                scope: ApprovalScope::Once,
+                resolving: false,
+                error: String::new(),
+                scroll: 0,
+            }));
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
         terminal.draw(|frame| app.render(frame)).unwrap();
@@ -16097,7 +16075,8 @@ mod transcript_tests {
     fn production_role_geometry_tracks_the_responsive_width_matrix() {
         let body = "x".repeat(180);
         for width in [60, 71, 72, 80, 120] {
-            let expected_continuation = |_kind: BlockKind| layout_contract::TRANSCRIPT_ROLE_MARK_WIDTH;
+            let expected_continuation =
+                |_kind: BlockKind| layout_contract::TRANSCRIPT_ROLE_MARK_WIDTH;
             let mut rendered = Vec::new();
             for kind in [BlockKind::User, BlockKind::Assistant] {
                 let mut message = block(kind, &body);
@@ -17724,8 +17703,7 @@ mod transcript_tests {
         });
         assert!(!transcript_block_hidden(&retryable));
 
-        retryable.failure.as_mut().unwrap().action =
-            crate::transcript::FailureAction::Recovering;
+        retryable.failure.as_mut().unwrap().action = crate::transcript::FailureAction::Recovering;
         retryable.failure.as_mut().unwrap().run_id = "run-2".into();
         assert!(transcript_block_hidden(&retryable));
 
@@ -17765,7 +17743,9 @@ mod transcript_tests {
         assert_eq!(layout.items[1].height, 0);
         assert_eq!(
             layout.items[2].top,
-            layout.items[0].height + layout_contract::TRANSCRIPT_BLOCK_GAP + layout_contract::TRANSCRIPT_ANSWER_EXTRA
+            layout.items[0].height
+                + layout_contract::TRANSCRIPT_BLOCK_GAP
+                + layout_contract::TRANSCRIPT_ANSWER_EXTRA
         );
         assert_eq!(
             layout.total_height,

@@ -295,6 +295,8 @@ func thinkWithRetryPolicy(ctx context.Context, r Reasoner, model, prompt, stable
 	delay := policy.BaseDelay
 	var lastErr error
 	used := 0
+	stopKeepalive := startThinkKeepalive(ctx)
+	defer stopKeepalive()
 	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
 		used = attempt
 		if stream := reasonerStreamFrom(ctx); stream != nil {

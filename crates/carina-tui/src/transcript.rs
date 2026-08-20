@@ -598,6 +598,7 @@ impl TranscriptReducer {
             | "assistant.message.delta"
             | "assistant.message.completed"
             | "assistant.message.snapshot" => self.reduce_assistant_stream(blocks, event),
+            "execution.keepalive" => false,
             "ModelResponded" => self.reduce_model_response(blocks, event),
             _ => simple_block_from_event(event)
                 .map(|block| upsert_block(blocks, block))
@@ -1169,11 +1170,7 @@ impl TranscriptReducer {
                 }
             }
             "context_compacted" => {
-                let id = first_non_empty([
-                    source_event_id,
-                    item.id.clone(),
-                    item_id,
-                ]);
+                let id = first_non_empty([source_event_id, item.id.clone(), item_id]);
                 if let Some(block) = compact_block(id, item.run_id, &item.details) {
                     upsert_block(blocks, block);
                 }
@@ -3923,6 +3920,21 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
     }
 
     #[test]
+    fn execution_keepalive_does_not_create_a_transcript_cell() {
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        let changed = reducer.reduce_event(
+            &mut blocks,
+            wire(
+                "execution.keepalive",
+                json!({"status":"keepalive","stage":"think","elapsed_ms":1200}),
+            ),
+        );
+        assert!(!changed);
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
     fn assistant_stream_rejects_gaps_and_stale_generations() {
         let mut reducer = TranscriptReducer::default();
         let mut blocks = Vec::new();
@@ -4482,7 +4494,8 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
             Some("All set.")
         );
 
-        let prefixed = "先读仓库说明和清单。\n\n{\"actions\":[{\"tool\":\"read\",\"path\":\"README.md\"}]}";
+        let prefixed =
+            "先读仓库说明和清单。\n\n{\"actions\":[{\"tool\":\"read\",\"path\":\"README.md\"}]}";
         assert_eq!(
             visible_assistant_text(prefixed).as_deref(),
             Some("先读仓库说明和清单。")
@@ -5624,7 +5637,10 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
                 json!({"summary":"recovered"}),
             ),
         ));
-        let settled = live.iter().find_map(|block| block.failure.as_ref()).unwrap();
+        let settled = live
+            .iter()
+            .find_map(|block| block.failure.as_ref())
+            .unwrap();
         assert_eq!(settled.action, FailureAction::Disabled);
         assert!(settled.leaves_document());
     }
@@ -5707,10 +5723,7 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
             "chars_after": 21004,
             "transforms": ["elide_tool_output", "local_skeleton"]
         });
-        let mut live_event = wire(
-            "ContextCompacted",
-            json!({ "receipt": receipt.clone() }),
-        );
+        let mut live_event = wire("ContextCompacted", json!({ "receipt": receipt.clone() }));
         live_event.event_id = "evt_receipt".into();
         let mut live_reducer = TranscriptReducer::default();
         let mut live = Vec::new();
@@ -5758,10 +5771,7 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         assert!(crate::transcript::live_goal_paused(&paused, false));
         assert!(!crate::transcript::live_goal_paused(&paused, true));
         assert!(!crate::transcript::live_goal_paused(
-            &wire(
-                "GoalChanged",
-                json!({"action": "set", "status": "active"}),
-            ),
+            &wire("GoalChanged", json!({"action": "set", "status": "active"}),),
             false,
         ));
         let mut blocks = Vec::new();

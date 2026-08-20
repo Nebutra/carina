@@ -7,7 +7,7 @@ mod slash_dispatch;
 use composer_draft::rewind_prime_window;
 #[cfg(test)]
 use composer_draft::{
-    rewind_escape_action, rewind_prime_window_from, RewindEscapeAction, DEFAULT_REWIND_PRIME_WINDOW,
+    DEFAULT_REWIND_PRIME_WINDOW, RewindEscapeAction, rewind_escape_action, rewind_prime_window_from,
 };
 
 use std::collections::{HashMap, VecDeque};
@@ -74,8 +74,7 @@ use crate::native_scrollback::{
 use crate::overlay::{
     AgentDashboardOverlay, ApprovalScope, ChangesFocus, ChangesOverlay, HelpOverlay, Overlay,
     OverlayStack, PRODUCT_MENU_ITEMS, PlanReviewOverlay, PluginsOverlay, ProductMenuOverlay,
-    QueueOverlay,
-    RetainedLoad, SettingsOverlay, SettingsPage, SideQueryOverlay, StatusOverlay,
+    QueueOverlay, RetainedLoad, SettingsOverlay, SettingsPage, SideQueryOverlay, StatusOverlay,
     ToolOutputOverlay,
 };
 use crate::patch_review::{PatchReview, project_patch_reviews};
@@ -1014,11 +1013,7 @@ impl App {
             return;
         };
         let preference = settings.theme_preference();
-        let path = self
-            .options
-            .theme_path
-            .clone()
-            .or_else(default_locale_path);
+        let path = self.options.theme_path.clone().or_else(default_locale_path);
         let Some(path) = path else {
             self.notice = Notice::localized(MessageId::ThemePersistFailed);
             return;
@@ -1076,9 +1071,9 @@ impl App {
                 "screen mode handoff identity no longer matches the runtime"
             ));
         }
-        let inventory = rpc
-            .model_inventory()
-            .context("load provider/model inventory")?;
+        // First conversation frame must not wait on grok/live inventory.
+        // model.list is queued after the first paint.
+        let inventory = ModelInventory::default();
         let mut sessions = rpc.sessions().context("load sessions")?;
         sort_sessions_by_recency(&mut sessions);
         let models = inventory.available_models();
@@ -1146,7 +1141,11 @@ impl App {
             sessions,
             models,
             phase,
-            focus: Focus::Scene,
+            focus: if phase == Phase::Conversation {
+                Focus::Composer
+            } else {
+                Focus::Scene
+            },
             locale_index,
             provider_index,
             provider_picker: ProviderPickerState::default(),
@@ -1266,22 +1265,29 @@ impl App {
         }
         if matches!(app.phase, Phase::Model | Phase::Diagnostic) {
             app.route_after_locale();
+        } else if app.phase == Phase::Conversation {
+            if app.options.session_id.is_some() {
+                app.resume_requested_session();
+            } else if !workspace_session_ids(&app.sessions, &app.options.workspace).is_empty() {
+                if let Err(error) = app.enter_workspace_conversation() {
+                    app.open_session_browser();
+                    app.notice = Notice::localized_with(
+                        MessageId::ConversationOpenFailed,
+                        [("error", error.to_string())],
+                    );
+                }
+            }
         }
         app.queue_startup_inventory_refresh();
         Ok(app)
     }
 
     fn queue_startup_inventory_refresh(&mut self) {
-        let grok_ready = self.inventory.providers.iter().any(|provider| {
-            provider.source_kind == "grok-build" && self.inventory.is_provider_runnable(provider)
-        });
-        if grok_ready {
-            return;
-        }
         let socket = self.options.socket.clone();
         let tx = self.async_tx.clone();
         std::thread::spawn(move || {
             let mut last = Err("startup inventory unavailable".into());
+            let mut sent_first = false;
             for attempt in 0..20 {
                 if attempt > 0 {
                     std::thread::sleep(Duration::from_millis(250));
@@ -1290,18 +1296,29 @@ impl App {
                     .and_then(|mut rpc| rpc.model_inventory())
                     .map_err(|error| error.to_string());
                 match &last {
-                    Ok(inventory)
-                        if inventory.providers.iter().any(|provider| {
+                    Ok(inventory) => {
+                        let grok_ready = inventory.providers.iter().any(|provider| {
                             provider.source_kind == "grok-build" && provider.available
-                        }) =>
-                    {
-                        break;
+                        });
+                        if !sent_first || grok_ready {
+                            let _ = tx.send(AsyncMessage::StartupInventory {
+                                result: last.clone(),
+                            });
+                            sent_first = true;
+                        }
+                        if grok_ready {
+                            break;
+                        }
                     }
-                    Err(_) => break,
-                    Ok(_) => {}
+                    Err(_) => {
+                        let _ = tx.send(AsyncMessage::StartupInventory { result: last });
+                        return;
+                    }
                 }
             }
-            let _ = tx.send(AsyncMessage::StartupInventory { result: last });
+            if !sent_first {
+                let _ = tx.send(AsyncMessage::StartupInventory { result: last });
+            }
         });
     }
 
@@ -2142,9 +2159,9 @@ impl App {
                 }
             }
         }
-        self.active_session.as_ref().is_none_or(|session| {
-            !session_needs_picker_model_write(session, &self.selected_model)
-        })
+        self.active_session
+            .as_ref()
+            .is_none_or(|session| !session_needs_picker_model_write(session, &self.selected_model))
     }
 
     fn reconcile_model_preference_conflict(&mut self, error: &RpcError) -> bool {
@@ -3101,15 +3118,11 @@ impl App {
                     path,
                     result,
                 } => {
-                    if self
-                        .pending_file_attach
-                        .as_ref()
-                        .is_some_and(|pending| {
-                            pending.generation == generation
-                                && pending.session_id == session_id
-                                && pending.path == path
-                        })
-                    {
+                    if self.pending_file_attach.as_ref().is_some_and(|pending| {
+                        pending.generation == generation
+                            && pending.session_id == session_id
+                            && pending.path == path
+                    }) {
                         self.finish_ranged_file_attach(result);
                         continue;
                     }
@@ -3143,6 +3156,7 @@ impl App {
                                 replayed,
                                 ..
                             } = received;
+                            let keepalive = event.kind == "execution.keepalive";
                             if event.kind == "session.model.preference.changed" {
                                 if event.session_id
                                     == self
@@ -3292,7 +3306,8 @@ impl App {
                                         .and_then(serde_json::Value::as_str)
                                         == Some("open");
                                 if circuit_open {
-                                    self.notice = Notice::localized(MessageId::SummarizerCircuitOpen);
+                                    self.notice =
+                                        Notice::localized(MessageId::SummarizerCircuitOpen);
                                     visual_changed = true;
                                 }
                             }
@@ -3323,7 +3338,7 @@ impl App {
                             let transcript_changed = self
                                 .transcript_reducer
                                 .reduce_event(&mut self.blocks, event);
-                            visual_changed |= transcript_changed;
+                            visual_changed |= transcript_changed || keepalive;
                             if transcript_changed {
                                 visual_changed |= self.reconcile_mandatory_disclosures();
                             }
@@ -3431,9 +3446,9 @@ impl App {
                                 .iter()
                                 .position(|model| model.id == self.selected_model)
                                 .or_else(|| {
-                                    self.models.iter().position(|model| {
-                                        model.id == self.inventory.default_model
-                                    })
+                                    self.models
+                                        .iter()
+                                        .position(|model| model.id == self.inventory.default_model)
                                 })
                                 .unwrap_or(0);
                             self.selected_model = self
@@ -3442,7 +3457,11 @@ impl App {
                                 .map(|model| model.id.clone())
                                 .unwrap_or_default();
                         }
-                        if matches!(
+                        if matches!(self.phase, Phase::Conversation) {
+                            if !self.inventory.has_runnable_provider() {
+                                self.route_after_locale();
+                            }
+                        } else if matches!(
                             self.phase,
                             Phase::Provider | Phase::Model | Phase::Diagnostic
                         ) {
@@ -4855,11 +4874,7 @@ impl App {
             );
             return;
         }
-        let initial_range = self
-            .context_completion
-            .typed_line_range()
-            .ok()
-            .flatten();
+        let initial_range = self.context_completion.typed_line_range().ok().flatten();
         self.open_file_viewer(
             candidate.path,
             FileViewerOrigin::Completion {
@@ -5081,9 +5096,7 @@ impl App {
         if prompt.is_empty() && self.media.is_empty() {
             return Ok(());
         }
-        if let Some(reason) =
-            command::mcp_slash_unready(&prompt, &self.command_registry.state)
-        {
+        if let Some(reason) = command::mcp_slash_unready(&prompt, &self.command_registry.state) {
             self.notice = Notice::localized(reason);
             return Ok(());
         }
@@ -5148,6 +5161,15 @@ impl App {
     ) -> Result<bool> {
         if self.has_retained_run() {
             self.notice = Notice::localized(MessageId::CurrentExecutionPaused);
+            return Ok(false);
+        }
+        if self.active_session.is_none()
+            && let Err(error) = self.enter_workspace_conversation()
+        {
+            self.notice = Notice::localized_with(
+                MessageId::ConversationOpenFailed,
+                [("error", error.to_string())],
+            );
             return Ok(false);
         }
         let session_id = self
@@ -5376,7 +5398,7 @@ impl App {
             if envelope.agent == "plan" {
                 "plan"
             } else {
-                "build"
+                "converse"
             }
         } else {
             execution.agent.as_str()
@@ -5448,12 +5470,11 @@ impl App {
             .map(|session| session.workspace_root.as_str());
         match self.rpc.extension_list(workspace) {
             Ok(inventory) => {
-                self.overlays
-                    .replace(Overlay::Plugins(PluginsOverlay {
-                        inventory,
-                        selected: 0,
-                        error: String::new(),
-                    }));
+                self.overlays.replace(Overlay::Plugins(PluginsOverlay {
+                    inventory,
+                    selected: 0,
+                    error: String::new(),
+                }));
             }
             Err(error) => {
                 self.notice = Notice::localized_with(
@@ -5633,14 +5654,7 @@ impl App {
                 MessageId::ApprovalModePresets,
                 [
                     ("mode", mode),
-                    (
-                        "preset",
-                        if preset.is_empty() {
-                            "none"
-                        } else {
-                            preset
-                        },
-                    ),
+                    ("preset", if preset.is_empty() { "none" } else { preset }),
                     ("presets", "read-only, agent, accept-edits"),
                 ],
             );
@@ -6376,11 +6390,8 @@ impl App {
                     deferred = Some(Action::SelectAgent(agents.selected.saturating_sub(1)))
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    let count = agent_roster_entries(
-                        &agents.projection,
-                        &agents.load.session_id,
-                    )
-                    .len();
+                    let count =
+                        agent_roster_entries(&agents.projection, &agents.load.session_id).len();
                     deferred = Some(Action::SelectAgent(
                         (agents.selected + 1).min(count.saturating_sub(1)),
                     ));
@@ -7587,12 +7598,11 @@ impl App {
 
     fn select_agent(&mut self, index: usize) {
         let task_id = match self.overlays.active() {
-            Some(Overlay::Agents(agents)) => agent_roster_entries(
-                &agents.projection,
-                &agents.load.session_id,
-            )
-            .get(index)
-            .map(|agent| agent.task_id.clone()),
+            Some(Overlay::Agents(agents)) => {
+                agent_roster_entries(&agents.projection, &agents.load.session_id)
+                    .get(index)
+                    .map(|agent| agent.task_id.clone())
+            }
             _ => None,
         };
         let Some(task_id) = task_id else {
@@ -7942,12 +7952,11 @@ impl App {
             Action::SelectAgent(index) => self.select_agent(index),
             Action::OpenSelectedAgentSession => {
                 let session_id = match self.overlays.active() {
-                    Some(Overlay::Agents(agents)) => agent_roster_entries(
-                        &agents.projection,
-                        &agents.load.session_id,
-                    )
-                    .get(agents.selected)
-                    .map(|agent| agent.session_id.clone()),
+                    Some(Overlay::Agents(agents)) => {
+                        agent_roster_entries(&agents.projection, &agents.load.session_id)
+                            .get(agents.selected)
+                            .map(|agent| agent.session_id.clone())
+                    }
                     _ => None,
                 };
                 if let Some(session_id) = session_id {
@@ -8430,6 +8439,9 @@ fn startup_phase(
 ) -> Phase {
     if !has_supported_locale {
         Phase::Locale
+    } else if inventory.providers.is_empty() {
+        // Paint conversation chrome before grok/live inventory returns.
+        Phase::Conversation
     } else if !inventory.has_runnable_provider() || models.is_empty() {
         // Empty model inventory is a provider-repair problem, not a hard
         // diagnostic lockout (stale CC Switch managed proxy with no models).
@@ -9021,6 +9033,7 @@ fn refresh_session_projection(rpc: &mut Client, session_id: &str) -> Result<Sess
 }
 
 pub fn run(options: Options) -> Result<Outcome> {
+    let started = Instant::now();
     let probe = std::thread::Builder::new()
         .name("terminal-probe".into())
         .spawn(|| crate::terminal_probe::background(Duration::from_millis(80)))
@@ -9058,6 +9071,21 @@ pub fn run(options: Options) -> Result<Outcome> {
                 }
             }
         })?;
+    // First conversation frame before draining grok/live inventory.
+    {
+        let workspace = app.options.workspace.clone();
+        let markdown: Vec<MarkdownLink> = Vec::new();
+        terminal.draw_with_links(&hyperlink_support, &workspace, &markdown, |frame| {
+            app.render(frame)
+        })?;
+        app.scrollback.observe_presented(&app.blocks);
+        if std::env::var_os("CARINA_STARTUP_PROFILE").is_some() {
+            eprintln!(
+                "startup_profile first_frame {:.3}ms",
+                started.elapsed().as_secs_f64() * 1000.0
+            );
+        }
+    }
     let mut scheduler = FrameScheduler::new(Instant::now());
     while !app.quit {
         app.apply_async();
@@ -10309,34 +10337,6 @@ mod tests {
                         ]}
                     }),
                 ),
-                (
-                    "model.list",
-                    serde_json::json!({
-                        "default_model": "grok-build/grok-4.6",
-                        "reasoner": {"available": true},
-                        "providers": [
-                            {
-                                "id": "grok-build",
-                                "name": "Grok Build",
-                                "registered": true,
-                                "available": true,
-                                "source_kind": "grok-build",
-                                "source_action": "use_cli_session",
-                                "models": [{
-                                    "id": "grok-build/grok-4.6",
-                                    "available": true
-                                }]
-                            },
-                            {
-                                "id": "xai",
-                                "name": "xAI",
-                                "registered": true,
-                                "available": true,
-                                "models": [{"id": "xai/grok-4.6", "available": true}]
-                            }
-                        ]
-                    }),
-                ),
                 ("session.list", serde_json::json!([])),
             ] {
                 let mut line = String::new();
@@ -10395,6 +10395,35 @@ mod tests {
             scrollback_wrap: ScrollbackWrap::PreWrap,
         })
         .unwrap();
+        app.inventory = serde_json::from_value(serde_json::json!({
+            "default_model": "grok-build/grok-4.6",
+            "reasoner": {"available": true},
+            "providers": [
+                {
+                    "id": "grok-build",
+                    "name": "Grok Build",
+                    "registered": true,
+                    "available": true,
+                    "source_kind": "grok-build",
+                    "source_action": "use_cli_session",
+                    "models": [{
+                        "id": "grok-build/grok-4.6",
+                        "available": true
+                    }]
+                },
+                {
+                    "id": "xai",
+                    "name": "xAI",
+                    "registered": true,
+                    "available": true,
+                    "models": [{"id": "xai/grok-4.6", "available": true}]
+                }
+            ]
+        }))
+        .unwrap();
+        app.models = app.inventory.available_models();
+        app.selected_model = "grok-build/grok-4.6".into();
+        app.model_index = 0;
         app.active_session = Some(
             serde_json::from_value(serde_json::json!({
                 "session_id": "session-keep",
@@ -10433,10 +10462,7 @@ mod tests {
             &matching,
             "grok-build/grok-4.6"
         ));
-        assert!(session_needs_picker_model_write(
-            &matching,
-            "xai/grok-4.6"
-        ));
+        assert!(session_needs_picker_model_write(&matching, "xai/grok-4.6"));
     }
 
     #[test]
@@ -10459,7 +10485,7 @@ mod tests {
                     "models": [{"id": "grok-build/grok-4.6", "available": true}]
                 }]
             });
-            for method in ["runtime.initialize", "model.list", "session.list"] {
+            for method in ["runtime.initialize", "session.list"] {
                 let mut line = String::new();
                 reader.read_line(&mut line).unwrap();
                 let request: serde_json::Value = serde_json::from_str(&line).unwrap();
@@ -11993,6 +12019,10 @@ mod tests {
         };
 
         assert_eq!(startup_phase(true, &inventory, &[]), Phase::Provider);
+        assert_eq!(
+            startup_phase(true, &ModelInventory::default(), &[]),
+            Phase::Conversation
+        );
 
         let mut unavailable = inventory.clone();
         unavailable.reasoner.available = false;

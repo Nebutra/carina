@@ -1,16 +1,18 @@
 use std::path::Path;
 use std::time::Duration;
 
-use ratatui::layout::Rect;
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
-use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
+use crate::component::InteractionMap;
 use crate::glyphs::{GlyphMode, Glyphs};
-use crate::i18n::{format as tr_format, text as tr, Locale, MessageId};
+use crate::i18n::{Locale, MessageId, format as tr_format, text as tr};
 use crate::layout_contract;
+use crate::product_header::ConversationHeader;
 use crate::render_contract::truncate_width_with_glyphs;
 use crate::rpc::{ExecutionRun, LiveActivityUpdate, ModelContextTokens, Session, WireEvent};
 use crate::terminal_logo::{self, MARK_HEIGHT_CELLS, MARK_WIDTH_CELLS};
@@ -75,6 +77,53 @@ impl EmptyConversation {
             .alignment(ratatui::layout::Alignment::Center)
             .wrap(Wrap { trim: false }),
             Rect::new(area.x, y, area.width, 1),
+        );
+    }
+}
+
+/// Conversation chrome painted before provider inventory returns.
+/// Used by the PTY first-frame bench so TTFF measures the product home, not
+/// the provider picker.
+pub fn render_startup_conversation(frame: &mut Frame<'_>, locale: Locale, theme: Theme) {
+    let area = frame.area();
+    let content = layout_contract::content(area);
+    let composer_height =
+        layout_contract::COMPOSER_MIN_HEIGHT + layout_contract::COMPOSER_CHROME_ROWS;
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(layout_contract::CONVERSATION_HEADER_HEIGHT),
+            Constraint::Min(layout_contract::CONVERSATION_MIN_TRANSCRIPT_HEIGHT),
+            Constraint::Length(composer_height),
+        ])
+        .split(content);
+    let mut interactions = InteractionMap::default();
+    ConversationHeader {
+        title: "",
+        product_menu_open: false,
+        actions: &[],
+    }
+    .render(frame, chunks[0], theme, &mut interactions);
+    EmptyConversation { locale }.render(frame, chunks[1], theme);
+    if chunks[2].height == 0 || chunks[2].width == 0 {
+        return;
+    }
+    let prompt = theme.glyphs.prompt();
+    let prompt_width = layout_contract::COMPOSER_PROMPT_COLUMNS.min(chunks[2].width);
+    frame.render_widget(
+        Paragraph::new(prompt).style(Style::default().fg(theme.accent)),
+        Rect::new(chunks[2].x, chunks[2].y, prompt_width, 1),
+    );
+    let input = Rect::new(
+        chunks[2].x.saturating_add(prompt_width),
+        chunks[2].y,
+        chunks[2].width.saturating_sub(prompt_width),
+        chunks[2].height,
+    );
+    if input.width > 0 {
+        frame.render_widget(
+            Paragraph::new(tr(locale, MessageId::EmptyConversationPrompt)).style(theme.muted()),
+            input,
         );
     }
 }
@@ -1091,10 +1140,12 @@ mod tests {
         let primary = &chrome.primary.as_ref().expect("active primary").text;
         assert!(primary.starts_with("list 2s"), "{primary}");
         assert!(!primary.contains("11m47"), "{primary}");
-        assert!(chrome
-            .visible_slots(120)
-            .iter()
-            .any(|slot| slot.kind == ChromeSlotKind::Run && slot.text.contains("11m47")));
+        assert!(
+            chrome
+                .visible_slots(120)
+                .iter()
+                .any(|slot| slot.kind == ChromeSlotKind::Run && slot.text.contains("11m47"))
+        );
     }
 
     #[test]
@@ -1163,10 +1214,12 @@ mod tests {
         assert!(!primary.text.contains("1m02"));
         assert!(primary.text.contains("Esc pause safely"));
         assert!(!primary.text.contains("+2 queued"));
-        assert!(chrome
-            .visible_slots(120)
-            .iter()
-            .any(|slot| slot.kind == ChromeSlotKind::Run && slot.text.contains("1m02")));
+        assert!(
+            chrome
+                .visible_slots(120)
+                .iter()
+                .any(|slot| slot.kind == ChromeSlotKind::Run && slot.text.contains("1m02"))
+        );
     }
 
     #[test]
@@ -1612,10 +1665,12 @@ mod tests {
                 animated: false,
             })
         );
-        assert!(!chrome
-            .visible_slots(120)
-            .iter()
-            .any(|slot| slot.text.contains("stale activity")));
+        assert!(
+            !chrome
+                .visible_slots(120)
+                .iter()
+                .any(|slot| slot.text.contains("stale activity"))
+        );
     }
 
     #[test]
@@ -1677,14 +1732,18 @@ mod tests {
 
         let ascii = render_empty(80, 24, crate::glyphs::GlyphMode::Ascii);
         assert!(ascii.contains(PRODUCT_NAME));
-        assert!(!ascii
-            .chars()
-            .any(|ch| ('\u{2801}'..='\u{28ff}').contains(&ch)));
+        assert!(
+            !ascii
+                .chars()
+                .any(|ch| ('\u{2801}'..='\u{28ff}').contains(&ch))
+        );
 
         let narrow = render_empty(40, 12, crate::glyphs::GlyphMode::Unicode);
         assert!(narrow.contains(PRODUCT_NAME));
-        assert!(!narrow
-            .chars()
-            .any(|ch| ('\u{2801}'..='\u{28ff}').contains(&ch)));
+        assert!(
+            !narrow
+                .chars()
+                .any(|ch| ('\u{2801}'..='\u{28ff}').contains(&ch))
+        );
     }
 }

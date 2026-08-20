@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -74,6 +75,26 @@ func TestNativeToolsBesideInstalledDaemon(t *testing.T) {
 	}
 	if got := nativeToolsBeside(daemon); got != dir {
 		t.Fatalf("nativeToolsBeside = %q, want %q", got, dir)
+	}
+}
+
+func TestScanBoundedStopsWalking(t *testing.T) {
+	tc := New(toolsDir(t))
+	ws := t.TempDir()
+	for i := 0; i < 40; i++ {
+		if err := os.WriteFile(filepath.Join(ws, "f"+strconv.Itoa(i)+".txt"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files, truncated, err := tc.ScanBounded(ws, 10, 1)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if !truncated {
+		t.Fatal("expected truncated scan")
+	}
+	if len(files) > 10 {
+		t.Fatalf("bounded scan returned %d files", len(files))
 	}
 }
 

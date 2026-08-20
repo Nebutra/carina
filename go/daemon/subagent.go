@@ -259,6 +259,7 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 		return "subagent cancelled"
 	}
 	d.sched.SetStatus(task.RunID, "running")
+	ctx = withExecutionKeepalive(ctx, d, sess.SessionID, task.RunID)
 	maxTurns := spec.MaxTurns
 	if maxTurns <= 0 || maxTurns > subagentMaxTurns {
 		maxTurns = subagentMaxTurns

@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Nebutra/carina/go/provider"
@@ -51,6 +52,10 @@ type grokCLIReasoner struct {
 	workdir       string
 	grokHome      string
 	timeout       time.Duration
+
+	mu              sync.Mutex
+	verifiedHome    string
+	surfaceVerified bool
 }
 
 type grokCLIError struct {
@@ -178,7 +183,7 @@ func (r *grokCLIReasoner) ThinkRoutedModel(ctx context.Context, model, prompt st
 		return ReasonerResult{}, grokCLIError{message: detail, kind: "protocol"}
 	}
 	env := grokCLIEnvironment(os.Environ(), grokHome, authPath)
-	if err := r.verifyPureInferenceSurface(callCtx, env, workdir, configPath); err != nil {
+	if err := r.ensurePureInferenceSurface(callCtx, env, workdir, grokHome, configPath); err != nil {
 		return ReasonerResult{}, err
 	}
 
@@ -275,21 +280,41 @@ func (r *grokCLIReasoner) newIsolation() (root, workdir, grokHome string, err er
 			}
 		}()
 	}
+	home := r.grokHome
+	if home == "" {
+		home = filepath.Join(base, "home")
+		if err = os.MkdirAll(home, 0o700); err != nil {
+			return "", "", "", err
+		}
+		r.grokHome = home
+	}
 	root, err = os.MkdirTemp(base, "call-")
 	if err != nil {
 		return "", "", "", err
 	}
 	workdir = filepath.Join(root, "cwd")
-	grokHome = filepath.Join(root, "home")
 	if err = os.Mkdir(workdir, 0o700); err != nil {
 		_ = os.RemoveAll(root)
 		return "", "", "", err
 	}
-	if err = os.Mkdir(grokHome, 0o700); err != nil {
-		_ = os.RemoveAll(root)
-		return "", "", "", err
+	return root, workdir, home, nil
+}
+
+func (r *grokCLIReasoner) ensurePureInferenceSurface(ctx context.Context, env []string, workdir, grokHome, configPath string) error {
+	r.mu.Lock()
+	skip := r.surfaceVerified && r.verifiedHome != "" && r.verifiedHome == grokHome
+	r.mu.Unlock()
+	if skip {
+		return nil
 	}
-	return root, workdir, grokHome, nil
+	if err := r.verifyPureInferenceSurface(ctx, env, workdir, configPath); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.surfaceVerified = true
+	r.verifiedHome = grokHome
+	r.mu.Unlock()
+	return nil
 }
 
 func (r *grokCLIReasoner) args(ctx context.Context, model string) []string {

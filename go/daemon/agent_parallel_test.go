@@ -3,6 +3,7 @@ package daemon
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -181,6 +182,26 @@ func TestExecuteBatchParallelReads(t *testing.T) {
 	}
 	if strings.Index(obs, "[0]") > strings.Index(obs, "[1]") {
 		t.Fatalf("batch observations must be in emit order: %s", obs)
+	}
+}
+
+func TestListWorkspaceIsBounded(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	for i := 0; i < listFileCap+40; i++ {
+		if err := os.WriteFile(filepath.Join(ws, "f"+strconv.Itoa(i)+".txt"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "list")
+	obs := d.dispatchAction(sess, task, &action{Tool: "list"})
+	if !strings.Contains(obs, "truncated") {
+		t.Fatalf("list must say it truncated, got: %s", obs)
+	}
+	if strings.Count(obs, ".txt") > listFileCap {
+		t.Fatalf("list leaked more than %d files", listFileCap)
 	}
 }
 

@@ -889,7 +889,7 @@ impl RuntimeInitialize {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct ModelInventory {
     #[serde(default)]
     pub default_model: String,
@@ -2078,11 +2078,13 @@ mod tests {
             epoch: expected.epoch.clone(),
             ..RuntimeIdentity::default()
         }));
-        assert!(!RuntimeExpectation {
-            epoch: " ".into(),
-            ..expected.clone()
-        }
-        .is_complete());
+        assert!(
+            !RuntimeExpectation {
+                epoch: " ".into(),
+                ..expected.clone()
+            }
+            .is_complete()
+        );
         assert!(!expected.matches(&RuntimeIdentity {
             workspace_id: expected.workspace_id.clone(),
             runtime_id: expected.runtime_id.clone(),
@@ -3341,12 +3343,14 @@ mod tests {
     #[test]
     fn daemon_owned_fixtures_reject_legacy_task_submit_shape() {
         // Old task.submit style payloads must not decode as ExecutionRun.
-        assert!(serde_json::from_value::<ExecutionRun>(json!({
-            "task_id": "task_legacy",
-            "session_id": "sess_1",
-            "status": "running"
-        }))
-        .is_err());
+        assert!(
+            serde_json::from_value::<ExecutionRun>(json!({
+                "task_id": "task_legacy",
+                "session_id": "sess_1",
+                "status": "running"
+            }))
+            .is_err()
+        );
         // Wire events without a typed kind stay non-governance.
         let bare: WireEvent = serde_json::from_value(json!({
             "type": "task.created",

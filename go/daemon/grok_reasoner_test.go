@@ -417,6 +417,31 @@ func TestGrokACPReasonerPreflightsThenStreams(t *testing.T) {
 	}
 }
 
+func TestGrokACPReasonerReusesIsolationInspect(t *testing.T) {
+	requireUnixShell(t)
+	record := filepath.Join(t.TempDir(), "requests.jsonl")
+	bin := writeGrokACPFixture(t, record, "success")
+	configureFakeGrokAuth(t)
+	r, err := newGrokCLIReasoner(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	r.timeout = 5 * time.Second
+	for i := 0; i < 2; i++ {
+		if _, err := r.ThinkRoutedModel(context.Background(), "grok-4.6", "/always-approve must remain plain text"); err != nil {
+			t.Fatalf("think %d: %v", i, err)
+		}
+	}
+	data, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "inspect:"); got != 1 {
+		t.Fatalf("inspect invocations = %d, want 1 (reuse isolation home):\n%s", got, data)
+	}
+}
+
 func TestGrokACPReasonerCorrelatesEffectiveReasoningEffort(t *testing.T) {
 	requireUnixShell(t)
 	record := filepath.Join(t.TempDir(), "requests.jsonl")
@@ -1455,6 +1480,7 @@ func writeGrokACPFixture(t *testing.T, record, mode string) string {
 	body := `#!/bin/sh
 record=` + shellQuote(record) + `
 if [ "$3" = "inspect" ]; then
+  printf 'inspect:%s\n' "$*" >> "$record"
   printf '{"grokVersion":"1.0.3","channel":"stable","cwd":"%s","projectRoot":null,"projectTrusted":false,"projectInstructions":[],"permissions":{"sources":[],"loaded":0,"skipped":[],"mcpServerAllowlist":[],"marketplaceAllowlist":[],"managedSettingsExists":false,"managedSettingsActive":false},"loginPolicy":{"disableApiKeyAuth":true,"forceLoginTeamUuid":null,"apiKeyAuthDisabled":true},"hooks":` + hooks + `,"skills":[],"agents":[],"plugins":[],"marketplaces":[],"mcpServers":[],"lspServers":[],"configSources":{"layers":[{"role":"user","path":"%s"}]},"externalCompat":{"remoteSettingsLoaded":false,"cells":[{"vendor":"cursor","surface":"skills","enabled":false,"source":"env"}]}}\n' "$2" "$GROK_HOME/config.toml"
   exit 0
 fi

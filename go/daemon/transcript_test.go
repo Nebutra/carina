@@ -423,6 +423,18 @@ func TestCollapseOnlyReceiptSurvivesCheckpointRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCompactNilSkipsSummarizer(t *testing.T) {
+	tr := newTranscript("task")
+	tr.policy = CompactionPolicy{MaxChars: 1, KeepRecent: 1, ToolOutputMax: 10_000, SummarizeAfter: 1}
+	for i := 0; i < 6; i++ {
+		tr.addTurn(Turn{Tool: "read", ActionBrief: "read", Obs: Observation{Content: strings.Repeat("x", 40)}})
+	}
+	receipt := tr.compact(nil)
+	if receipt == nil {
+		t.Fatal("cheap compact should still elide/collapse")
+	}
+}
+
 // TestCompactionPreservesUserTurnsVerbatim proves compact()'s Step-2
 // partition keeps a user-authored steering turn OUT of the summarize fold
 // even when it is far older than KeepRecent: the turn survives in t.Turns
