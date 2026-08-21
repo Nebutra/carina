@@ -1840,6 +1840,9 @@ fn humanize_failure_reason(reason: &str) -> String {
     {
         return "Grok's local model snapshot could not be used in isolation. Run `grok login`, then retry. This is not a network problem.".into();
     }
+    if lower.contains("unsafe session notification") || lower.contains("session_summary_generated") {
+        return "Grok Build could not start an isolated session. Switch to another model, or see Details.".into();
+    }
     if lower.contains("modelrouter")
         || lower.starts_with("reasoner error:")
         || lower.starts_with("reasoner failed:")

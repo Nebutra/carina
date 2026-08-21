@@ -848,6 +848,44 @@ func TestGrokACPModelChangedNotificationIsExactAndPreflightOnly(t *testing.T) {
 	}
 }
 
+func TestGrokACPSessionSummaryIsSessionScoped(t *testing.T) {
+	summary := json.RawMessage(`{"sessionId":"session-1","update":{"sessionUpdate":"session_summary_generated","session_summary":"Repo overview"}}`)
+	summaryMeta := json.RawMessage(`{"sessionId":"session-1","update":{"sessionUpdate":"session_summary_generated","session_summary":"Repo overview"},"_meta":{"eventId":"session-1-summary","agentTimestampMs":1}}`)
+	client := newGrokACPClient(strings.NewReader(""), io.Discard, "grok-4.6", t.TempDir(), nil)
+	client.sessionID = "session-1"
+	client.commandsVerified = true
+	if err := client.notification("_x.ai/session_notification", summary, grokACPPrompt); err != nil {
+		t.Fatalf("summary before user echo rejected: %v", err)
+	}
+	if client.sessionTitle != "Repo overview" {
+		t.Fatalf("title=%q", client.sessionTitle)
+	}
+	if err := client.notification("_x.ai/session_notification", summaryMeta, grokACPPrompt); err != nil {
+		t.Fatalf("summary with optional meta rejected: %v", err)
+	}
+	if err := client.notification("_x.ai/session_notification", json.RawMessage(`{"sessionId":"session-1","update":{"sessionUpdate":"session_summary_generated","session_summary":"Follow-up"}}`), grokACPPrompt); err != nil {
+		t.Fatalf("title refresh rejected: %v", err)
+	}
+	if client.sessionTitle != "Follow-up" {
+		t.Fatalf("refreshed title=%q", client.sessionTitle)
+	}
+}
+
+func TestGrokACPRejectPostResultAbsorbsLateSessionSummary(t *testing.T) {
+	raw := `{"jsonrpc":"2.0","method":"_x.ai/session_notification","params":{"sessionId":"session-1","update":{"sessionUpdate":"session_summary_generated","session_summary":"Late title"}}}` + "\n"
+	client := newGrokACPClient(strings.NewReader(raw), io.Discard, "grok-4.6", t.TempDir(), nil)
+	client.sessionID = "session-1"
+	client.commandsVerified = true
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := client.rejectPostResult(ctx); err != nil {
+		t.Fatalf("late session summary must not fail the completed prompt: %v", err)
+	}
+	if client.sessionTitle != "Late title" {
+		t.Fatalf("title=%q", client.sessionTitle)
+	}
+}
+
 func TestGrokACPInferenceLifecycleAllowsOnlyInertEvents(t *testing.T) {
 	client := newGrokACPClient(strings.NewReader(""), io.Discard, "grok-4.6", t.TempDir(), nil)
 	client.sessionID = "session-1"

@@ -153,8 +153,8 @@ func (d *Daemon) handleModelList(params json.RawMessage) (any, error) {
 		// endpoint is offline or returns nothing useful.
 		if !grokBuild {
 			if liveIDs, source := d.liveModelIDs(info, chain); len(liveIDs) > 0 && source != "" {
-				row.Models = projectInventoryModels(id, info, available, liveIDs, info.Models)
-				row.Models = ensureDefaultModelPresent(row.Models, id, info, available, row.DefaultModel)
+				row.Models = projectInventoryModels(id, info, available, liveIDs, catalog)
+				row.Models = ensureDefaultModelPresent(row.Models, id, info, available, row.DefaultModel, catalog)
 				row.DynamicModels = true
 				sortInventoryModels(row.Models, id, row.DefaultModel)
 				providers = append(providers, row)

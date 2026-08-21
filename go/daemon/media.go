@@ -175,20 +175,22 @@ func attachTaskInputMedia(transcript *Transcript, task *scheduler.ExecutionRun) 
 // or unresolvable model strings — the default-model path, bare model ids not
 // in the catalog, offline mocks — return false: media is only ever attached
 // when the model is explicitly known to accept it (fail-closed).
+//
+// Managed-proxy routes (CC Switch / Mox) look up the short model id in the
+// canonical lab catalog. A live sibling such as gpt-5.4 is image-capable when
+// openai/gpt-5.4 declares image input, even if the proxy's Models map only
+// holds the profile default.
 func catalogModelImageCapable(cat provider.Catalog, model string) bool {
 	providerID, modelID, ok := strings.Cut(strings.TrimSpace(model), "/")
 	if !ok || providerID == "" || modelID == "" {
 		return false
 	}
-	info, ok := cat[providerID]
-	if !ok {
+	info := cat[providerID]
+	resolved, found := resolveProjectedModel(cat, info, modelID)
+	if !found {
 		return false
 	}
-	m, ok := info.Models[modelID]
-	if !ok {
-		return false
-	}
-	return modelSupportsImageInput(m)
+	return modelSupportsImageInput(resolved)
 }
 
 // collectRequestMedia walks the transcript newest-first and resolves the

@@ -77,6 +77,7 @@ func validContextWindow(limit int) bool {
 // Preferred vendors when a managed-proxy provider id is missing from models.dev.
 var catalogAliasProviders = []string{
 	"openai", "azure", "azure-cognitive-services", "github-copilot", "opencode",
+	"anthropic", "google", "xai",
 }
 
 func modelContextLimitByModelID(catalog provider.Catalog, modelID string) (int, bool) {

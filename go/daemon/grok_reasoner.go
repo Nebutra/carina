@@ -1553,7 +1553,6 @@ func (c *grokACPClient) resetTurn() {
 	c.commandsReplayed = false
 	c.userEchoVerified = false
 	c.promptText = ""
-	c.sessionTitle = ""
 	c.responseStarted = false
 	c.responseCompleted = false
 	c.turnCompleted = false
@@ -1662,9 +1661,17 @@ func (c *grokACPClient) rejectPostResult(ctx context.Context) error {
 			}
 			return err
 		}
-		if len(line) != 0 {
-			return grokCLIError{message: "Grok Build emitted output after the prompt result", kind: "protocol"}
+		if len(line) == 0 {
+			continue
 		}
+		message, err := decodeGrokACPWireMessage(line)
+		if err != nil {
+			return err
+		}
+		if message.Kind == grokACPWireNotification && c.absorbSessionScopedNotification(message.Method, message.Params) {
+			continue
+		}
+		return grokCLIError{message: "Grok Build emitted output after the prompt result", kind: "protocol"}
 	}
 }
 
@@ -1922,7 +1929,7 @@ func (c *grokACPClient) notification(method string, params json.RawMessage, phas
 	case "_x.ai/session_notification", "x.ai/session_notification":
 		valid := phase == grokACPPreflight && c.acceptGrokACPModelChanged(method, params)
 		if phase == grokACPPrompt {
-			valid = c.acceptGrokACPInferenceLifecycle(method, params)
+			valid = c.acceptGrokACPSessionSummary(method, params) || c.acceptGrokACPInferenceLifecycle(method, params)
 		}
 		if !valid {
 			return grokCLIError{message: "Grok Build emitted an unsafe session notification " + grokACPNotificationDescriptor(method, params), kind: "safety"}
@@ -2348,6 +2355,48 @@ func (c *grokACPClient) grokACPQueueEntryValid(entry map[string]json.RawMessage)
 	return true
 }
 
+func (c *grokACPClient) absorbSessionScopedNotification(method string, params json.RawMessage) bool {
+	switch method {
+	case "_x.ai/session_notification", "x.ai/session_notification":
+		return c.acceptGrokACPSessionSummary(method, params)
+	case "_x.ai/sessions/changed", "x.ai/sessions/changed":
+		return c.acceptGrokACPSessionsChanged(method, params)
+	case "session/update":
+		return c.acceptGrokACPSessionTitleUpdate(params)
+	default:
+		return false
+	}
+}
+
+func (c *grokACPClient) acceptGrokACPSessionSummary(method string, raw json.RawMessage) bool {
+	raw, ok := unwrapGrokACPSessionNotification(method, raw)
+	if !ok || c.sessionID == "" || !c.commandsVerified {
+		return false
+	}
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(raw, &envelope) != nil ||
+		!grokACPObjectShape(envelope, []string{"sessionId", "update"}, []string{"_meta"}) {
+		return false
+	}
+	var sessionID string
+	if json.Unmarshal(envelope["sessionId"], &sessionID) != nil || sessionID != c.sessionID {
+		return false
+	}
+	var update map[string]json.RawMessage
+	if json.Unmarshal(envelope["update"], &update) != nil ||
+		!grokACPObjectShape(update, []string{"sessionUpdate", "session_summary"}, nil) {
+		return false
+	}
+	var kind, title string
+	if json.Unmarshal(update["sessionUpdate"], &kind) != nil || kind != "session_summary_generated" ||
+		json.Unmarshal(update["session_summary"], &title) != nil ||
+		strings.TrimSpace(title) == "" || len(title) > 500 {
+		return false
+	}
+	c.sessionTitle = title
+	return true
+}
+
 func (c *grokACPClient) acceptGrokACPInferenceLifecycle(method string, raw json.RawMessage) bool {
 	var ok bool
 	raw, ok = unwrapGrokACPSessionNotification(method, raw)
@@ -2371,7 +2420,7 @@ func (c *grokACPClient) acceptGrokACPInferenceLifecycle(method string, raw json.
 		return false
 	}
 	switch kind {
-	case "session_summary_generated", "response_started", "reasoning_completed", "response_completed":
+	case "response_started", "reasoning_completed", "response_completed":
 		if !grokACPObjectShape(envelope, []string{"sessionId", "update"}, nil) {
 			return false
 		}
@@ -2465,17 +2514,7 @@ func (c *grokACPClient) acceptGrokACPInferenceLifecycle(method string, raw json.
 		c.turnUsage = &usage
 		return true
 	case "session_summary_generated":
-		if c.sessionTitle != "" || !grokACPObjectShape(update,
-			[]string{"sessionUpdate", "session_summary"}, nil) {
-			return false
-		}
-		var title string
-		if json.Unmarshal(update["session_summary"], &title) != nil ||
-			strings.TrimSpace(title) == "" || len(title) > 500 {
-			return false
-		}
-		c.sessionTitle = title
-		return true
+		return c.acceptGrokACPSessionSummary(method, raw)
 	case "retry_state":
 		valid, terminalErr := grokACPRetryState(update)
 		if valid {
@@ -3008,12 +3047,12 @@ func (c *grokACPClient) grokACPTextChunk(raw json.RawMessage, wantKind, wantUpda
 }
 
 func (c *grokACPClient) acceptGrokACPSessionTitleUpdate(raw json.RawMessage) bool {
-	if !c.userEchoVerified || c.sessionID == "" || c.sessionTitle == "" {
+	if c.sessionID == "" {
 		return false
 	}
 	var envelope map[string]json.RawMessage
 	if json.Unmarshal(raw, &envelope) != nil ||
-		!grokACPObjectShape(envelope, []string{"sessionId", "update"}, nil) {
+		!grokACPObjectShape(envelope, []string{"sessionId", "update"}, []string{"_meta"}) {
 		return false
 	}
 	var sessionID string
@@ -3026,8 +3065,15 @@ func (c *grokACPClient) acceptGrokACPSessionTitleUpdate(raw json.RawMessage) boo
 		return false
 	}
 	var kind, title string
-	return json.Unmarshal(update["sessionUpdate"], &kind) == nil && kind == "session_info_update" &&
-		json.Unmarshal(update["title"], &title) == nil && title == c.sessionTitle
+	if json.Unmarshal(update["sessionUpdate"], &kind) != nil || kind != "session_info_update" ||
+		json.Unmarshal(update["title"], &title) != nil || strings.TrimSpace(title) == "" || len(title) > 500 {
+		return false
+	}
+	if c.sessionTitle == "" {
+		c.sessionTitle = title
+		return true
+	}
+	return title == c.sessionTitle
 }
 
 func (c *grokACPClient) acceptGrokACPUserEcho(raw json.RawMessage) bool {

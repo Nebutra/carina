@@ -477,6 +477,30 @@ func TestModelListProjectsCanonicalVisionCapabilitiesThroughCCSwitch(t *testing.
 	}
 }
 
+func TestCatalogModelImageCapableAliasesLiveProxySiblings(t *testing.T) {
+	vision := &provider.Modalities{Input: []string{"text", "image"}, Output: []string{"text"}}
+	catalog := provider.Catalog{
+		"openai": {
+			ID: "openai",
+			Models: map[string]provider.Model{
+				"gpt-5.4": {ID: "gpt-5.4", Reasoning: true, ToolCall: true, Modalities: vision},
+			},
+		},
+		"ccswitch-codex-mox": {
+			ID: "ccswitch-codex-mox", Name: "Mox LAN", APIProtocol: "openai-responses",
+			Models: map[string]provider.Model{
+				"gpt-5.6-sol": {ID: "gpt-5.6-sol", Reasoning: true, ToolCall: true, Modalities: vision},
+			},
+		},
+	}
+	if !catalogModelImageCapable(catalog, "ccswitch-codex-mox/gpt-5.4") {
+		t.Fatal("live sibling with canonical openai image input must pass the media gate")
+	}
+	if catalogModelImageCapable(catalog, "ccswitch-codex-mox/mystery-proxy-id") {
+		t.Fatal("unknown live sibling must remain fail-closed")
+	}
+}
+
 func TestModelListProjectsCCSwitchDiscoveryWithoutSourceIDsOrSecrets(t *testing.T) {
 	isolateLocalGrokBuild(t)
 	store, _ := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))

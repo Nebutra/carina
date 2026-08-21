@@ -1987,6 +1987,10 @@ pub fn localize_operator_failure_reason(locale: Locale, reason: &str) -> String 
         || lower.contains("local model snapshot")
     {
         MessageId::FailureReasonGrokModelCache
+    } else if lower.contains("unsafe session notification")
+        || lower.contains("session_summary_generated")
+    {
+        MessageId::FailureReasonGrokIsolation
     } else if lower.contains("modelrouter")
         || lower.starts_with("reasoner error:")
         || lower.starts_with("reasoner failed:")
@@ -1998,7 +2002,11 @@ pub fn localize_operator_failure_reason(locale: Locale, reason: &str) -> String 
             let rest_l = rest.to_ascii_lowercase();
             if rest_l.contains("check the provider and network") {
                 MessageId::FailureReasonGenericTurn
-            } else if rest_l.contains("unsafe settings") || rest_l.contains("isolated grok") {
+            } else if rest_l.contains("unsafe settings")
+                || rest_l.contains("isolated grok")
+                || rest_l.contains("unsafe session notification")
+                || rest_l.contains("session_summary_generated")
+            {
                 MessageId::FailureReasonGrokIsolation
             } else if rest_l.contains("model cache")
                 || rest_l.contains("non-session model")

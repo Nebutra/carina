@@ -200,6 +200,100 @@ func TestModelListExpandsLiveModelsWithToken(t *testing.T) {
 	}
 }
 
+func TestModelListProjectsCanonicalCapabilitiesOntoLiveProxySiblings(t *testing.T) {
+	isolateLocalGrokBuild(t)
+	vision := &provider.Modalities{Input: []string{"text", "image"}, Output: []string{"text"}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]string{
+				{"id": "gpt-5.6-sol"},
+				{"id": "gpt-5.4"},
+				{"id": "gpt-5.6-terra"},
+				{"id": "mystery-proxy-id"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	store, err := auth.NewStore(filepath.Join(t.TempDir(), "auth.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const providerID = "ccswitch-codex-mox"
+	if err := store.SetBearerToken(providerID, "mox-token", map[string]string{
+		"source": provider.CCSwitchSourceKind, "validation": providerValidationContract, "source_revision": "rev-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	info := provider.Info{
+		ID: providerID, Name: "Mox LAN", API: srv.URL + "/v1", APIProtocol: "openai-responses",
+		Source: &provider.Source{
+			Kind: provider.CCSwitchSourceKind, Label: provider.CCSwitchSourceLabel,
+			App: "codex", Route: provider.CCSwitchRouteManagedProxy, AuthMode: provider.CCSwitchCredentialBearer,
+			Action: provider.CCSwitchActionUseActiveRoute, Current: true, Importable: true, Revision: "rev-1",
+		},
+		Models: map[string]provider.Model{
+			"gpt-5.6-sol": {ID: "gpt-5.6-sol", Name: "GPT 5.6 Sol", Reasoning: true, ToolCall: true, Modalities: vision},
+		},
+	}
+	d := &Daemon{
+		router:    modelrouter.New(),
+		authStore: store,
+		providerCatalog: provider.Catalog{
+			"openai": {
+				ID: "openai",
+				Models: map[string]provider.Model{
+					"gpt-5.4":       {ID: "gpt-5.4", Name: "GPT-5.4", Reasoning: true, ToolCall: true, Modalities: vision},
+					"gpt-5.6-sol":   {ID: "gpt-5.6-sol", Name: "GPT-5.6 Sol", Reasoning: true, ToolCall: true, Modalities: vision},
+					"gpt-5.6-terra": {ID: "gpt-5.6-terra", Name: "GPT-5.6 Terra", Reasoning: true, ToolCall: true, Modalities: vision},
+				},
+			},
+			providerID: info,
+		},
+		liveModelsHTTP:  srv.Client(),
+		reasoner:        modelInventoryTestReasoner{name: reasonerBackendRouter},
+		reasonerBackend: reasonerBackendRouter,
+	}
+	d.router.RegisterProvider(inventoryProvider(providerID))
+
+	result, err := d.handleModelList(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := result.(map[string]any)["providers"].([]modelInventoryProvider)
+	var row modelInventoryProvider
+	for _, candidate := range rows {
+		if candidate.ID == providerID {
+			row = candidate
+			break
+		}
+	}
+	if row.ID == "" {
+		t.Fatalf("missing %s in providers = %+v", providerID, rows)
+	}
+	got := map[string]modelInventoryModel{}
+	for _, model := range row.Models {
+		got[strings.TrimPrefix(model.ID, providerID+"/")] = model
+	}
+	for _, id := range []string{"gpt-5.6-sol", "gpt-5.4", "gpt-5.6-terra"} {
+		row, ok := got[id]
+		if !ok || !row.ImageInput || !row.ToolCall {
+			t.Fatalf("%s must advertise canonical image+tools: %+v", id, got)
+		}
+		if !catalogModelImageCapable(d.providerCatalog, providerID+"/"+id) {
+			t.Fatalf("%s must pass the media delivery gate", id)
+		}
+	}
+	unknown := got["mystery-proxy-id"]
+	if unknown.ImageInput || unknown.ToolCall || catalogModelImageCapable(d.providerCatalog, providerID+"/mystery-proxy-id") {
+		t.Fatalf("unknown live id must stay fail-closed: %+v", got)
+	}
+}
+
 func TestModelListFallsBackToCatalogWhenLiveFails(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "nope", http.StatusUnauthorized)
@@ -347,13 +441,13 @@ func TestEnsureDefaultModelPresentInjectsMissing(t *testing.T) {
 	info := provider.Info{ID: "p", Name: "P", Models: map[string]provider.Model{
 		"cfg-default": {ID: "cfg-default", Name: "cfg-default", Reasoning: true, ToolCall: true},
 	}}
-	models := projectInventoryModels("p", info, true, []string{"live-a", "live-b"}, info.Models)
-	out := ensureDefaultModelPresent(models, "p", info, true, "cfg-default")
+	models := projectInventoryModels("p", info, true, []string{"live-a", "live-b"}, nil)
+	out := ensureDefaultModelPresent(models, "p", info, true, "cfg-default", nil)
 	if len(out) != 3 || out[0].ID != "p/cfg-default" {
 		t.Fatalf("ensure default = %+v", out)
 	}
 	// already present
-	out2 := ensureDefaultModelPresent(out, "p", info, true, "cfg-default")
+	out2 := ensureDefaultModelPresent(out, "p", info, true, "cfg-default", nil)
 	if len(out2) != 3 {
 		t.Fatalf("duplicate inject: %+v", out2)
 	}
@@ -375,5 +469,41 @@ func TestProjectInventoryModelsDoesNotInventCapabilities(t *testing.T) {
 	}
 	if len(codex[0].ReasoningEfforts) == 0 {
 		t.Fatalf("codex family should still expose effort ladder: %+v", codex[0])
+	}
+}
+
+func TestProjectInventoryModelsInheritsCanonicalCapabilitiesForLiveSiblings(t *testing.T) {
+	vision := &provider.Modalities{Input: []string{"text", "image"}, Output: []string{"text"}}
+	info := provider.Info{
+		ID: "ccswitch-codex-mox", Name: "Mox LAN", APIProtocol: "openai-responses",
+		Models: map[string]provider.Model{
+			"gpt-5.6-sol": {ID: "gpt-5.6-sol", Name: "GPT 5.6 Sol", Reasoning: true, ToolCall: true, Modalities: vision},
+		},
+	}
+	full := provider.Catalog{
+		"openai": {
+			ID: "openai",
+			Models: map[string]provider.Model{
+				"gpt-5.4":       {ID: "gpt-5.4", Name: "GPT-5.4", Reasoning: true, ToolCall: true, Modalities: vision},
+				"gpt-5.6-sol":   {ID: "gpt-5.6-sol", Name: "GPT-5.6 Sol", Reasoning: true, ToolCall: true, Modalities: vision},
+				"gpt-5.6-terra": {ID: "gpt-5.6-terra", Name: "GPT-5.6 Terra", Reasoning: true, ToolCall: true, Modalities: vision},
+			},
+		},
+		info.ID: info,
+	}
+	rows := projectInventoryModels(info.ID, info, true, []string{"gpt-5.6-sol", "gpt-5.4", "gpt-5.6-terra", "mystery-proxy-id"}, full)
+	got := map[string]modelInventoryModel{}
+	for _, row := range rows {
+		got[strings.TrimPrefix(row.ID, info.ID+"/")] = row
+	}
+	for _, id := range []string{"gpt-5.6-sol", "gpt-5.4", "gpt-5.6-terra"} {
+		row, ok := got[id]
+		if !ok || !row.ImageInput || !row.ToolCall || !row.Reasoning {
+			t.Fatalf("%s must inherit canonical image+tools: %+v", id, got)
+		}
+	}
+	unknown := got["mystery-proxy-id"]
+	if unknown.ImageInput || unknown.ToolCall {
+		t.Fatalf("unknown live id must stay fail-closed: %+v", unknown)
 	}
 }

@@ -269,13 +269,15 @@ func normalizeLiveModelID(id string) string {
 }
 
 // projectInventoryModels builds inventory rows from a preferred id list,
-// enriching with catalog metadata when present.
+// enriching with catalog metadata when present. Live ids on a managed proxy
+// inherit capabilities from the canonical lab catalog (same alias path as
+// compaction), not only the proxy's thin Models map.
 func projectInventoryModels(
 	providerID string,
 	info provider.Info,
 	available bool,
 	ids []string,
-	catalog map[string]provider.Model,
+	full provider.Catalog,
 ) []modelInventoryModel {
 	out := make([]modelInventoryModel, 0, len(ids))
 	for _, modelID := range ids {
@@ -283,9 +285,9 @@ func projectInventoryModels(
 		if modelID == "" {
 			continue
 		}
-		model, ok := catalogModelLookup(catalog, modelID)
+		model, ok := resolveProjectedModel(full, info, modelID)
 		if !ok {
-			// Honesty: do not advertise tool_call without catalog evidence.
+			// Honesty: do not advertise tool_call or image without catalog evidence.
 			// Reasoning is only claimed when a wire family can expose effort.
 			// Unknown live ids stay conservative rather than "all capabilities".
 			claimsReasoning := effortWireFamily(providerID, modelID) != ""
@@ -331,7 +333,35 @@ func catalogModelLookup(catalog map[string]provider.Model, modelID string) (prov
 	return provider.Model{}, false
 }
 
-func ensureDefaultModelPresent(models []modelInventoryModel, providerID string, info provider.Info, available bool, defaultModel string) []modelInventoryModel {
+// resolveProjectedModel returns the capability contract for a short model id.
+// Canonical lab entries win over a proxy stub so a live sibling such as
+// gpt-5.4 on a CC Switch route still advertises image/tools when models.dev
+// already knows that id. Unknown ids stay unfound (fail-closed).
+func resolveProjectedModel(full provider.Catalog, info provider.Info, modelID string) (provider.Model, bool) {
+	if canonical, ok := lookupCanonicalModel(full, modelID); ok {
+		return canonical, true
+	}
+	return catalogModelLookup(info.Models, modelID)
+}
+
+func lookupCanonicalModel(catalog provider.Catalog, modelID string) (provider.Model, bool) {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" || catalog == nil {
+		return provider.Model{}, false
+	}
+	for _, providerID := range catalogAliasProviders {
+		info, ok := catalog[providerID]
+		if !ok {
+			continue
+		}
+		if model, found := catalogModelLookup(info.Models, modelID); found {
+			return model, true
+		}
+	}
+	return provider.Model{}, false
+}
+
+func ensureDefaultModelPresent(models []modelInventoryModel, providerID string, info provider.Info, available bool, defaultModel string, full provider.Catalog) []modelInventoryModel {
 	defaultModel = strings.TrimSpace(defaultModel)
 	if defaultModel == "" {
 		return models
@@ -351,7 +381,7 @@ func ensureDefaultModelPresent(models []modelInventoryModel, providerID string, 
 	}
 	// Inject configured default even if the live list omitted it (some proxies
 	// return incomplete catalogs).
-	extra := projectInventoryModels(providerID, info, available, []string{bare}, info.Models)
+	extra := projectInventoryModels(providerID, info, available, []string{bare}, full)
 	if len(extra) == 0 {
 		return models
 	}
