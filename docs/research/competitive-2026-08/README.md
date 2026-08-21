@@ -1,7 +1,7 @@
 # Competitive Research 2026-08 — Artifact Index
 
 > 取证日期：2026-08-02  
-> **现状刷新：2026-08-21 @ Carina v0.8.38** — **Harness SSOT：[24-post-0.8.36-harness-re-audit.md](./24-post-0.8.36-harness-re-audit.md)**；审美见 **[18](./18-tui-aesthetic-post-0.8.29.md)** / 长文 **[23](./23-assistant-markdown-document.md)**（A015/A016 已发）；Prompt 见 **[21](./21-prompt-context-re-audit.md)**；热路径见 **[26](./26-hot-path-post-0.8.38.md)**（`20` 为 0.8.32 历史）；`16`/`22` 为历史  
+> **现状刷新：2026-08-21 @ Carina v0.8.39** — **Harness SSOT：[24-post-0.8.36-harness-re-audit.md](./24-post-0.8.36-harness-re-audit.md)**；审美见 **[18](./18-tui-aesthetic-post-0.8.29.md)** / 长文 **[23](./23-assistant-markdown-document.md)**（A015/A016 已发）；Prompt 见 **[21](./21-prompt-context-re-audit.md)**；热路径见 **[26](./26-hot-path-post-0.8.38.md)**（`20` 为 0.8.32 历史）；`16`/`22` 为历史  
 > 范围：Carina vs Jcode / Grok Build / Claude Code (notes) / Codex / Oh My Pi (OMP) / DeepSeek Harness（公开文档，本机无 clone）  
 > 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图 → **日用剩余 P0 = 无**（T-S1 `web.search` / T-S2 真 todo / T-S3 search-list extract / S10 已落地）。奏折 / git 一等 / browser 为 P1；SaaS/ACP/皮肤否决
 
