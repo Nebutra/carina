@@ -1,4 +1,4 @@
-"""Blocking Carina JSON-RPC SDK compatible with Runtime 0.8.39."""
+"""Blocking Carina JSON-RPC SDK compatible with Runtime 0.8.40."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Iterator, TypedDict
 
 __version__ = "0.2.0"
-compatible_runtime_version = "0.8.39"
+compatible_runtime_version = "0.8.40"
 _stream_queue_limit = 64
 __all__ = [
     "CarinaClient",
