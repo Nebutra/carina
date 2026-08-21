@@ -78,6 +78,55 @@ func TestGrokACPInternalTimeoutKillsProcessTreeAndResetsStream(t *testing.T) {
 	}
 }
 
+func TestGrokACPReasonerCloseAfterReuseKillsChild(t *testing.T) {
+	record := filepath.Join(t.TempDir(), "requests.jsonl")
+	bin := writeGrokACPFixture(t, record, "success")
+	configureFakeGrokAuth(t)
+	r, err := newGrokCLIReasoner(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	r.timeout = 5 * time.Second
+	for i := 0; i < 2; i++ {
+		if _, err := r.ThinkRoutedModel(context.Background(), "grok-4.6", "/always-approve must remain plain text"); err != nil {
+			t.Fatalf("think %d: %v", i, err)
+		}
+	}
+	data, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := fixturePID(t, string(data))
+	if !processExists(pid) {
+		t.Fatal("reused grok child died before Close")
+	}
+	r.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for processExists(pid) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if processExists(pid) {
+		t.Fatalf("grok child pid %d survived Close", pid)
+	}
+}
+
+func fixturePID(t *testing.T, record string) int {
+	t.Helper()
+	for _, line := range strings.Split(record, "\n") {
+		if !strings.HasPrefix(line, "pid:") {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "pid:")))
+		if err != nil || pid <= 1 {
+			t.Fatalf("invalid fixture pid %q: %v", line, err)
+		}
+		return pid
+	}
+	t.Fatal("fixture did not publish pid")
+	return 0
+}
+
 func processExists(pid int) bool {
 	err := syscall.Kill(pid, 0)
 	return err == nil || errors.Is(err, syscall.EPERM)

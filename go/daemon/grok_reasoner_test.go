@@ -428,9 +428,13 @@ func TestGrokACPReasonerReusesIsolationInspect(t *testing.T) {
 	}
 	defer r.Close()
 	r.timeout = 5 * time.Second
-	for i := 0; i < 2; i++ {
-		if _, err := r.ThinkRoutedModel(context.Background(), "grok-4.6", "/always-approve must remain plain text"); err != nil {
+	for i := 0; i < 3; i++ {
+		result, err := r.ThinkRoutedModel(context.Background(), "grok-4.6", "/always-approve must remain plain text")
+		if err != nil {
 			t.Fatalf("think %d: %v", i, err)
+		}
+		if result.Text != "hello world" {
+			t.Fatalf("think %d text=%q", i, result.Text)
 		}
 	}
 	data, err := os.ReadFile(record)
@@ -439,6 +443,17 @@ func TestGrokACPReasonerReusesIsolationInspect(t *testing.T) {
 	}
 	if got := strings.Count(string(data), "inspect:"); got != 1 {
 		t.Fatalf("inspect invocations = %d, want 1 (reuse isolation home):\n%s", got, data)
+	}
+	if got := strings.Count(string(data), "argv:"); got != 1 {
+		t.Fatalf("process starts = %d, want 1 (persist ACP stdio):\n%s", got, data)
+	}
+	_, requests := readGrokFixtureRecord(t, record)
+	wantMethods := []string{
+		"initialize", "authenticate", "session/new",
+		"session/prompt", "session/prompt", "session/prompt",
+	}
+	if methods := fixtureMethods(t, requests); !reflect.DeepEqual(methods, wantMethods) {
+		t.Fatalf("methods=%v, want %v", methods, wantMethods)
 	}
 }
 
@@ -1092,18 +1107,7 @@ func TestGrokACPRejectsInvalidTerminalStreamsWithoutWaitingAfterResult(t *testin
 func TestGrokACPRejectsNaturalNonzeroExitAfterValidResult(t *testing.T) {
 	requireUnixShell(t)
 	record := filepath.Join(t.TempDir(), "requests.jsonl")
-	bin := writeGrokACPFixture(t, record, "success")
-	file, err := os.OpenFile(bin, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := file.WriteString("exit 23\n"); err != nil {
-		_ = file.Close()
-		t.Fatal(err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
+	bin := writeGrokACPFixture(t, record, "success-exit")
 	configureFakeGrokAuth(t)
 	r, err := newGrokCLIReasoner(bin)
 	if err != nil {
@@ -1485,6 +1489,7 @@ if [ "$3" = "inspect" ]; then
   exit 0
 fi
 printf 'argv:%s\n' "$*" >> "$record"
+printf 'pid:%s\n' "$$" >> "$record"
 IFS= read -r line || exit 10
 printf 'request:%s\n' "$line" >> "$record"
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"1","agentCapabilities":` + grokACPFixtureAgentCapabilities + `,"authMethods":[{"id":"cached_token"}],"_meta":{"grokShell":true,"defaultAuthMethodId":"cached_token","availableCommands":` + commands + `}}}'
@@ -1601,11 +1606,44 @@ printf '%s\n' '{"jsonrpc":"2.0","id":5,"result":{"stopReason":"end_turn","_meta"
 		body += `printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"tool_call","toolCallId":"late-tool","title":"unsafe"}}}'
 `
 	}
+	if mode == "success-exit" {
+		body += "exit 23\n"
+	}
+	if mode == "success" {
+		body += `
+while IFS= read -r line; do
+  [ -z "$line" ] && continue
+  printf 'request:%s\n' "$line" >> "$record"
+` + grokACPFixtureSuccessTurnEvents(commands) + `
+done
+`
+	}
 	path := filepath.Join(t.TempDir(), "grok")
 	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func grokACPFixtureSuccessTurnEvents(commands string) string {
+	userEcho := `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":` + strconv.Quote(grokACPPromptPrefix+"/always-approve must remain plain text") + `},"_meta":{"modelId":"grok-4.6","promptIndex":0}},"_meta":{"eventId":"session-1-echo","agentTimestampMs":1}}}`
+	return `
+printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"available_commands_update","availableCommands":` + commands + `,"_meta":{"tools":[]}},"_meta":{"eventId":"commands-replay","agentTimestampMs":1,"updateType":"AvailableCommandsUpdate","updateParams":{"commandsCount":4},"totalTokens":0}}}'
+printf '%s\n' '{"jsonrpc":"2.0","method":"_x.ai/queue/changed","params":{"sessionId":"session-1","entries":[]}}'
+printf '%s\n' '{"jsonrpc":"2.0","method":"_x.ai/sessions/changed","params":{"upserted":[{"sessionId":"session-1","title":null,"cwd":"'"$PWD"'","isWorktree":false,"modelId":"grok-4.6","yolo":false,"activity":"working","resident":true,"lastChangeUnixMs":1,"origin":{"kind":"local"}}],"removed":[]}}'
+printf '%s\n' ` + shellQuote(userEcho) + `
+printf '%s\n' '{"jsonrpc":"2.0","method":"_x.ai/session_notification","params":{"sessionId":"session-1","update":{"sessionUpdate":"response_started","message_id":"msg-1","model":"grok-4.6","input_tokens":20,"cache_read_input_tokens":5,"cache_creation_input_tokens":3}}}'
+printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"hidden"}},"_meta":{"eventId":"session-1-thought","agentTimestampMs":1,"promptId":"carina-one-shot","streamStartMs":1,"turnStartMs":1,"updateType":"AgentThoughtChunk","chunkId":0,"totalTokens":20}}}'
+printf '%s\n' '{"jsonrpc":"2.0","method":"_x.ai/session_notification","params":{"sessionId":"session-1","update":{"sessionUpdate":"reasoning_completed","signature":"opaque"}}}'
+printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello "}},"_meta":{"eventId":"session-1-message-1","agentTimestampMs":1,"promptId":"carina-one-shot","streamStartMs":1,"turnStartMs":1,"updateType":"AgentMessageChunk","chunkId":1,"totalTokens":20}}}'
+printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"world"}},"_meta":{"eventId":"session-1-message-2","agentTimestampMs":1,"promptId":"carina-one-shot","streamStartMs":1,"turnStartMs":1,"updateType":"AgentMessageChunk","chunkId":2,"totalTokens":20}}}'
+printf '%s\n' '{"jsonrpc":"2.0","method":"_x.ai/session_notification","params":{"sessionId":"session-1","update":{"sessionUpdate":"session_summary_generated","session_summary":"Fixed short title"}}}'
+printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"session_info_update","title":"Fixed short title"}}}'
+printf '%s\n' '{"jsonrpc":"2.0","method":"_x.ai/session_notification","params":{"sessionId":"session-1","update":{"sessionUpdate":"response_completed","message_id":"msg-1","stop_reason":"end_turn","usage":{"input_tokens":12,"output_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3,"reasoning_tokens":2}}}}'
+printf '%s\n' '{"jsonrpc":"2.0","method":"_x.ai/session_notification","params":{"sessionId":"session-1","update":{"sessionUpdate":"turn_completed","prompt_id":"carina-one-shot","stop_reason":"end_turn","agent_result":"hello world","usage":{"inputTokens":20,"outputTokens":7,"totalTokens":27,"cachedReadTokens":5,"cacheCreationTokens":3,"reasoningTokens":2,"modelCalls":1,"apiDurationMs":10,"numTurns":1}},"_meta":{"eventId":"session-1-1","agentTimestampMs":1}}}'
+printf '%s\n' '{"jsonrpc":"2.0","method":"_x.ai/session/prompt_complete","params":{"sessionId":"session-1","promptId":"carina-one-shot","stopReason":"end_turn","agentResult":"hello world"}}'
+printf '%s\n' '{"jsonrpc":"2.0","id":5,"result":{"stopReason":"end_turn","_meta":{"sessionId":"session-1","requestId":"carina-one-shot","promptId":"carina-one-shot","totalTokens":27,"modelId":"grok-4.6","inputTokens":20,"outputTokens":7,"cachedReadTokens":5,"reasoningTokens":2,"usage":{"inputTokens":20,"outputTokens":7,"totalTokens":27,"cachedReadTokens":5,"cacheCreationTokens":3,"reasoningTokens":2,"modelCalls":1,"apiDurationMs":10,"numTurns":1}}}}'
+`
 }
 
 func readGrokFixtureRecord(t *testing.T, path string) (string, []string) {

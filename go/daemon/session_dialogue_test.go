@@ -36,8 +36,11 @@ func TestFollowUpRunSeesPriorSessionAnswer(t *testing.T) {
 	if !strings.Contains(reasoner.prompt, "TASK: 对此你怎么看") {
 		t.Fatalf("follow-up missing current TASK:\n%s", truncate(reasoner.prompt, 400))
 	}
-	if !strings.Contains(reasoner.prompt, "Earlier in this conversation") {
+	if !strings.Contains(reasoner.prompt, "This conversation so far") {
 		t.Fatalf("follow-up missing session dialogue:\n%s", truncate(reasoner.prompt, 800))
+	}
+	if !strings.Contains(reasoner.prompt, "names no new object") {
+		t.Fatalf("follow-up must treat deictic asks as about the current topic:\n%s", truncate(reasoner.prompt, 800))
 	}
 	if !strings.Contains(reasoner.prompt, "Operator: 分析这个 repo") {
 		t.Fatalf("follow-up missing prior operator turn:\n%s", truncate(reasoner.prompt, 800))
@@ -58,7 +61,7 @@ func TestGreetingRunDoesNotInventSessionDialogue(t *testing.T) {
 	d.sched.SetLocale(task.RunID, "zh")
 	task, _ = d.sched.Get(task.RunID)
 	d.runTask(sess, task)
-	if strings.Contains(reasoner.prompt, "Earlier in this conversation") {
+	if strings.Contains(reasoner.prompt, "This conversation so far") {
 		t.Fatalf("first turn invented session dialogue:\n%s", truncate(reasoner.prompt, 400))
 	}
 }

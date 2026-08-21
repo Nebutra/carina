@@ -56,6 +56,26 @@ type grokCLIReasoner struct {
 	mu              sync.Mutex
 	verifiedHome    string
 	surfaceVerified bool
+	closed          bool
+	idle            *grokACPProc
+	live            map[*grokACPProc]struct{}
+}
+
+// grokACPProc is one live `grok agent stdio` child. Think timeout cancels the
+// in-flight prompt; Close / a failed Think owns process lifetime.
+type grokACPProc struct {
+	cmd      *exec.Cmd
+	stdin    io.WriteCloser
+	client   *grokACPClient
+	stderr   *boundedCLIWriter
+	model    string
+	effort   string
+	cancel   context.CancelFunc
+	done     chan struct{}
+	stopOnce sync.Once
+	mu       sync.Mutex
+	waitErr  error
+	killErr  error
 }
 
 type grokCLIError struct {
@@ -134,7 +154,12 @@ func newGrokCLIReasoner(binary string) (*grokCLIReasoner, error) {
 		_ = os.RemoveAll(root)
 		return nil, err
 	}
-	return &grokCLIReasoner{bin: binary, isolationRoot: root, timeout: grokCLIReasonerTimeout}, nil
+	return &grokCLIReasoner{
+		bin:           binary,
+		isolationRoot: root,
+		timeout:       grokCLIReasonerTimeout,
+		live:          make(map[*grokACPProc]struct{}),
+	}, nil
 }
 
 func grokThinkTimeout(base time.Duration, effort string) time.Duration {
@@ -159,66 +184,37 @@ func (r *grokCLIReasoner) ThinkRoutedModel(ctx context.Context, model, prompt st
 		return ReasonerResult{}, grokCLIError{message: "prompt exceeds size limit", kind: "protocol"}
 	}
 
-	callCtx, cancel := context.WithTimeout(ctx, grokThinkTimeout(r.timeout, reasoningEffortFrom(ctx)))
+	requestedEffort := reasoningEffortFrom(ctx)
+	callCtx, cancel := context.WithTimeout(ctx, grokThinkTimeout(r.timeout, requestedEffort))
 	defer cancel()
 
-	callRoot, workdir, grokHome, err := r.newIsolation()
+	proc, err := r.acquireACP(callCtx, model, requestedEffort)
 	if err != nil {
-		return ReasonerResult{}, grokCLIError{message: "create isolated Grok Build workspace", kind: "protocol"}
-	}
-	if callRoot != "" {
-		defer os.RemoveAll(callRoot)
-	}
-
-	authPath, err := canonicalGrokAuthPath(grokAuthPathFromEnvironment(os.Environ()))
-	if err != nil {
-		return ReasonerResult{}, grokCLIError{message: "Grok Build OAuth session is unavailable; run `grok login`"}
-	}
-	configPath, err := prepareGrokIsolationForVersion(grokHome, authPath, r.version)
-	if err != nil {
-		detail := boundedMetadata(err.Error(), 180)
-		if detail == "" {
-			detail = "configure isolated Grok Build runtime"
-		}
-		return ReasonerResult{}, grokCLIError{message: detail, kind: "protocol"}
-	}
-	env := grokCLIEnvironment(os.Environ(), grokHome, authPath)
-	if err := r.ensurePureInferenceSurface(callCtx, env, workdir, grokHome, configPath); err != nil {
 		return ReasonerResult{}, err
 	}
 
-	cmd := exec.CommandContext(callCtx, r.bin, r.args(callCtx, model)...)
-	configureCLIReasonerCommand(cmd)
-	cmd.Dir = workdir
-	cmd.Env = env
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return ReasonerResult{}, grokCLIError{message: "open Grok Build ACP input", kind: "protocol"}
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return ReasonerResult{}, grokCLIError{message: "open Grok Build ACP output", kind: "protocol"}
-	}
-	stderr := &boundedCLIWriter{limit: grokCLIStderrLimit}
-	cmd.Stderr = stderr
-	if err := startGrokCLIReasonerCommand(cmd); err != nil {
-		return ReasonerResult{}, grokCLIError{message: "start Grok Build CLI"}
-	}
-	defer releaseGrokCLIReasonerCommand(cmd)
-
 	publicStream := reasonerStreamFrom(callCtx)
 	var publicDecoder actionEnvelopeStreamDecoder
-	requestedEffort := reasoningEffortFrom(callCtx)
-	client := newGrokACPClient(stdout, stdin, model, workdir, func(delta string) {
+	proc.client.onText = func(delta string) {
 		if publicStream != nil {
 			publicStream.emit(publicDecoder.Push(delta))
 		}
-	})
-	client.requestedEffort = requestedEffort
-	result, runErr := client.run(callCtx, prompt)
-	_ = stdin.Close()
-	killErr := terminateGrokCLIReasonerCommand(cmd)
-	waitErr := cmd.Wait()
+	}
+	proc.client.requestedEffort = requestedEffort
+	result, runErr := proc.client.prompt(callCtx, prompt)
+	proc.client.onText = nil
+
+	keep := runErr == nil && ctx.Err() == nil && callCtx.Err() == nil && proc.alive() && !proc.client.stdioEOF
+	var killErr, waitErr error
+	if keep {
+		r.releaseACP(proc)
+	} else if runErr == nil && ctx.Err() == nil && callCtx.Err() == nil && proc.client.stdioEOF {
+		waitErr = proc.reap()
+		r.untrackACP(proc)
+	} else {
+		killErr, waitErr = proc.stop()
+		r.untrackACP(proc)
+	}
 
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		resetReasonerStream(publicStream)
@@ -229,7 +225,7 @@ func (r *grokCLIReasoner) ThinkRoutedModel(ctx context.Context, model, prompt st
 		return ReasonerResult{}, callCtx.Err()
 	}
 	if salvaged, ok := salvageGrokJSONFallback(runErr); ok {
-		salvaged.Usage.EffectiveReasoningEffort = client.effectiveEffort
+		salvaged.Usage.EffectiveReasoningEffort = proc.client.effectiveEffort
 		if salvaged.Usage.EffectiveReasoningEffort == "" {
 			salvaged.Usage.EffectiveReasoningEffort = requestedEffort
 		}
@@ -238,24 +234,222 @@ func (r *grokCLIReasoner) ThinkRoutedModel(ctx context.Context, model, prompt st
 	if runErr != nil {
 		resetReasonerStream(publicStream)
 		if _, ok := runErr.(grokCLIError); !ok {
-			if safe := classifySafeGrokStderr(stderr.String()); safe != "" {
+			if safe := classifySafeGrokStderr(proc.stderr.String()); safe != "" {
 				return ReasonerResult{}, grokCLIError{message: safe}
 			}
 		}
 		return ReasonerResult{}, runErr
 	}
-	if waitErr != nil && !grokProcessWasKilledByCarina(killErr, waitErr) {
+	if !keep && waitErr != nil && !grokProcessWasKilledByCarina(killErr, waitErr) {
 		resetReasonerStream(publicStream)
-		if safe := classifySafeGrokStderr(stderr.String()); safe != "" {
+		if safe := classifySafeGrokStderr(proc.stderr.String()); safe != "" {
 			return ReasonerResult{}, grokCLIError{message: safe}
 		}
 		return ReasonerResult{}, grokCLIError{message: "Grok Build CLI exited unsuccessfully"}
 	}
-	result.Usage.EffectiveReasoningEffort = client.effectiveEffort
+	result.Usage.EffectiveReasoningEffort = proc.client.effectiveEffort
 	if result.Usage.EffectiveReasoningEffort == "" {
 		result.Usage.EffectiveReasoningEffort = requestedEffort
 	}
 	return result, nil
+}
+
+func (r *grokCLIReasoner) acquireACP(ctx context.Context, model, effort string) (*grokACPProc, error) {
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return nil, grokCLIError{message: "Grok Build CLI delegation is closed", kind: "protocol"}
+	}
+	idle := r.idle
+	r.idle = nil
+	r.mu.Unlock()
+
+	if idle != nil {
+		if idle.model == model && idle.effort == effort && idle.alive() {
+			r.mu.Lock()
+			if r.closed {
+				r.mu.Unlock()
+				idle.stop()
+				return nil, grokCLIError{message: "Grok Build CLI delegation is closed", kind: "protocol"}
+			}
+			r.trackLive(idle)
+			r.mu.Unlock()
+			return idle, nil
+		}
+		idle.stop()
+	}
+
+	proc, err := r.startACP(ctx, model, effort)
+	if err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		proc.stop()
+		return nil, grokCLIError{message: "Grok Build CLI delegation is closed", kind: "protocol"}
+	}
+	r.trackLive(proc)
+	r.mu.Unlock()
+	return proc, nil
+}
+
+func (r *grokCLIReasoner) startACP(ctx context.Context, model, effort string) (*grokACPProc, error) {
+	workdir, grokHome, err := r.isolationDirs()
+	if err != nil {
+		return nil, grokCLIError{message: "create isolated Grok Build workspace", kind: "protocol"}
+	}
+	authPath, err := canonicalGrokAuthPath(grokAuthPathFromEnvironment(os.Environ()))
+	if err != nil {
+		return nil, grokCLIError{message: "Grok Build OAuth session is unavailable; run `grok login`"}
+	}
+	configPath, err := prepareGrokIsolationForVersion(grokHome, authPath, r.version)
+	if err != nil {
+		detail := boundedMetadata(err.Error(), 180)
+		if detail == "" {
+			detail = "configure isolated Grok Build runtime"
+		}
+		return nil, grokCLIError{message: detail, kind: "protocol"}
+	}
+	env := grokCLIEnvironment(os.Environ(), grokHome, authPath)
+	if err := r.ensurePureInferenceSurface(ctx, env, workdir, grokHome, configPath); err != nil {
+		return nil, err
+	}
+
+	// Process lifetime is owned by Close / failed Think, not the Think deadline.
+	procCtx, procCancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(procCtx, r.bin, r.args(ctx, model)...)
+	configureCLIReasonerCommand(cmd)
+	cmd.Dir = workdir
+	cmd.Env = env
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		procCancel()
+		return nil, grokCLIError{message: "open Grok Build ACP input", kind: "protocol"}
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		procCancel()
+		_ = stdin.Close()
+		return nil, grokCLIError{message: "open Grok Build ACP output", kind: "protocol"}
+	}
+	stderr := &boundedCLIWriter{limit: grokCLIStderrLimit}
+	cmd.Stderr = stderr
+	if err := startGrokCLIReasonerCommand(cmd); err != nil {
+		procCancel()
+		detail := boundedMetadata(err.Error(), 180)
+		if detail == "" {
+			detail = "start Grok Build CLI"
+		}
+		return nil, grokCLIError{message: "start Grok Build CLI: " + detail}
+	}
+	proc := &grokACPProc{
+		cmd:    cmd,
+		stdin:  stdin,
+		stderr: stderr,
+		model:  model,
+		effort: effort,
+		cancel: procCancel,
+		done:   make(chan struct{}),
+	}
+	go func() {
+		err := cmd.Wait()
+		proc.mu.Lock()
+		proc.waitErr = err
+		proc.mu.Unlock()
+		close(proc.done)
+	}()
+	client := newGrokACPClient(stdout, stdin, model, workdir, nil)
+	client.requestedEffort = effort
+	proc.client = client
+	if err := client.preflight(ctx); err != nil {
+		proc.stop()
+		return nil, err
+	}
+	return proc, nil
+}
+
+func (r *grokCLIReasoner) isolationDirs() (workdir, grokHome string, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, workdir, grokHome, err = r.newIsolation()
+	return workdir, grokHome, err
+}
+
+func (r *grokCLIReasoner) trackLive(proc *grokACPProc) {
+	if r.live == nil {
+		r.live = make(map[*grokACPProc]struct{})
+	}
+	r.live[proc] = struct{}{}
+}
+
+func (r *grokCLIReasoner) releaseACP(proc *grokACPProc) {
+	r.mu.Lock()
+	delete(r.live, proc)
+	if r.closed || r.idle != nil || !proc.alive() {
+		extra := r.idle
+		r.idle = nil
+		r.mu.Unlock()
+		proc.stop()
+		if extra != nil && extra != proc {
+			extra.stop()
+		}
+		return
+	}
+	r.idle = proc
+	r.mu.Unlock()
+}
+
+func (r *grokCLIReasoner) untrackACP(proc *grokACPProc) {
+	r.mu.Lock()
+	delete(r.live, proc)
+	if r.idle == proc {
+		r.idle = nil
+	}
+	r.mu.Unlock()
+}
+
+func (p *grokACPProc) alive() bool {
+	if p == nil {
+		return false
+	}
+	select {
+	case <-p.done:
+		return false
+	default:
+		return true
+	}
+}
+
+func (p *grokACPProc) reap() error {
+	_, waitErr := p.halt(false)
+	return waitErr
+}
+
+func (p *grokACPProc) stop() (killErr, waitErr error) {
+	return p.halt(true)
+}
+
+func (p *grokACPProc) halt(kill bool) (killErr, waitErr error) {
+	if p == nil {
+		return nil, nil
+	}
+	p.stopOnce.Do(func() {
+		if p.stdin != nil {
+			_ = p.stdin.Close()
+		}
+		if kill {
+			if p.cancel != nil {
+				p.cancel()
+			}
+			p.killErr = terminateGrokCLIReasonerCommand(p.cmd)
+		}
+		<-p.done
+		releaseGrokCLIReasonerCommand(p.cmd)
+	})
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.killErr, p.waitErr
 }
 
 func (r *grokCLIReasoner) newIsolation() (root, workdir, grokHome string, err error) {
@@ -288,16 +482,15 @@ func (r *grokCLIReasoner) newIsolation() (root, workdir, grokHome string, err er
 		}
 		r.grokHome = home
 	}
-	root, err = os.MkdirTemp(base, "call-")
-	if err != nil {
-		return "", "", "", err
+	workdir = r.workdir
+	if workdir == "" {
+		workdir = filepath.Join(base, "cwd")
+		if err = os.MkdirAll(workdir, 0o700); err != nil {
+			return "", "", "", err
+		}
+		r.workdir = workdir
 	}
-	workdir = filepath.Join(root, "cwd")
-	if err = os.Mkdir(workdir, 0o700); err != nil {
-		_ = os.RemoveAll(root)
-		return "", "", "", err
-	}
-	return root, workdir, home, nil
+	return "", workdir, home, nil
 }
 
 func (r *grokCLIReasoner) ensurePureInferenceSurface(ctx context.Context, env []string, workdir, grokHome, configPath string) error {
@@ -1133,6 +1326,14 @@ type grokACPClient struct {
 	terminalRetryErr   *grokCLIError
 	text               strings.Builder
 	onText             func(string)
+	lines              chan grokACPLine
+	pumpOnce           sync.Once
+	stdioEOF           bool
+}
+
+type grokACPLine struct {
+	raw []byte
+	err error
 }
 
 func newGrokACPClient(reader io.Reader, writer io.Writer, model, workdir string, onText func(string)) *grokACPClient {
@@ -1218,10 +1419,34 @@ func grokACPStageError(stage string, err error) error {
 	return err
 }
 
+func (c *grokACPClient) resetTurn() {
+	c.commandsReplayed = false
+	c.userEchoVerified = false
+	c.promptText = ""
+	c.sessionTitle = ""
+	c.responseStarted = false
+	c.responseCompleted = false
+	c.turnCompleted = false
+	c.promptCompleted = false
+	c.reasoningCompleted = false
+	c.responseMessageID = ""
+	c.turnAgentResult = ""
+	c.turnResultPresent = false
+	c.responseRail = grokACPResponseRailUnknown
+	c.responseUsage = nil
+	c.turnUsage = nil
+	c.effectiveEffort = ""
+	c.thoughtBytes = 0
+	c.terminalRetryErr = nil
+	c.totalBytes = 0
+	c.text.Reset()
+}
+
 func (c *grokACPClient) prompt(ctx context.Context, prompt string) (ReasonerResult, error) {
 	if !c.commandsVerified || c.sessionID == "" {
 		return ReasonerResult{}, grokCLIError{message: "Grok Build capabilities were not verified", kind: "safety"}
 	}
+	c.resetTurn()
 	c.promptText = grokACPPromptPrefix + prompt
 	if err := c.send(5, "session/prompt", map[string]any{
 		"sessionId": c.sessionID,
@@ -1238,58 +1463,79 @@ func (c *grokACPClient) prompt(ctx context.Context, prompt string) (ReasonerResu
 	if err != nil {
 		return ReasonerResult{}, err
 	}
-	if closer, ok := c.writer.(io.Closer); ok {
-		if err := closer.Close(); err != nil {
-			return ReasonerResult{}, grokCLIError{message: "close Grok Build ACP input", kind: "protocol"}
-		}
-	}
 	if err := c.rejectPostResult(ctx); err != nil {
 		return ReasonerResult{}, err
 	}
 	return result, nil
 }
 
-func (c *grokACPClient) rejectPostResult(ctx context.Context) error {
-	done := make(chan error, 1)
-	go func() {
-		done <- c.drainPostResult(ctx)
-	}()
-	timer := time.NewTimer(grokACPPostResultWindow)
-	defer timer.Stop()
+func (c *grokACPClient) ensurePump() {
+	c.pumpOnce.Do(func() {
+		c.lines = make(chan grokACPLine, 64)
+		go c.pump()
+	})
+}
+
+func (c *grokACPClient) pump() {
+	for c.scanner.Scan() {
+		line := bytes.TrimSpace(c.scanner.Bytes())
+		dup := make([]byte, len(line))
+		copy(dup, line)
+		c.lines <- grokACPLine{raw: dup}
+	}
+	err := c.scanner.Err()
+	if err == nil {
+		err = io.EOF
+	}
+	c.lines <- grokACPLine{err: err}
+	close(c.lines)
+}
+
+func (c *grokACPClient) readLine(ctx context.Context) ([]byte, error) {
+	c.ensurePump()
 	select {
-	case err := <-done:
-		return err
 	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		// ACP stdio remains open between requests. A short quiescence window
-		// catches already-queued protocol violations; the caller then kills the
-		// one-shot process instead of waiting for Grok's fixed shutdown grace.
-		return nil
+		return nil, ctx.Err()
+	case item, ok := <-c.lines:
+		if !ok {
+			c.stdioEOF = true
+			return nil, io.EOF
+		}
+		if item.err != nil {
+			if errors.Is(item.err, io.EOF) {
+				c.stdioEOF = true
+				return nil, io.EOF
+			}
+			return nil, grokCLIError{message: "read Grok Build ACP stream", kind: "protocol"}
+		}
+		c.totalBytes += len(item.raw) + 1
+		if c.totalBytes > grokCLIEventStreamLimit {
+			return nil, grokCLIError{message: "ACP event stream exceeds size limit", kind: "protocol"}
+		}
+		return item.raw, nil
 	}
 }
 
-func (c *grokACPClient) drainPostResult(ctx context.Context) error {
-	for c.scanner.Scan() {
-		if err := ctx.Err(); err != nil {
+func (c *grokACPClient) rejectPostResult(ctx context.Context) error {
+	quiet, cancel := context.WithTimeout(ctx, grokACPPostResultWindow)
+	defer cancel()
+	for {
+		line, err := c.readLine(quiet)
+		if err != nil {
+			if quiet.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+				// ACP stdio stays open between Thinks. Quiescence without a
+				// queued violation means the process can serve the next prompt.
+				return nil
+			}
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
 			return err
-		}
-		line := bytes.TrimSpace(c.scanner.Bytes())
-		c.totalBytes += len(line) + 1
-		if c.totalBytes > grokCLIEventStreamLimit {
-			return grokCLIError{message: "ACP event stream exceeds size limit", kind: "protocol"}
 		}
 		if len(line) != 0 {
 			return grokCLIError{message: "Grok Build emitted output after the prompt result", kind: "protocol"}
 		}
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := c.scanner.Err(); err != nil {
-		return grokCLIError{message: "read Grok Build ACP stream", kind: "protocol"}
-	}
-	return nil
 }
 
 func grokACPAgentProfile() map[string]any {
@@ -1458,14 +1704,13 @@ func decodeGrokACPExactObject(raw []byte) (map[string]json.RawMessage, bool) {
 }
 
 func (c *grokACPClient) response(ctx context.Context, expectedID int, phase grokACPPhase) (json.RawMessage, error) {
-	for c.scanner.Scan() {
-		if err := ctx.Err(); err != nil {
+	for {
+		line, err := c.readLine(ctx)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil, grokCLIError{message: "Grok Build ACP stream ended unexpectedly", kind: "protocol"}
+			}
 			return nil, err
-		}
-		line := bytes.TrimSpace(c.scanner.Bytes())
-		c.totalBytes += len(line) + 1
-		if c.totalBytes > grokCLIEventStreamLimit {
-			return nil, grokCLIError{message: "ACP event stream exceeds size limit", kind: "protocol"}
 		}
 		if len(line) == 0 {
 			continue
@@ -1494,16 +1739,12 @@ func (c *grokACPClient) response(ctx context.Context, expectedID int, phase grok
 			return nil, safeGrokACPError(message.Error.Message, message.Error.Data)
 		}
 		// ACP stdio is persistent: the prompt response does not close stdout. Treat
-		// id=5 as the hard boundary and never wait for EOF or a post-result event.
-		if phase == grokACPPrompt && expectedID == 5 && !c.promptCompleted {
+		// the prompt RPC as the hard boundary and never wait for EOF.
+		if phase == grokACPPrompt && !c.promptCompleted {
 			return nil, grokCLIError{message: "Grok Build prompt result arrived before the terminal event sequence", kind: "protocol"}
 		}
 		return message.Result, nil
 	}
-	if err := c.scanner.Err(); err != nil {
-		return nil, grokCLIError{message: "read Grok Build ACP stream", kind: "protocol"}
-	}
-	return nil, grokCLIError{message: "Grok Build ACP stream ended unexpectedly", kind: "protocol"}
 }
 
 func parseGrokACPID(raw json.RawMessage) (int, bool) {
@@ -3351,8 +3592,23 @@ func cleanPath(path string) string {
 }
 
 func (r *grokCLIReasoner) Close() {
-	if r.isolationRoot != "" {
-		_ = os.RemoveAll(r.isolationRoot)
+	r.mu.Lock()
+	r.closed = true
+	idle := r.idle
+	r.idle = nil
+	live := r.live
+	r.live = make(map[*grokACPProc]struct{})
+	root := r.isolationRoot
+	r.isolationRoot = ""
+	r.mu.Unlock()
+	if idle != nil {
+		idle.stop()
+	}
+	for proc := range live {
+		proc.stop()
+	}
+	if root != "" {
+		_ = os.RemoveAll(root)
 	}
 }
 
