@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Nebutra/carina/go/localruntime"
+	"github.com/Nebutra/carina/go/product"
 	"github.com/Nebutra/carina/go/rpc"
 )
 
@@ -504,6 +505,46 @@ func TestConnectOrStartDoesNotReplaceIncompatibleRuntimeWithObligations(t *testi
 	}
 	if spawns != 0 {
 		t.Fatalf("active incompatible runtime triggered %d spawn(s)", spawns)
+	}
+}
+
+func TestRuntimeBinaryVersionMismatchIgnoresEmptyAndCurrent(t *testing.T) {
+	spec := runtimeSpecFixture(t)
+	current := matchingDescription(spec)
+	current.BinaryVersion = product.Version
+	if mismatch := runtimeBinaryVersionMismatch(current, product.Version); mismatch != nil {
+		t.Fatalf("current version treated as stale: %v", mismatch)
+	}
+	if mismatch := runtimeBinaryVersionMismatch(matchingDescription(spec), ""); mismatch != nil {
+		t.Fatalf("unknown version treated as stale: %v", mismatch)
+	}
+	stale := matchingDescription(spec)
+	mismatch := runtimeBinaryVersionMismatch(stale, "0.0.1")
+	if mismatch == nil || mismatch.Observed != "0.0.1" || mismatch.Expected != product.Version {
+		t.Fatalf("mismatch=%+v", mismatch)
+	}
+}
+
+func TestConnectOrStartDoesNotReplaceVersionMismatchWithObligations(t *testing.T) {
+	spec := runtimeSpecFixture(t)
+	description := matchingDescription(spec)
+	description.Obligations = []string{"execution:run_active"}
+	origDial, origSpawn, origHandshake := Dial, SpawnRuntime, RuntimeHandshake
+	t.Cleanup(func() { Dial, SpawnRuntime, RuntimeHandshake = origDial, origSpawn, origHandshake })
+	Dial = func(string) (*rpc.Client, error) { return &rpc.Client{}, nil }
+	spawns := 0
+	SpawnRuntime = func(localruntime.Spec) error { spawns++; return nil }
+	RuntimeHandshake = func(*rpc.Client, localruntime.Spec) (RuntimeDescription, error) {
+		return RuntimeDescription{}, &RuntimeVersionMismatchError{
+			Description: description, Observed: "0.0.1", Expected: product.Version,
+		}
+	}
+
+	if _, _, err := ConnectOrStart(spec); err == nil || !strings.Contains(err.Error(), "active obligations") || !strings.Contains(err.Error(), "0.0.1") {
+		t.Fatalf("ConnectOrStart error = %v, want retained version diagnosis", err)
+	}
+	if spawns != 0 {
+		t.Fatalf("active version-stale runtime triggered %d spawn(s)", spawns)
 	}
 }
 

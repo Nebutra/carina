@@ -1833,6 +1833,13 @@ fn humanize_failure_reason(reason: &str) -> String {
     {
         return "The model stream stopped before finishing. Not auto-retried. Check the proxy and network, then retry explicitly if needed.".into();
     }
+    if lower.contains("model cache")
+        || lower.contains("non-session model")
+        || lower.contains("oauth-scoped")
+        || lower.contains("local model snapshot")
+    {
+        return "Grok's local model snapshot could not be used in isolation. Run `grok login`, then retry. This is not a network problem.".into();
+    }
     if lower.contains("modelrouter")
         || lower.starts_with("reasoner error:")
         || lower.starts_with("reasoner failed:")

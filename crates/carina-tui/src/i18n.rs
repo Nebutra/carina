@@ -831,6 +831,7 @@ pub enum MessageId {
     FailureReasonGrokNativeTool,
     FailureReasonGrokDoctor,
     FailureReasonGrokIsolation,
+    FailureReasonGrokModelCache,
     FailureReasonPolicyProfile,
     FailureReasonOutputSchema,
     FailureReasonInvalidActions,
@@ -1534,6 +1535,7 @@ impl MessageId {
         Self::FailureReasonGrokNativeTool,
         Self::FailureReasonGrokDoctor,
         Self::FailureReasonGrokIsolation,
+        Self::FailureReasonGrokModelCache,
         Self::FailureReasonPolicyProfile,
         Self::FailureReasonOutputSchema,
         Self::FailureReasonInvalidActions,
@@ -1884,7 +1886,9 @@ pub fn localize_compact_cell_body(locale: Locale, body: &str) -> String {
     } else {
         return trimmed.to_owned();
     };
-    let removed = compact_body_number(trimmed, "turns").unwrap_or(0).to_string();
+    let removed = compact_body_number(trimmed, "turns")
+        .unwrap_or(0)
+        .to_string();
     let (before, after) = compact_body_span(trimmed);
     format(
         locale,
@@ -1977,18 +1981,31 @@ pub fn localize_operator_failure_reason(locale: Locale, reason: &str) -> String 
         || lower.contains("unsafe settings")
     {
         MessageId::FailureReasonGrokIsolation
+    } else if lower.contains("model cache")
+        || lower.contains("non-session model")
+        || lower.contains("oauth-scoped")
+        || lower.contains("local model snapshot")
+    {
+        MessageId::FailureReasonGrokModelCache
     } else if lower.contains("modelrouter")
         || lower.starts_with("reasoner error:")
         || lower.starts_with("reasoner failed:")
         || lower.contains("could not complete this turn")
     {
-        if let Some(rest) = trailing_operator_clause(trimmed, "The model could not complete this turn")
+        if let Some(rest) =
+            trailing_operator_clause(trimmed, "The model could not complete this turn")
         {
             let rest_l = rest.to_ascii_lowercase();
             if rest_l.contains("check the provider and network") {
                 MessageId::FailureReasonGenericTurn
             } else if rest_l.contains("unsafe settings") || rest_l.contains("isolated grok") {
                 MessageId::FailureReasonGrokIsolation
+            } else if rest_l.contains("model cache")
+                || rest_l.contains("non-session model")
+                || rest_l.contains("oauth-scoped")
+                || rest_l.contains("local model snapshot")
+            {
+                MessageId::FailureReasonGrokModelCache
             } else if generic_grok_update_clause(&rest_l)
                 || rest_l.contains("update grok")
                 || rest_l.contains("grok doctor")
@@ -2013,8 +2030,7 @@ pub fn localize_operator_failure_reason(locale: Locale, reason: &str) -> String 
         || lower.contains("risk level")
     {
         MessageId::FailureReasonPolicyProfile
-    } else if lower.contains("never matched the required schema")
-        || lower.contains("output schema")
+    } else if lower.contains("never matched the required schema") || lower.contains("output schema")
     {
         MessageId::FailureReasonOutputSchema
     } else if lower.contains("invalid actions") {
@@ -2039,7 +2055,7 @@ pub fn localize_tool_status(locale: Locale, status: &str) -> String {
         "pending" | "requested" => MessageId::StatusQueued,
         "running" | "started" => MessageId::StatusRunning,
         "rolled back" | "rolled_back" => {
-            return text(locale, MessageId::StatusCancelled).to_owned()
+            return text(locale, MessageId::StatusCancelled).to_owned();
         }
         "" => return String::new(),
         _ => return status.to_owned(),
@@ -4625,17 +4641,17 @@ fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
             "Previsualizar y elegir símbolos del terminal",
             "Prévisualiser et choisir les symboles du terminal",
         ],
-        Theme => [
-            "Theme", "主题", "主題", "テーマ", "테마", "Tema", "Thème",
-        ],
-        ThemeAuto => [
-            "Auto", "自动", "自動", "自動", "자동", "Auto", "Auto",
-        ],
-        ThemeDark => [
-            "Dark", "深色", "深色", "ダーク", "다크", "Oscuro", "Sombre",
-        ],
+        Theme => ["Theme", "主题", "主題", "テーマ", "테마", "Tema", "Thème"],
+        ThemeAuto => ["Auto", "自动", "自動", "自動", "자동", "Auto", "Auto"],
+        ThemeDark => ["Dark", "深色", "深色", "ダーク", "다크", "Oscuro", "Sombre"],
         ThemeLight => [
-            "Light", "浅色", "淺色", "ライト", "라이트", "Claro", "Clair",
+            "Light",
+            "浅色",
+            "淺色",
+            "ライト",
+            "라이트",
+            "Claro",
+            "Clair",
         ],
         ThemeAutoDetail => [
             "Follow the terminal background",
@@ -5144,7 +5160,13 @@ fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
             "Impossible de répondre à l’aparté : {error}",
         ],
         BtwTitle => [
-            "Aside", "旁问", "旁問", "傍ら", "옆질문", "Aparte", "Aparté",
+            "Aside",
+            "旁问",
+            "旁問",
+            "傍ら",
+            "옆질문",
+            "Aparte",
+            "Aparté",
         ],
         BtwEphemeralHint => [
             "Not added to the run. Esc closes.",
@@ -7718,6 +7740,15 @@ fn extended(locale: Locale, id: MessageId) -> Option<&'static str> {
             "Grok Build no pudo iniciar una sesión aislada. Cambia de modelo o mira Detalles.",
             "Grok Build n’a pas pu démarrer une session isolée. Changez de modèle, ou voyez les détails.",
         ],
+        FailureReasonGrokModelCache => [
+            "Grok's local model snapshot could not be used in isolation. Run `grok login`, then retry. This is not a network problem.",
+            "Grok 的本地模型缓存不能用于隔离会话。请运行 `grok login` 后重试。这不是网络问题。",
+            "Grok 的本地模型快取不能用於隔離會話。請執行 `grok login` 後重試。這不是網路問題。",
+            "Grok のローカルモデルキャッシュは隔離セッションで使えません。`grok login` のあと再試行してください。ネットワークの問題ではありません。",
+            "Grok 로컬 모델 스냅샷을 격리 세션에 쓸 수 없습니다. `grok login` 후 다시 시도하세요. 네트워크 문제가 아닙니다.",
+            "La instantánea local de modelos de Grok no se pudo usar en aislamiento. Ejecuta `grok login` y reintenta. No es un problema de red.",
+            "L’instantané local des modèles Grok n’a pas pu servir en isolation. Lancez `grok login`, puis réessayez. Ce n’est pas un problème réseau.",
+        ],
         FailureReasonOutputSchema => [
             "The final answer was not valid JSON for this run. Retry, or ask again without a required output schema.",
             "最终回答不符合这次运行要求的 JSON。请重试，或在不要求输出 schema 的情况下再问一次。",
@@ -8229,26 +8260,52 @@ mod tests {
         );
         assert!(schema.contains("JSON"), "schema={schema}");
         assert_ne!(schema, "final output never matched the required schema");
-        let invalid = localize_operator_failure_reason(
-            Locale::ZhHans,
-            "model kept emitting invalid actions",
+        let invalid =
+            localize_operator_failure_reason(Locale::ZhHans, "model kept emitting invalid actions");
+        assert!(
+            invalid.contains("探索") || invalid.contains("回答"),
+            "invalid={invalid}"
         );
-        assert!(invalid.contains("探索") || invalid.contains("回答"), "invalid={invalid}");
         assert!(!invalid.contains("invalid actions"), "invalid={invalid}");
         let grok_tool = localize_operator_failure_reason(
             Locale::ZhHans,
             "The model tried to call a tool instead of finishing the turn. Retry the same question.",
         );
-        assert!(grok_tool.contains("工具") || grok_tool.contains("JSON"), "grok_tool={grok_tool}");
-        assert!(!grok_tool.contains("could not complete"), "grok_tool={grok_tool}");
+        assert!(
+            grok_tool.contains("工具") || grok_tool.contains("JSON"),
+            "grok_tool={grok_tool}"
+        );
+        assert!(
+            !grok_tool.contains("could not complete"),
+            "grok_tool={grok_tool}"
+        );
         let grok_doctor = localize_operator_failure_reason(
             Locale::ZhHans,
             "The model could not complete this turn. run `grok doctor`, then refresh Providers.",
         );
-        assert!(grok_doctor.contains("grok doctor"), "grok_doctor={grok_doctor}");
+        assert!(
+            grok_doctor.contains("grok doctor"),
+            "grok_doctor={grok_doctor}"
+        );
         assert_ne!(
             grok_doctor,
             text(Locale::ZhHans, MessageId::FailureReasonGenericTurn)
+        );
+        let grok_cache = localize_operator_failure_reason(
+            Locale::ZhHans,
+            "The model could not complete this turn. Grok Build model cache contains a non-session model. choose another model, or see Details.",
+        );
+        assert!(
+            grok_cache.contains("缓存") || grok_cache.contains("隔离"),
+            "grok_cache={grok_cache}"
+        );
+        assert!(
+            grok_cache.contains("grok login") && grok_cache.contains("不是网络"),
+            "grok_cache={grok_cache}"
+        );
+        assert!(
+            !grok_cache.contains("检查服务商与网络"),
+            "grok_cache={grok_cache}"
         );
         let grok_detail = localize_operator_failure_reason(
             Locale::ZhHans,
@@ -8280,7 +8337,10 @@ mod tests {
             "The model provider was temporarily unavailable. retry or choose another provider.",
         );
         assert!(unavailable.contains("不可用"), "unavailable={unavailable}");
-        assert!(!unavailable.contains("temporarily unavailable"), "unavailable={unavailable}");
+        assert!(
+            !unavailable.contains("temporarily unavailable"),
+            "unavailable={unavailable}"
+        );
     }
 
     #[test]
@@ -8465,11 +8525,7 @@ mod tests {
                 assert!(!text(locale, id).trim().is_empty(), "{locale:?} {id:?}");
             }
 
-            let requested = format(
-                locale,
-                MessageId::ThemeRequested,
-                &[("preference", "AUTO")],
-            );
+            let requested = format(locale, MessageId::ThemeRequested, &[("preference", "AUTO")]);
             let effective = format(locale, MessageId::ThemeEffective, &[("polarity", "DARK")]);
             let applied = format(
                 locale,

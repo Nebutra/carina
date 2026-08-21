@@ -40,7 +40,7 @@ const cliVersion = product.Version
 const usage = `carina — command-line client for the Carina Harness
 
 Usage:
-  carina [options]                 interactive TUI (TTY; auto-starts daemon)
+  carina [options]                 interactive TUI (TTY; auto-starts or replaces idle daemon)
   carina <command> [arguments]     governed CLI
 
 Interactive shell (only entry):

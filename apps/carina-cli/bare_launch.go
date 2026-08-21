@@ -174,8 +174,7 @@ func prepareRustUILaunch(opts interactiveOptions) (rustUILaunch, error) {
 		}
 		client, description, connectErr := connectOrStartRuntime(resolution.Spec)
 		if connectErr != nil {
-			var compatibility *localdaemon.RuntimeCompatibilityError
-			if errors.As(connectErr, &compatibility) {
+			if compatibility := runtimeConnectDiagnostic(connectErr); compatibility != nil {
 				return rustUILaunch{
 					Binary: uiBinary,
 					Args: buildRuntimeDiagnosticArgs(
@@ -309,6 +308,21 @@ func buildRustUIArgs(opts interactiveOptions, socket, workspace, locale, localeP
 		args = append(args, "--theme-path", themePath)
 	}
 	return appendTerminalArgs(args, opts, altScreen)
+}
+
+func runtimeConnectDiagnostic(err error) *localdaemon.RuntimeCompatibilityError {
+	var compatibility *localdaemon.RuntimeCompatibilityError
+	if errors.As(err, &compatibility) {
+		return compatibility
+	}
+	var version *localdaemon.RuntimeVersionMismatchError
+	if errors.As(err, &version) {
+		return &localdaemon.RuntimeCompatibilityError{
+			Description:    version.Description,
+			MissingMethods: []string{version.Error()},
+		}
+	}
+	return nil
 }
 
 func connectOrStartRuntime(spec localruntime.Spec) (*rpcClient, localdaemon.RuntimeDescription, error) {

@@ -11,10 +11,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/Nebutra/carina/go/localruntime"
+	"github.com/Nebutra/carina/go/product"
 	"github.com/Nebutra/carina/go/rpc"
 )
 
@@ -73,6 +75,7 @@ type RuntimeDescription struct {
 	StateDir          string            `json:"state_dir"`
 	RuntimeDir        string            `json:"runtime_dir"`
 	ConfigFingerprint string            `json:"config_fingerprint"`
+	BinaryVersion     string            `json:"binary_version,omitempty"`
 	Lifecycle         string            `json:"lifecycle"`
 	ConfigSources     map[string]string `json:"config_sources,omitempty"`
 	Connections       int               `json:"connections,omitempty"`
@@ -115,6 +118,19 @@ func (e *RuntimeConfigurationMismatchError) Error() string {
 		message += ": refresh failed: " + e.RefreshError.Error()
 	}
 	return message
+}
+
+// RuntimeVersionMismatchError identifies a correctly owned workspace runtime
+// whose product binary is not this client. Bare `carina` may replace an idle
+// owned process; it must not silently attach to yesterday's daemon.
+type RuntimeVersionMismatchError struct {
+	Description RuntimeDescription
+	Observed    string
+	Expected    string
+}
+
+func (e *RuntimeVersionMismatchError) Error() string {
+	return fmt.Sprintf("runtime is Carina %s; this client is %s", e.Observed, e.Expected)
 }
 
 // Connect dials and validates a runtime without starting it.
@@ -161,6 +177,7 @@ func ConnectOrStart(spec localruntime.Spec) (*rpc.Client, RuntimeDescription, er
 	}
 	var compatibility *RuntimeCompatibilityError
 	var configuration *RuntimeConfigurationMismatchError
+	var versionMismatch *RuntimeVersionMismatchError
 	switch {
 	case errors.As(err, &compatibility):
 		description = compatibility.Description
@@ -172,12 +189,17 @@ func ConnectOrStart(spec localruntime.Spec) (*rpc.Client, RuntimeDescription, er
 		if len(description.Obligations) > 0 {
 			return nil, RuntimeDescription{}, fmt.Errorf("runtime configuration refresh deferred while active obligations remain: %v: %w", description.Obligations, configuration)
 		}
+	case errors.As(err, &versionMismatch):
+		description = versionMismatch.Description
+		if len(description.Obligations) > 0 {
+			return nil, RuntimeDescription{}, fmt.Errorf("runtime upgrade deferred while active obligations remain: %v: %w", description.Obligations, versionMismatch)
+		}
 	default:
 		if !errors.Is(err, rpc.ErrDaemonUnreachable) {
 			return nil, RuntimeDescription{}, err
 		}
 	}
-	if compatibility != nil || configuration != nil {
+	if compatibility != nil || configuration != nil || versionMismatch != nil {
 		if _, stopErr := StopRuntime(spec, false); stopErr != nil {
 			return nil, RuntimeDescription{}, fmt.Errorf("replace stale workspace runtime: %w", stopErr)
 		}
@@ -243,8 +265,9 @@ func runtimeHandshake(client *rpc.Client, spec localruntime.Spec) (RuntimeDescri
 		return RuntimeDescription{}, err
 	}
 	var initialized struct {
-		Runtime      RuntimeDescription `json:"runtime"`
-		Capabilities struct {
+		RuntimeVersion string             `json:"runtime_version"`
+		Runtime        RuntimeDescription `json:"runtime"`
+		Capabilities   struct {
 			RPCMethods []string `json:"rpc_methods"`
 		} `json:"capabilities"`
 	}
@@ -270,7 +293,23 @@ func runtimeHandshake(client *rpc.Client, spec localruntime.Spec) (RuntimeDescri
 			MissingMethods: missing,
 		}
 	}
+	if mismatch := runtimeBinaryVersionMismatch(initialized.Runtime, initialized.RuntimeVersion); mismatch != nil {
+		return RuntimeDescription{}, mismatch
+	}
 	return refreshRuntimeConfiguration(client, spec, initialized.Runtime)
+}
+
+func runtimeBinaryVersionMismatch(description RuntimeDescription, observed string) *RuntimeVersionMismatchError {
+	observed = strings.TrimSpace(observed)
+	if observed == "" {
+		observed = strings.TrimSpace(description.BinaryVersion)
+	}
+	expected := strings.TrimSpace(product.Version)
+	if observed == "" || expected == "" || observed == expected {
+		return nil
+	}
+	description.BinaryVersion = observed
+	return &RuntimeVersionMismatchError{Description: description, Observed: observed, Expected: expected}
 }
 
 func refreshRuntimeConfiguration(client *rpc.Client, spec localruntime.Spec, description RuntimeDescription) (RuntimeDescription, error) {

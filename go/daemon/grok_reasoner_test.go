@@ -233,41 +233,69 @@ func TestCopySanitizedGrokModelsCacheRejectsCredentialBearingModel(t *testing.T)
 			"info":{"base_url":"https://cli-chat-proxy.grok.com/v1","auth_scheme":"bearer","api_backend":"responses","id":"grok-4.6","model":"grok-4.6","extra_headers":{},"refresh_token":"must-not-survive"}
 		}}
 	}`)
-	if err := copySanitizedGrokModelsCache(home, authPath); err == nil {
-		t.Fatal("credential-bearing model cache must be rejected")
+	if err := copySanitizedGrokModelsCache(home, authPath); !errors.Is(err, errGrokModelsCacheUnusable) {
+		t.Fatalf("credential-bearing model cache err=%v, want unusable", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "models_cache.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("credential-bearing snapshot must not be copied into isolation")
+	}
+	if _, err := prepareGrokIsolation(home, authPath); err != nil {
+		t.Fatalf("credential-bearing snapshot must not block isolation: %v", err)
 	}
 }
 
-func TestCopySanitizedGrokModelsCacheRejectsUnknownMetadataAndVersionMismatch(t *testing.T) {
-	for _, test := range []struct {
-		name            string
-		version         string
-		extraInfo       string
-		expectedVersion string
-	}{
-		{name: "unknown metadata", version: "1.0.3", extraInfo: `,"futureCapability":false`, expectedVersion: "1.0.3"},
-		{name: "version mismatch", version: "1.0.2", expectedVersion: "1.0.3"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			home := t.TempDir()
-			authDir := t.TempDir()
-			authPath := filepath.Join(authDir, "auth.json")
-			writeOwnerOnlyFile(t, authPath, `{}`)
-			writeOwnerOnlyFile(t, filepath.Join(authDir, "models_cache.json"), `{
-				"fetched_at":`+strconv.Quote(time.Now().UTC().Format(time.RFC3339Nano))+`,
-				"grok_version":`+strconv.Quote(test.version)+`,
-				"auth_method":"session",
-				"origin":"https://cli-chat-proxy.grok.com/v1/models",
-				"models":{"grok-4.6":{
-					"api_base_url":null,"api_key":null,"env_key":null,
-					"info":{"base_url":"https://cli-chat-proxy.grok.com/v1","auth_scheme":"bearer","api_backend":"responses","id":"grok-4.6","model":"grok-4.6","extra_headers":{}`+test.extraInfo+`}
-				}}
-			}`)
-			if err := copySanitizedGrokModelsCacheForVersion(home, authPath, test.expectedVersion); err == nil {
-				t.Fatal("unsafe model cache was accepted")
-			}
-		})
-	}
+func TestCopySanitizedGrokModelsCacheStripsUnknownMetadataAndSkipsVersionMismatch(t *testing.T) {
+	t.Run("unknown metadata", func(t *testing.T) {
+		home := t.TempDir()
+		authDir := t.TempDir()
+		authPath := filepath.Join(authDir, "auth.json")
+		writeOwnerOnlyFile(t, authPath, `{}`)
+		writeOwnerOnlyFile(t, filepath.Join(authDir, "models_cache.json"), `{
+			"fetched_at":`+strconv.Quote(time.Now().UTC().Format(time.RFC3339Nano))+`,
+			"grok_version":"1.0.3",
+			"auth_method":"session",
+			"origin":"https://cli-chat-proxy.grok.com/v1/models",
+			"models":{"grok-4.6":{
+				"api_base_url":null,"api_key":null,"env_key":null,
+				"info":{"base_url":"https://cli-chat-proxy.grok.com/v1","auth_scheme":"bearer","api_backend":"responses","id":"grok-4.6","model":"grok-4.6","extra_headers":{},"futureCapability":false}
+			}}
+		}`)
+		if err := copySanitizedGrokModelsCacheForVersion(home, authPath, "1.0.3"); err != nil {
+			t.Fatalf("unknown public metadata must be stripped, not block isolation: %v", err)
+		}
+		cache := readTestFile(t, filepath.Join(home, "models_cache.json"))
+		if strings.Contains(cache, "futureCapability") {
+			t.Fatalf("unknown field leaked into isolation: %s", cache)
+		}
+		if !strings.Contains(cache, `"grok-4.6"`) {
+			t.Fatalf("official model dropped: %s", cache)
+		}
+	})
+	t.Run("version mismatch", func(t *testing.T) {
+		home := t.TempDir()
+		authDir := t.TempDir()
+		authPath := filepath.Join(authDir, "auth.json")
+		writeOwnerOnlyFile(t, authPath, `{}`)
+		writeOwnerOnlyFile(t, filepath.Join(authDir, "models_cache.json"), `{
+			"fetched_at":`+strconv.Quote(time.Now().UTC().Format(time.RFC3339Nano))+`,
+			"grok_version":"1.0.2",
+			"auth_method":"session",
+			"origin":"https://cli-chat-proxy.grok.com/v1/models",
+			"models":{"grok-4.6":{
+				"api_base_url":null,"api_key":null,"env_key":null,
+				"info":{"base_url":"https://cli-chat-proxy.grok.com/v1","auth_scheme":"bearer","api_backend":"responses","id":"grok-4.6","model":"grok-4.6","extra_headers":{}}
+			}}
+		}`)
+		if err := copySanitizedGrokModelsCacheForVersion(home, authPath, "1.0.3"); !errors.Is(err, errGrokModelsCacheUnusable) {
+			t.Fatalf("version mismatch err=%v, want unusable", err)
+		}
+		if _, err := prepareGrokIsolationForVersion(home, authPath, "1.0.3"); err != nil {
+			t.Fatalf("version-mismatched snapshot must not block isolation: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(home, "models_cache.json")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("mismatched snapshot must not be copied")
+		}
+	})
 }
 
 func TestCopySanitizedGrokModelsCacheRejectsNonOfficialRoutes(t *testing.T) {
@@ -289,10 +317,49 @@ func TestCopySanitizedGrokModelsCacheRejectsNonOfficialRoutes(t *testing.T) {
 				"etag":"public-etag",
 				"models":{"grok-4.6":{"api_base_url":null}}
 			}`)
-			if err := copySanitizedGrokModelsCache(home, authPath); err == nil {
-				t.Fatal("non-official model route must be rejected")
+			if err := copySanitizedGrokModelsCache(home, authPath); !errors.Is(err, errGrokModelsCacheUnusable) {
+				t.Fatalf("non-official origin err=%v, want unusable", err)
+			}
+			if _, err := prepareGrokIsolation(home, authPath); err != nil {
+				t.Fatalf("non-official snapshot must not block isolation: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(home, "models_cache.json")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("non-official snapshot must not be copied")
 			}
 		})
+	}
+}
+
+func TestPrepareGrokIsolationKeepsOfficialModelWhenSiblingIsUnusable(t *testing.T) {
+	home := t.TempDir()
+	authDir := t.TempDir()
+	authPath := filepath.Join(authDir, "auth.json")
+	writeOwnerOnlyFile(t, authPath, `{}`)
+	writeOwnerOnlyFile(t, filepath.Join(authDir, "models_cache.json"), `{
+		"fetched_at":`+strconv.Quote(time.Now().UTC().Format(time.RFC3339Nano))+`,
+		"grok_version":"1.0.3",
+		"auth_method":"session",
+		"origin":"https://cli-chat-proxy.grok.com/v1/models",
+		"models":{
+			"grok-4.6":{
+				"api_base_url":null,"api_key":null,"env_key":null,
+				"info":{"base_url":"https://cli-chat-proxy.grok.com/v1","auth_scheme":"bearer","api_backend":"responses","id":"grok-4.6","model":"grok-4.6","extra_headers":{},"futureCapability":true}
+			},
+			"grok-leak":{
+				"api_base_url":null,"api_key":null,"env_key":null,
+				"info":{"base_url":"https://cli-chat-proxy.grok.com/v1","auth_scheme":"bearer","api_backend":"responses","id":"grok-leak","model":"grok-leak","extra_headers":{},"refresh_token":"must-not-survive"}
+			}
+		}
+	}`)
+	if _, err := prepareGrokIsolation(home, authPath); err != nil {
+		t.Fatalf("usable official model must still isolate: %v", err)
+	}
+	cache := readTestFile(t, filepath.Join(home, "models_cache.json"))
+	if strings.Contains(cache, "refresh_token") || strings.Contains(cache, "grok-leak") || strings.Contains(cache, "futureCapability") {
+		t.Fatalf("unusable sibling leaked: %s", cache)
+	}
+	if !strings.Contains(cache, `"grok-4.6"`) {
+		t.Fatalf("official model dropped: %s", cache)
 	}
 }
 

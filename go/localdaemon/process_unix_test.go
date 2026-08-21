@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Nebutra/carina/go/localruntime"
+	"github.com/Nebutra/carina/go/product"
 	"github.com/Nebutra/carina/go/rpc"
 )
 
@@ -130,6 +131,75 @@ func TestConnectOrStartReplacesOwnedIdleIncompatibleRuntime(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("old incompatible runtime was not stopped")
+	}
+}
+
+func TestConnectOrStartReplacesOwnedIdleVersionMismatch(t *testing.T) {
+	spec, child, executable := stopRuntimeProcessFixture(t)
+	oldDescription := matchingDescription(spec)
+	oldDescription.PID = child.Process.Pid
+	oldDescription.BinaryVersion = "0.0.1"
+	writeStopRuntimeOwner(t, spec, oldDescription, executable)
+
+	var phase atomic.Int32
+	done := make(chan error, 1)
+	go func() {
+		done <- child.Wait()
+		phase.Store(1)
+	}()
+	origDial, origSpawn, origHandshake, origDescribe, origDeadline := Dial, SpawnRuntime, RuntimeHandshake, RuntimeDescribe, ReachableDeadline
+	t.Cleanup(func() {
+		Dial, SpawnRuntime, RuntimeHandshake, RuntimeDescribe, ReachableDeadline = origDial, origSpawn, origHandshake, origDescribe, origDeadline
+	})
+	ReachableDeadline = 2 * time.Second
+	Dial = func(string) (*rpc.Client, error) {
+		if phase.Load() == 1 {
+			return nil, rpc.ErrDaemonUnreachable
+		}
+		return &rpc.Client{}, nil
+	}
+	RuntimeDescribe = func(*rpc.Client, localruntime.Spec) (RuntimeDescription, error) {
+		return oldDescription, nil
+	}
+	RuntimeHandshake = func(*rpc.Client, localruntime.Spec) (RuntimeDescription, error) {
+		if phase.Load() < 2 {
+			return RuntimeDescription{}, &RuntimeVersionMismatchError{
+				Description: oldDescription, Observed: "0.0.1", Expected: product.Version,
+			}
+		}
+		current := oldDescription
+		current.PID = 5252
+		current.Epoch = "runtime_current"
+		current.BinaryVersion = product.Version
+		return current, nil
+	}
+	spawns := 0
+	SpawnRuntime = func(got localruntime.Spec) error {
+		spawns++
+		current := oldDescription
+		current.PID = 5252
+		current.Epoch = "runtime_current"
+		current.BinaryVersion = product.Version
+		writeStopRuntimeOwner(t, got, current, executable)
+		phase.Store(2)
+		return nil
+	}
+
+	client, description, err := ConnectOrStart(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = client.Close()
+	if spawns != 1 || description.Epoch != "runtime_current" || description.BinaryVersion != product.Version {
+		t.Fatalf("replacement spawns=%d description=%+v", spawns, description)
+	}
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "signal") {
+			t.Fatalf("old runtime exit = %v, want SIGTERM", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("old version-stale runtime was not stopped")
 	}
 }
 

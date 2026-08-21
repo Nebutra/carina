@@ -39,10 +39,16 @@ var grokACPBaselineCommands = []string{"always-approve", "compact", "context", "
 var (
 	errGrokModelsCacheStale      = errors.New("Grok Build model cache is stale")
 	errGrokModelsCacheUnreadable = errors.New("Grok Build model cache is unreadable")
+	errGrokModelsCacheUnusable   = errors.New("Grok Build model cache is unusable")
 )
 
-func grokModelsCacheOptional(err error) bool {
-	return errors.Is(err, errGrokModelsCacheStale) || errors.Is(err, errGrokModelsCacheUnreadable)
+var grokBuildModelInfoFields = []string{
+	"id", "model", "base_url", "name", "description", "max_completion_tokens", "temperature", "top_p",
+	"api_backend", "auth_scheme", "extra_headers", "query_params", "env_http_headers", "context_window",
+	"auto_compact_threshold_percent", "system_prompt_label", "use_concise", "agent_type",
+	"inference_idle_timeout_secs", "max_retries", "hidden", "supported_in_api", "reasoning_effort",
+	"supports_reasoning_effort", "reasoning_efforts", "supports_backend_search", "compactions_remaining",
+	"compaction_at_tokens", "show_model_fingerprint", "stream_tool_calls", "laziness_detector",
 }
 
 type grokCLIReasoner struct {
@@ -537,11 +543,7 @@ func prepareGrokIsolationForVersion(isolatedHome, authPath, expectedVersion stri
 	if err := os.Chmod(configPath, 0o600); err != nil {
 		return "", err
 	}
-	if err := copySanitizedGrokModelsCacheForVersion(isolatedHome, authPath, expectedVersion); err != nil {
-		if !grokModelsCacheOptional(err) {
-			return "", err
-		}
-	}
+	_ = copySanitizedGrokModelsCacheForVersion(isolatedHome, authPath, expectedVersion)
 	bundleDir := filepath.Join(isolatedHome, "bundled")
 	if err := os.MkdirAll(bundleDir, 0o700); err != nil {
 		return "", err
@@ -567,7 +569,7 @@ func copySanitizedGrokModelsCacheForVersion(isolatedHome, authPath, expectedVers
 		return nil
 	}
 	if err != nil {
-		return err
+		return errGrokModelsCacheUnreadable
 	}
 	defer file.Close()
 	const cacheLimit = 1 << 20
@@ -575,25 +577,29 @@ func copySanitizedGrokModelsCacheForVersion(isolatedHome, authPath, expectedVers
 	if err != nil || len(raw) > cacheLimit {
 		return errGrokModelsCacheUnreadable
 	}
-	var cache map[string]json.RawMessage
-	if json.Unmarshal(raw, &cache) != nil {
-		return errors.New("Grok Build model cache is invalid")
+	cache, ok := decodeGrokACPExactObject(raw)
+	if !ok {
+		return errGrokModelsCacheUnusable
 	}
-	if !grokACPObjectShape(cache,
-		[]string{"fetched_at", "grok_version", "auth_method", "origin", "models"},
-		[]string{"etag"}) {
-		return errors.New("Grok Build model cache has an unknown field")
+	for key, value := range cache {
+		var child any
+		if json.Unmarshal(value, &child) != nil {
+			return errGrokModelsCacheUnusable
+		}
+		if grokCacheSecretKey(key) && grokCacheValuePresent(child) {
+			return errGrokModelsCacheUnusable
+		}
 	}
 	var authMethod, version, fetchedAt, origin string
 	if json.Unmarshal(cache["auth_method"], &authMethod) != nil || authMethod != "session" ||
 		json.Unmarshal(cache["grok_version"], &version) != nil || strings.TrimSpace(version) == "" {
-		return errors.New("Grok Build model cache is not OAuth-scoped")
+		return errGrokModelsCacheUnusable
 	}
 	if expectedVersion != "" && version != expectedVersion {
-		return errors.New("Grok Build model cache version does not match the running CLI")
+		return errGrokModelsCacheUnusable
 	}
 	if json.Unmarshal(cache["fetched_at"], &fetchedAt) != nil {
-		return errors.New("Grok Build model cache is stale")
+		return errGrokModelsCacheStale
 	}
 	fetchedTime, parseErr := time.Parse(time.RFC3339Nano, fetchedAt)
 	now := time.Now().UTC()
@@ -601,36 +607,66 @@ func copySanitizedGrokModelsCacheForVersion(isolatedHome, authPath, expectedVers
 		return errGrokModelsCacheStale
 	}
 	if json.Unmarshal(cache["origin"], &origin) != nil || origin != "https://cli-chat-proxy.grok.com/v1/models" {
-		return errors.New("Grok Build model cache has an unexpected origin")
+		return errGrokModelsCacheUnusable
+	}
+	modelsRaw, ok := cache["models"]
+	if !ok {
+		return errGrokModelsCacheUnusable
 	}
 	var models map[string]json.RawMessage
-	if json.Unmarshal(cache["models"], &models) != nil || len(models) == 0 {
-		return errors.New("Grok Build model cache has no models")
+	if json.Unmarshal(modelsRaw, &models) != nil || len(models) == 0 {
+		return errGrokModelsCacheUnusable
 	}
-	for id, rawEntry := range models {
-		if !providerModelIDSafe(id) {
-			return errors.New("Grok Build model cache has an invalid model")
+	order := jsonObjectKeyOrder(modelsRaw)
+	if len(order) == 0 {
+		for id := range models {
+			order = append(order, id)
 		}
-		var entry map[string]json.RawMessage
-		if json.Unmarshal(rawEntry, &entry) != nil || !grokACPObjectKeyShape(entry,
-			[]string{"api_base_url", "api_key", "env_key", "info"}, []string{"auth_provider"}) ||
-			rawJSONPresent(entry["api_base_url"]) || rawJSONPresent(entry["api_key"]) || rawJSONPresent(entry["env_key"]) {
-			return errors.New("Grok Build model cache has an invalid model route")
-		}
-		if authProvider, exists := entry["auth_provider"]; exists && rawJSONPresent(authProvider) {
-			return errors.New("Grok Build model cache has an invalid auth provider")
-		}
-		var info map[string]json.RawMessage
-		if json.Unmarshal(entry["info"], &info) != nil || !grokBuildModelInfoOfficial(info, id) || grokCacheContainsCredential(info) {
-			return errors.New("Grok Build model cache contains a non-session model")
-		}
+		sort.Strings(order)
 	}
-	cache["fetched_at"], err = json.Marshal(now.Format(time.RFC3339Nano))
+	kept := make(map[string]json.RawMessage, len(models))
+	keptOrder := make([]string, 0, len(models))
+	for _, id := range order {
+		rawEntry, exists := models[id]
+		if !exists {
+			continue
+		}
+		sanitized, ok := sanitizeGrokCacheModel(id, rawEntry)
+		if !ok {
+			continue
+		}
+		kept[id] = sanitized
+		keptOrder = append(keptOrder, id)
+	}
+	if len(kept) == 0 {
+		return errGrokModelsCacheUnusable
+	}
+	modelsJSON, err := marshalJSONObject(keptOrder, kept)
 	if err != nil {
-		return err
+		return errGrokModelsCacheUnusable
 	}
-	sanitized, err := json.Marshal(cache)
+	fetchedJSON, err := json.Marshal(now.Format(time.RFC3339Nano))
 	if err != nil {
+		return errGrokModelsCacheUnusable
+	}
+	outKeys := []string{"fetched_at", "grok_version", "auth_method", "origin"}
+	outVals := map[string]json.RawMessage{
+		"fetched_at":   fetchedJSON,
+		"grok_version": cache["grok_version"],
+		"auth_method":  cache["auth_method"],
+		"origin":       cache["origin"],
+	}
+	if etag, ok := cache["etag"]; ok {
+		outKeys = append(outKeys, "etag")
+		outVals["etag"] = etag
+	}
+	outKeys = append(outKeys, "models")
+	outVals["models"] = modelsJSON
+	sanitized, err := marshalJSONObject(outKeys, outVals)
+	if err != nil {
+		return errGrokModelsCacheUnusable
+	}
+	if err := os.MkdirAll(isolatedHome, 0o700); err != nil {
 		return err
 	}
 	destination := filepath.Join(isolatedHome, "models_cache.json")
@@ -638,6 +674,107 @@ func copySanitizedGrokModelsCacheForVersion(isolatedHome, authPath, expectedVers
 		return err
 	}
 	return os.Chmod(destination, 0o600)
+}
+
+func sanitizeGrokCacheModel(id string, raw json.RawMessage) (json.RawMessage, bool) {
+	if !providerModelIDSafe(id) {
+		return nil, false
+	}
+	entry, ok := decodeGrokACPExactObject(raw)
+	if !ok || grokCacheContainsCredential(entry) {
+		return nil, false
+	}
+	for _, field := range []string{"api_base_url", "api_key", "env_key"} {
+		if rawJSONPresent(entry[field]) {
+			return nil, false
+		}
+	}
+	if authProvider, exists := entry["auth_provider"]; exists && rawJSONPresent(authProvider) {
+		return nil, false
+	}
+	info, ok := decodeGrokACPExactObject(entry["info"])
+	if !ok || grokCacheContainsCredential(info) {
+		return nil, false
+	}
+	cleaned := grokACPPickKeys(info, grokBuildModelInfoFields)
+	if !grokBuildModelInfoOfficial(cleaned, id) {
+		return nil, false
+	}
+	infoJSON, err := json.Marshal(cleaned)
+	if err != nil {
+		return nil, false
+	}
+	null := json.RawMessage("null")
+	out, err := marshalJSONObject([]string{"api_base_url", "api_key", "env_key", "info"}, map[string]json.RawMessage{
+		"api_base_url": null,
+		"api_key":      null,
+		"env_key":      null,
+		"info":         infoJSON,
+	})
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+func grokACPPickKeys(object map[string]json.RawMessage, keys []string) map[string]json.RawMessage {
+	out := make(map[string]json.RawMessage, len(keys))
+	for _, key := range keys {
+		if value, ok := object[key]; ok {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func jsonObjectKeyOrder(raw []byte) []string {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return nil
+	}
+	var keys []string
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return nil
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return nil
+		}
+		var skip json.RawMessage
+		if err := decoder.Decode(&skip); err != nil {
+			return nil
+		}
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func marshalJSONObject(keys []string, values map[string]json.RawMessage) ([]byte, error) {
+	var body bytes.Buffer
+	body.WriteByte('{')
+	written := 0
+	for _, key := range keys {
+		value, ok := values[key]
+		if !ok {
+			continue
+		}
+		if written > 0 {
+			body.WriteByte(',')
+		}
+		encoded, err := json.Marshal(key)
+		if err != nil {
+			return nil, err
+		}
+		body.Write(encoded)
+		body.WriteByte(':')
+		body.Write(value)
+		written++
+	}
+	body.WriteByte('}')
+	return body.Bytes(), nil
 }
 
 func providerModelIDSafe(id string) bool {
@@ -653,14 +790,7 @@ func providerModelIDSafe(id string) bool {
 }
 
 func grokBuildModelInfoOfficial(info map[string]json.RawMessage, modelID string) bool {
-	if !grokACPObjectKeyShape(info, nil, []string{
-		"id", "model", "base_url", "name", "description", "max_completion_tokens", "temperature", "top_p",
-		"api_backend", "auth_scheme", "extra_headers", "query_params", "env_http_headers", "context_window",
-		"auto_compact_threshold_percent", "system_prompt_label", "use_concise", "agent_type",
-		"inference_idle_timeout_secs", "max_retries", "hidden", "supported_in_api", "reasoning_effort",
-		"supports_reasoning_effort", "reasoning_efforts", "supports_backend_search", "compactions_remaining",
-		"compaction_at_tokens", "show_model_fingerprint", "stream_tool_calls", "laziness_detector",
-	}) {
+	if !grokACPObjectKeyShape(info, nil, grokBuildModelInfoFields) {
 		return false
 	}
 	var baseURL, authScheme, backend, id, model string

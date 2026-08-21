@@ -12,6 +12,9 @@ provenance, stable workspace/runtime IDs, and every runtime path into one
 versioned spec. `go/localdaemon` then performs atomic connect-or-start under a
 per-runtime advisory lock and accepts the endpoint only after
 `runtime.describe` plus `runtime.initialize` prove the complete identity.
+Bare `carina` is the TUI user’s restart: it auto-starts a missing daemon and
+replaces an idle owned process whose product version or config is stale.
+`carina runtime stop` remains an operator verb for logs and forced shutdown.
 
 Runtime descriptors persist after shutdown and form a passive, read-only
 registry. Owner records and sockets are ephemeral: graceful shutdown writes

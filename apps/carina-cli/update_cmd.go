@@ -386,7 +386,7 @@ func printUpdateDone(from, to string) {
 }
 
 func printUpdateRestartHint() {
-	fmt.Println("restart the current workspace runtime after active executions finish: carina runtime stop; carina")
+	fmt.Println("open carina again to use this version; if a task is still running, wait for it to finish")
 }
 
 type downloadProgress struct {

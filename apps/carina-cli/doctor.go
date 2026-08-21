@@ -466,7 +466,7 @@ func policyCheck(policy map[string]any) (chk doctorCheck, present bool) {
 		name:        "policy",
 		state:       "WARN",
 		detail:      reason,
-		remediation: "restart the current workspace runtime to apply the on-disk policy change: carina runtime stop; carina",
+		remediation: "open carina again to apply the on-disk policy change",
 	}, true
 }
 

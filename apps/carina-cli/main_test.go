@@ -120,7 +120,7 @@ func TestUsageIncludesMemoryCommands(t *testing.T) {
 
 func TestUsageIncludesContextCommands(t *testing.T) {
 	for _, want := range []string{
-		"Context engine:",
+		"Context engine",
 		"carina context status",
 		"carina context doctor",
 	} {

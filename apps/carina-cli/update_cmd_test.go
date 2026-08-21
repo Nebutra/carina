@@ -63,7 +63,7 @@ func TestStandaloneUpdateDownloadsVerifiesAndReplacesWholeBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "updated 0.8.39 -> 0.8.40") || !strings.Contains(out, "restart the current workspace runtime") {
+	if !strings.Contains(out, "updated 0.8.39 -> 0.8.40") || !strings.Contains(out, "open carina again") {
 		t.Fatalf("update output missing lifecycle guidance:\n%s", out)
 	}
 	if *assetHits != 2 {
