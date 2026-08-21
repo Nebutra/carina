@@ -1,9 +1,9 @@
 # Competitive Research 2026-08 — Artifact Index
 
 > 取证日期：2026-08-02  
-> **现状刷新：2026-08-21 @ Carina v0.8.41** — **Harness SSOT：[24-post-0.8.36-harness-re-audit.md](./24-post-0.8.36-harness-re-audit.md)**；审美见 **[18](./18-tui-aesthetic-post-0.8.29.md)** / 长文 **[23](./23-assistant-markdown-document.md)**（A015/A016 已发）；Prompt 见 **[21](./21-prompt-context-re-audit.md)**；热路径见 **[26](./26-hot-path-post-0.8.38.md)**（`20` 为 0.8.32 历史）；`16`/`22` 为历史  
+> **现状刷新：2026-08-21 @ Carina v0.8.41** — **Harness SSOT：[24-post-0.8.36-harness-re-audit.md](./24-post-0.8.36-harness-re-audit.md)**；审美见 **[18](./18-tui-aesthetic-post-0.8.29.md)** / 长文 **[23](./23-assistant-markdown-document.md)**（A015/A016 已发）；**Prompt/Context SSOT：[27](./27-prompt-context-audit-0.8.41.md)**（`21` 为 0.8.33 历史）；热路径见 **[26](./26-hot-path-post-0.8.38.md)**（`20` 为 0.8.32 历史）；`16`/`22` 为历史  
 > 范围：Carina vs Jcode / Grok Build / Claude Code (notes) / Codex / Oh My Pi (OMP) / DeepSeek Harness（公开文档，本机无 clone）  
-> 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图 → **日用剩余 P0 = 无**（T-S1 `web.search` / T-S2 真 todo / T-S3 search-list extract / S10 已落地）。奏折 / git 一等 / browser 为 P1；SaaS/ACP/皮肤否决
+> 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图。工具面 T-S1/T-S2/T-S3 已落地。**Prompt 产品 P0 仍开：P12 system/user、P13 identity≠workspace、P14 cache_read。** 奏折 / git 一等 / browser 为 P1；SaaS/ACP/皮肤否决。MiniLM/snapcompact 不作默认。
 
 ---
 
@@ -15,7 +15,8 @@
 | **[24-post-0.8.36-harness-re-audit.md](./24-post-0.8.36-harness-re-audit.md)** | **Harness SSOT v0.8.36 取证**：对话跨 run、表拆箱、rewind fork、S8/S7 随 **0.8.37** 发；S10 随 0.8.38 落地 |
 | **[23-assistant-markdown-document.md](./23-assistant-markdown-document.md)** | 长文答案排版：A015/A016 随 **0.8.35** 发；A017 标题层级仍开 |
 | **[22-post-0.8.34-harness-re-audit.md](./22-post-0.8.34-harness-re-audit.md)** | **Harness 全维度再审计 v0.8.34**：模块地图 + 六家 job + scorecard + 分类清单；剩余 P0 = S7/S8/S10 |
-| **[21-prompt-context-re-audit.md](./21-prompt-context-re-audit.md)** | **Prompt 再审计 v0.8.33 FAIL ~5.5/10**：S1–S6 已发；S9 随 **0.8.34** 发；S7–S8/S10 开；S11 并入 S8；法：`docs/PROMPT_SPEC.md` |
+| **[27-prompt-context-audit-0.8.41.md](./27-prompt-context-audit-0.8.41.md)** | **Prompt/Context SSOT v0.8.41 FAIL ~5.8/10**：S1–S11 结构已发；产品剩余 **P12/P13/P14**；法：`docs/PROMPT_SPEC.md` + `docs/CONTEXT_ENGINEERING.md` |
+| **[21-prompt-context-re-audit.md](./21-prompt-context-re-audit.md)** | 历史：Prompt 再审计 v0.8.33 FAIL ~5.5/10 |
 | **[26-hot-path-post-0.8.38.md](./26-hot-path-post-0.8.38.md)** | **热路径再审计 v0.8.38**：PTY TTFF **15.2 ms**；**P0-H11 已落地**（turn 2+ 不 `exec` 新 grok）；剩余 P0 = **P0-H12** list/search memo |
 | **[20-hot-path-latency-audit.md](./20-hot-path-latency-audit.md)** | 历史：v0.8.32 FAIL ~4.5/10；P0 H1–H7 随 **0.8.33** 发；法：`docs/HOT_PATH.md` |
 | **[19-prompt-context-audit.md](./19-prompt-context-audit.md)** | 历史：v0.8.30 FAIL；S1–S6 随 **0.8.31** 发 |

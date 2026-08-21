@@ -99,7 +99,7 @@ func renderDialoguePairs(pairs []dialoguePair, answerMax int) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("This conversation so far (a follow-up that names no new object is about this):\n")
+	b.WriteString("This conversation so far (referring to the last answer does not inspect the workspace):\n")
 	for i, pair := range pairs {
 		if i > 0 {
 			b.WriteByte('\n')

@@ -1,15 +1,14 @@
 # Carina Prompt Spec (DRAFT LAW)
 
-> Status: **P0 law**. Evidence: audit 19 (v0.8.30) and re-audit 21 (v0.8.33).
-> `docs/research/competitive-2026-08/19-prompt-context-audit.md`,
-> `docs/research/competitive-2026-08/21-prompt-context-re-audit.md`.
+> Status: **P0 law.** Structure S1–S11 landed. **P12/P13/P14 are in source**
+> (Anthropic `system` A–D, identity ≠ workspace, `/context` constitution_role).
+> Grok/OpenAI still user-stuff constitution (`cache=none`). Evidence: audit 27
+> (`docs/research/competitive-2026-08/27-prompt-context-audit-0.8.41.md`).
 > Code: `go/daemon/agent.go`, `promptcache.go`, `prompt_mode.go`,
-> `agents.go`, `tool_schema.go`, `grok_reasoner.go`.
+> `agents.go`, `tool_schema.go`, `grok_reasoner.go`, `anthropic.go`.
 >
-> S1–S11 prompt-law P0 is closed. S8: constitution without Workspace/F < 800
-> tok (`len/4`). S7: named A–D. S10: REQUESTED skills out of Catalog. S11:
-> native envelope ≤ 200 B. Context-engineering C1–C2 closed (Fixture G/R
-> first 3 turns; compact is not a context engine).
+> “Agent can reply” is not a pass. Named sections are not a pass while
+> constitution rides in the user role.
 
 Steal jobs, not strings. Do not copy Claude’s terracotta voice, OMP π, or
 GrokNight into Carina identity.
@@ -19,25 +18,26 @@ GrokNight into Carina identity.
 ## 1. Segments (ordered)
 
 Constitution is a **list of named sections**, not one Go string. Anthropic
-gets one cacheable block per stable section. Grok/OpenAI still consume
-concatenated text but **must not** put constitution in a user blob labeled
-“plain data”.
+must receive A–D as **`system`** blocks (P0-P12). Grok/OpenAI still consume
+concatenated text today; they **must not** put constitution in a user blob
+labeled “the request” once P12 lands.
 
-| # | Section | Cache | Contents | Must not contain |
-|---|---------|-------|----------|------------------|
-| A | Identity | static | 4–8 lines: Carina / Nebutra; not Claude/Codex/GPT | tools, repo rules, TASK |
-| B | Mode | static per run | **First operative sentence.** `converse` vs `build` vs `plan` | the other mode’s verbs |
-| C | Protocol | static | JSON ReAct or native-tools contract, **short** | full tool catalog examples |
-| D | Tools | static builtins | builtins only; MCP/skills as **index** | MCP JSON schemas, skill bodies |
-| E | Workspace | dynamic | cwd, os, locale, sandbox | AGENTS.md, TASK |
-| F | Project rules | dynamic, **mode** | CARINA.md / AGENTS.md on build/plan | converse host-load; greetings |
-| G | Memory snapshot | dynamic, frozen/run | retrieved facts with budget | full memory dump |
-| H | TASK | volatile | operator message | constitution |
-| I | TRANSCRIPT | volatile | compacted model view | audit log |
-| J | Closing | volatile | one line: next JSON / next tool / `done` | new policy |
+| # | Section | Cache | Role (target) | Contents | Must not contain |
+|---|---------|-------|---------------|----------|------------------|
+| A | Identity | static | system | 4–8 lines: Carina / Nebutra; not Claude/Codex/GPT | tools, repo rules, TASK, a description of *this* workspace |
+| B | Mode | static per run | system | **First operative sentence.** `converse` vs `build` vs `plan` | the other mode’s verbs |
+| C | Protocol | static | system | JSON ReAct or native-tools contract, **short** | full tool catalog examples |
+| D | Tools | static builtins | system | builtins only; MCP/skills as **index** | MCP JSON schemas, skill bodies |
+| E | Workspace | dynamic | after boundary | cwd, os, locale, sandbox | AGENTS.md, TASK |
+| F | Project rules | dynamic, **mode** | after boundary | CARINA.md / AGENTS.md on build/plan | converse host-load; greetings |
+| G | Memory snapshot | dynamic, frozen/run | after boundary | retrieved facts with budget | full memory dump |
+| H | TASK | volatile | user | operator message | constitution |
+| I | TRANSCRIPT | volatile | user | compacted model view | audit log |
+| J | Closing | volatile | user | one line: next JSON / next tool / `done` | new policy |
 
-**Boundary:** A–D are cacheable constitution. E–G may change between runs
-but not every turn. H–J change every turn. Do not put H inside A–D.
+**Boundary:** A–D are cacheable constitution in **system**. E–G may change
+between runs but not every turn. H–J change every turn. Do not put H
+inside A–D. Do not put A–D inside H.
 
 ---
 
@@ -46,18 +46,19 @@ but not every turn. H–J change every turn. Do not put H inside A–D.
 Default **interactive** agent is `converse`, not `build`.
 
 ```
-converse: Answer the operator's actual intent. Tools only when the
+converse: Answer the operator's actual intent. Tools when the
           message needs workspace evidence or a side effect.
 build:    Change the workspace. Inspect only what the task needs.
 plan:     Read-only. Answer or produce a plan. No edits, no shell.
 ```
 
-`go/daemon/agents.go` used to prepend build with “Inspect the workspace”.
-That sentence overrode the greeting rule later in `toolsHelp`. The default
-interactive agent is now `converse`; build’s opener is inspect-only-what-the-task-needs.
+Intent (with Mode): identity and project instructions are **not this
+repository**. Greeting and who-you-are do not inspect. A repo/structure
+ask does.
 
 Fixture G (acceptance): in this repo, with `AGENTS.md` present, prompt `hi`
 → first model action is `done`, zero list/read/search/code.*.
+A repo/structure ask (even after a greeting, even in build) is not Fixture G.
 
 ---
 
@@ -76,12 +77,15 @@ If 2 and 4 conflict, mode wins. converse does not dump F; the model may
 read project instructions with a tool if the ask needs them. Do not
 classify operator phrases in the host to splice F back in.
 
+Identity ranks last on purpose. It must not outrank a workspace ask.
+
 ---
 
 ## 4. Tool descriptions
 
 - Builtins: one line each. Examples belong in tests, not constitution.
 - Native schemas: same names as JSON actions; do not also paste `toolsHelp`.
+  Schemas travel in the HTTP `tools` array, not in C.
 - MCP: names + 60–120 char blurbs; full schema only after `mcp_find`.
 - Skills: stable catalog of names + slash commands. Bodies via `skill://`
   read. REQUESTED SKILLS / SKILL WARNING are volatile (before TASK), not Catalog.
@@ -97,6 +101,8 @@ classify operator phrases in the host to splice F back in.
 - `done.summary` is the only user-visible answer (keep).
 - Parallel batch of list/read/search is allowed **after** the model has
   decided the turn needs workspace evidence — not as the default first move.
+- Session dialogue teaches deixis to the last **topic**, not “this = the chat”.
+  Referring to the last answer does not inspect the workspace.
 
 ---
 
@@ -107,76 +113,49 @@ Isolation may disable **vendor** tools. It must not:
 - Label Carina’s constitution as “plain data”
 - Ask for JSON tool calls in the same blob that says “do not call tools”
 - Skip prefix cache without documenting that the adapter is uncached
+- Stuff A–D into the user prompt and call that a system prompt
 
 One envelope: either (a) Carina ReAct as the **system** text the model
 is allowed to follow, or (b) vendor agent with vendor tools. Not both.
+
+`promptCacheKindFor` is a label. Anthropic must show `cache_read` on turn
+2+ of the same run (P0-P14). Grok/OpenAI may stay `none` if labeled.
 
 ---
 
 ## 7. P0 knives
 
-**Landed in 0.8.31:** S1 converse default; S2 conversation-first above tools;
-S3 F demand-gated; S4 TASK in VolatileSuffix; S5 Grok JSON ReAct system;
-S6 search batch only after evidence is needed.
+**Landed (structure, 0.8.31–0.8.38):** S1 converse default; S2 conversation-first
+above tools; S3 F demand-gated; S4 TASK in VolatileSuffix; S5 Grok JSON ReAct
+system line; S6 search batch only after evidence is needed; S7 named A–D;
+S8 one-line builtins, C ≤ 5, constitution without F < 800 tok; S9 capability
+brief out of live constitution; S10 REQUESTED skills out of Catalog; S11
+native envelope ≤ 200 B.
 
-**Landed in 0.8.34:** S9 capability brief out of live constitution. Intent is
-meta (situated answer, not a matrix). `prompt_mode` is a mode switch, not a
-phrase classifier. converse does not dump AGENTS.md.
+**Landed (tool surface):** T-S1 `web.search`; T-S2 `todo`/`update_plan`;
+T-S3 search/list extract.
 
-**Landed (S8):** builtins are one line each; protocol C is five standing
-bullets; JSON examples stay in tests. Converse constitution without
-Workspace/F is under 800 tok (`len/4`). Native HTTP swaps protocol C for a
-≤ 200 B envelope and drops tools D — do not paste the catalog back.
+**Open (product, 0.8.41):**
 
-**Landed (S7):** constitution is a named list (Mode, Identity, Protocol,
-Tools), not `const systemPrompt`. Anthropic attaches `cache_control` to A–D
-(API cap 4). Grok/OpenAI still consume `full()` concat with cache kind `none`.
-`withToolContract` replaces protocol C and drops tools D.
+| ID | Problem | Accept |
+|----|---------|--------|
+| **P0-P12** | Constitution used to ride in the Anthropic **user** turn | **Landed in source:** Anthropic `system` = A–D (cached) + workspace/catalog (uncached). User = TASK+transcript. Grok/OpenAI still `none` / user-stuffed until a later slice. |
+| **P0-P13** | Identity/F answered「这个 repo / 分析 repo」without tools | Intent: identity and F are not this repository. Live 执行 + 「分析 repo」first action is list/map/read, not a product blurb. Fixture G on `hi` still `done` |
+| **P0-P14** | Cache kind is unlabeled honesty for Grok/OpenAI, unmeasured for Anthropic | Same-run Think 2–3: Anthropic `cache_read > 0`. Grok/OpenAI remain `none` without implying prefix cache |
 
-**Landed (S10):** skill Catalog is MCP index + skill names + slash commands
-only. REQUESTED SKILLS and SKILL WARNING sit in VolatileSuffix before TASK.
-`CacheSections` is independent of greeting wording (`hi` vs `Use $pdf`).
-Skill bodies stay behind `skill://` read. Implicit triggers stay opt-in
-(`CARINA_IMPLICIT_SKILL_PROMPTS`). `/review` stays a slash command
-(ISSUE-030).
-
-**Landed (S11):** `nativeToolsContract` is envelope-only (≤ 200 B). Schemas
-stay in the HTTP tools array. `withToolContract` replaces protocol C, drops
-tools D, and strips `toolsHelp` / `toolsCatalog` from legacy constitution
-blobs. JSON ReAct catalog returns only on native requery fallback.
-
-**Landed (T-S1 web.search):** public web query after host approval; HTTPS /
-SSRF / untrusted / fail-closed same as `web.fetch`; plan+explore blocked;
-never `run`/`curl`. Dispatch + native schema.
-
-**Landed (T-S2 todo / update_plan):** real session checklist tools (dispatch +
-schema). Plan mode allows them (`isReadOnlyTool`); explore does not. Empty
-call echoes; empty slice clears. Not a phrase classifier.
-
-**Landed (T-S3):** search groups by file (count + first line); list rolls up
-dirs + sample files. Raw 50-line grep / 200-file trees are not the observation.
-
-Prompt-law P0 (S1–S11) is closed. Tool-surface P0 (T-S1 web.search, T-S2
-todo/update_plan, T-S3 search/list extract, S10) is closed. Context-engineering
-P0 (C1 Fixture G/R constitution < 800 tok on the first 3 live turns; C2
-`go/contextengine` identity, compact is not a context engine) is closed.
-Post-compact cited-file rebuild is volatile (P1-C1). Provider usage drives
-pressure when present (P1-C2). Remaining items are labeled P1/P2 or deferred
-(`full()` rebuild, EWMA compact, 奏折, git-first-class, browser) — no unmarked
-P0 knife rows.
-
-Files: `go/daemon/agent.go`, `agents.go`, `promptcache.go`, `memory.go`,
-`grok_reasoner.go`, `tool_schema.go`, `conversation_first_test.go`.
+Do not mark this spec “P0 closed” while P12–P14 are open.
 
 ---
 
 ## 8. Anti-patterns
 
-1. Do not treat `conversation_first_test.go` (stub reasoner) as proof models obey greetings.
+1. Do not treat `conversation_first_test.go` (stub reasoner) as proof models obey greetings or inspect repos.
 2. Do not prepend build/inspect on the default interactive agent.
 3. Do not inject AGENTS.md to “give context” for `hi`.
 4. Do not put TASK inside the cacheable constitution.
-5. Do not stuff Carina’s system prompt as a Grok user message labeled non-instruction.
-6. Do not add more DO NOTs to paper over a wrong first line.
+5. Do not stuff Carina’s system prompt as a Grok/Anthropic **user** message.
+6. Do not add more DO NOTs to paper over a wrong first line or a wrong role.
 7. Do not load every MCP schema or skill body every turn.
 8. Do not copy Claude/OMP/Grok prompt prose into Carina identity.
+9. Do not call user-block `cache_control` “SYSTEM_PROMPT_DYNAMIC_BOUNDARY done”.
+10. Do not classify operator phrases in the host to splice F into converse.

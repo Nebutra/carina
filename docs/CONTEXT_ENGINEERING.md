@@ -1,8 +1,11 @@
 # Carina Context Engineering (DRAFT LAW)
 
-> Companion to `docs/PROMPT_SPEC.md`. Code: `go/daemon/transcript.go`,
-> `compaction_budget.go`, `memory.go`, `memory_store.go`, `subagent.go`,
-> `explore.go`, `context_summary.go`, `go/contextengine` (noop).
+> Companion to `docs/PROMPT_SPEC.md`. Product still FAIL while constitution
+> rides in the user role and default models are cache `none`.
+> Evidence: `docs/research/competitive-2026-08/27-prompt-context-audit-0.8.41.md`.
+> Code: `go/daemon/transcript.go`, `compaction_budget.go`, `compact_rebuild.go`,
+> `memory.go`, `subagent.go`, `context_summary.go`, `anthropic.go`,
+> `go/contextengine` (noop).
 
 ---
 
@@ -17,9 +20,9 @@ Never feed the audit log to the model.
 
 ---
 
-## 2. Compaction cascade (target)
+## 2. Compaction cascade
 
-Keep today’s cheap-first order. Add the missing outer tiers later.
+Keep today’s cheap-first order. Outer tiers stay P1.
 
 | Tier | When | Keep | Drop |
 |------|------|------|------|
@@ -32,15 +35,15 @@ Keep today’s cheap-first order. Add the missing outer tiers later.
 
 Today: 0–4 exist. 5 does not. Rebuild is volatile (with TASK), never prefix.
 F stays in Workspace for build/plan for the run — do not dump AGENTS.md into
-a greeting because compact ran. `go/contextengine` is identity; do not
-advertise it as a compressor.
+a greeting because compact ran. After compact on build/plan, Grok-style
+verbatim AGENTS **item** is P1-C5, not a greeting splice.
+
+`go/contextengine` is identity; do not advertise it as a compressor.
+`Transcript.compact` is the product compressor.
 
 Trigger: ~80% of (catalog window − reserve). Fallback window 32k is honest
 only when the catalog has no window — do not silently use 32k for a 200k model.
-
-After compact: constitution A–D unchanged. F/G stay in the frozen Workspace
-prefix for build/plan. Cited files that were folded are re-read into
-`Transcript.Rebuild` (volatile). Greeting turns still must not load F.
+Proxy model ids alias through the lab catalog (same path as vision chips).
 
 ---
 
@@ -59,6 +62,9 @@ Provider-reported input tokens drive model-view pressure and `/context`
 ledger counts when the last usage is not an estimate. `len/4` stays the
 fallback.
 
+Anthropic `/context` must show `cache_read` vs `cache_write` (P0-P14).
+Grok/OpenAI must show `cache=none` without implying prefix cache.
+
 TUI `/context` already speaks VOICE. Do not show `ledger`/`hash` slang.
 In-loop `tr.compact` and idle `/compact` must be labeled as different
 jobs (live model view vs checkpoint rewrite).
@@ -69,11 +75,12 @@ jobs (live model view vs checkpoint rewrite).
 
 | Stream | When | Budget | Where |
 |--------|------|--------|-------|
-| Project rules (F) | build/plan or repo-work heuristic | 8k chars, one winner per directory | Workspace layer |
+| Project rules (F) | build/plan only | 8k chars, one winner per directory | Workspace layer, after cache boundary |
 | Governed snapshot (G) | task start, frozen | existing store cap | Workspace layer |
 | HMS evidence | fresh task, hybrid mode | pinned observation | Transcript, not system |
 
 Do not retrieve HMS or dump AGENTS.md for Fixture G.
+Identity and F are not a substitute for inspecting this repository.
 
 ---
 
@@ -87,26 +94,26 @@ Do not retrieve HMS or dump AGENTS.md for Fixture G.
 
 ---
 
-## 6. Pipeline (as shipped)
+## 6. Pipeline (as shipped 0.8.41 — waste marked)
 
 ```mermaid
 flowchart TD
   start[Task start] --> snap[memory.snapshot]
-  snap --> rules{build/plan or repo-work?}
+  snap --> rules{build/plan?}
   rules -->|yes| loadF[loadMemory 8k]
-  rules -->|no greeting| skipF[skip AGENTS.md]
+  rules -->|converse/greeting| skipF[skip AGENTS.md]
   loadF --> layers
   skipF --> layers[composeAgentPromptLayers once]
-  layers --> loop[Each turn]
+  layers --> loop[Each Think]
   loop --> cheap["compact(nil) elide/collapse"]
   cheap --> rebuild[rebuild cited files into transcript]
   rebuild --> build[buildPromptSegmentsFromLayers]
-  build --> full["seg.full = prefix + requested + TASK + transcript + closing"]
+  build --> full["seg.full = prefix + requested + TASK + transcript"]
   full --> route{Reasoner}
-  route -->|Anthropic| cache[CacheSections A-D then workspace/catalog]
-  route -->|Grok ACP| stuff["system = JSON ReAct; user = framed full()"]
-  route -->|OpenAI| blob["single blob; cache kind none"]
-  cache --> act[JSON action or native tools]
+  route -->|Anthropic| sysCache["system A-D cached; workspace after boundary; user = TASK"]
+  route -->|Grok ACP| stuff["system = 1-line ReAct; user = framed full()"]
+  route -->|OpenAI/Mox| blob["single blob; cache kind none"]
+  userCache --> act[JSON action or native tools]
   stuff --> act
   blob --> act
   act --> exec[Kernel + Zig tools]
@@ -115,49 +122,34 @@ flowchart TD
   after --> loop
 ```
 
-**P0 landed (0.8.31–0.8.34 + S8 + S7 + S10 + S11 + T-S1 + T-S2 + T-S3 + C1 + C2):** converse default, F mode-gated (not a phrase
-classifier), TASK out of prefix, Grok ReAct envelope, compact summarizer off
-the Think stack, capability brief out of live constitution, one-line builtins
-with protocol C ≤ 5 (constitution without F < 800 tok), named A–D sections with
-Anthropic `cache_control` per section, REQUESTED skills out of Catalog, native
-envelope ≤ 200 B without re-pasting `toolsHelp`, `web.search` (host approval,
-untrusted), real `todo`/`update_plan` dispatch, search/list structured extract,
-Fixture G/R first-3-turn constitution without F < 800 tok, `go/contextengine`
-identity (Transcript.compact is the product compressor).
-Remaining waste is P1 (`full()` rebuild, EWMA compact, 奏折) and P2 — not unmarked P0.
+**Target after P0-P12:** Anthropic `system` = A–D (cached). User = H–J.
+Workspace/F/G sit after the dynamic boundary, not in TASK.
 
 ---
 
 ## 7. P0 / P1 / P2
 
-**P0** (prompt law `PROMPT_SPEC.md` S1–S11, tool-surface T-S1–T-S3 + S10, context-engineering C1–C2) is closed:
+Prompt-law structure S1–S11 and tool-surface T-S1–T-S3 remain landed.
+Context-engineering C1–C2 (constitution < 800 tok on G/R; contextengine
+identity) remain landed. **Product P0 is not closed.**
 
-| ID | Item |
-|----|------|
-| T-S1 | **Landed:** `web.search` — public query after host approval; same NetworkAccess/HTTPS/SSRF/untrusted/fail-closed as `web.fetch`; plan+explore blocked; dispatch + native schema. |
-| T-S2 | **Landed:** `todo` / `update_plan` — real session checklist (dispatch + schema). Plan mode allowed; explore not. Not a phrase classifier. |
-| T-S3 | **Landed:** search groups by file (count + first line); list rolls up dirs + sample files. |
-| S10 | **Landed:** REQUESTED skills out of Catalog; `CacheSections` independent of greeting wording. |
-| S11 | **Landed:** native envelope ≤ 200 B; `withToolContract` does not re-paste `toolsHelp`. |
-| P0-C1 | **Landed:** Fixture G (`hi`) and Fixture R (repo-work converse) measure constitution on the live compose path for the first 3 turns; without Workspace/F it stays < 800 tok (`len/4`). |
-| P0-C2 | **Landed:** `go/contextengine` is identity/noop. In-loop compact is `Transcript.compact`, not a context engine. |
+| ID | Status | Item |
+|----|--------|------|
+| P0-P12 | **source** | Anthropic `system` A–D + dynamic workspace. Grok/OpenAI still user-stuffed |
+| P0-P13 | **source** | Intent: identity/F are not this repository |
+| P0-P14 | **source** | `/context` `constitution_role` + `cache_read_tokens` in usage breakdown |
+| P0-C1 | landed | Fixture G/R constitution without F < 800 tok |
+| P0-C2 | landed | `go/contextengine` is identity |
+| P1-C1 | landed | post-compact cited-file rebuild (volatile) |
+| P1-C2 | landed | provider usage drives pressure when present |
+| P1-C5 | open | AGENTS.md item after compact, build/plan only |
+| P1-C3 | deferred | Proactive compact (jcode EWMA) |
+| P1-C6 | deferred | OpenAI prefix cache only if the route documents it |
+| P2-C1 | deferred | Semantic / topic-shift compact |
+| P2-C2 | deferred | Memory retrieve budget per turn |
+| P2-C3 | deferred | Tokenizer-accurate pressure in `/context` |
 
-**P1** (deferred)
-
-| ID | Item |
-|----|------|
-| P1-C1 | **Landed:** post-compact re-read of ≤5 cited files into volatile Rebuild (8k cap, kernel FileRead). F is not dumped on converse/greetings. |
-| P1-C2 | **Landed:** provider usage drives model-view pressure and `/context` ledger when present; `len/4` is fallback when usage is absent or estimated. |
-| P1-C3 | Proactive compact (jcode EWMA) before hard 80% — deferred |
-| P1-C4 | **Landed:** search groups by file (count + first line); list rolls up dirs + sample files. Raw grep/tree is not the observation. |
-
-**P2**
-
-| ID | Item |
-|----|------|
-| P2-C1 | Semantic / topic-shift compact |
-| P2-C2 | Memory retrieve budget per turn (jcode N→N+1) |
-| P2-C3 | Tokenizer-accurate pressure in `/context` |
+Do not enable MiniLM / snapcompact as defaults to look like jcode/OMP.
 
 ---
 
@@ -166,7 +158,9 @@ Remaining waste is P1 (`full()` rebuild, EWMA compact, 奏折) and P2 — not un
 1. Do not compact the audit chain.
 2. Do not fold user messages away without the verbatim budget.
 3. Do not re-inject AGENTS.md into a greeting turn “because compact dropped it”.
-4. Do not enable MiniLM / snapcompact as a default to look like OMP/jcode.
+4. Do not enable MiniLM / snapcompact as a default.
 5. Do not return child transcripts to the parent.
 6. Do not treat idle `/compact` as a substitute for in-loop `tr.compact`.
-7. Do not call `Transcript.compact` a context engine; `go/contextengine` is identity until it is not.
+7. Do not call `Transcript.compact` a context engine.
+8. Do not treat user-block `cache_control` as a system cache boundary.
+9. Do not answer workspace structure from product identity.

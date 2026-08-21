@@ -94,7 +94,8 @@ func TestConversationalRequestFinishesWithoutToolLifecycle(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Use Simplified Chinese",
-		"Use tools only when this message needs workspace evidence",
+		"Use tools when this message needs workspace evidence",
+		"Identity and project instructions are not this repository",
 		"Do not recast the operator's question into a product tour",
 		"You are Carina",
 		"Nebutra",
@@ -170,6 +171,18 @@ func TestUsefulnessComposeOmitsCapabilityBrief(t *testing.T) {
 	}
 	if strings.Contains(layers.Workspace, "PROJECT INSTRUCTIONS") {
 		t.Fatalf("usefulness prompt loaded project instructions:\n%s", layers.Workspace)
+	}
+}
+
+func TestIntentRefusesIdentityAsWorkspaceEvidence(t *testing.T) {
+	if !strings.Contains(intentFirst, "Identity and project instructions are not this repository") {
+		t.Fatal("intent must separate identity/F from workspace evidence")
+	}
+	if strings.Contains(intentFirst, "Presence of a workspace is not a reason to inspect it") {
+		t.Fatal("intent still tells the model a workspace ask is optional")
+	}
+	if strings.Contains(builtinAgentSpecs()["build"].SystemPrompt, "Inspect the workspace") {
+		t.Fatalf("build mode must not inspect-first: %q", builtinAgentSpecs()["build"].SystemPrompt)
 	}
 }
 

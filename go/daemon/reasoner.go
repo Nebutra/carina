@@ -268,6 +268,10 @@ func thinkWithRetryModelResult(ctx context.Context, r Reasoner, model, prompt st
 
 func thinkWithRetryModelSegments(ctx context.Context, r Reasoner, model string, segments promptSegments) (ReasonerResult, error) {
 	ctx = withStableSections(ctx, segments.CacheSections())
+	ctx = withAnthropicLayout(ctx, anthropicSectionLayout{
+		System:  segments.ConstitutionSections(),
+		Dynamic: segments.DynamicSections(),
+	})
 	return thinkWithRetrySegments(ctx, r, model, segments.full(), segments.StablePrefix, segments.VolatileSuffix, segments.Media...)
 }
 
@@ -761,6 +765,10 @@ func (r *routerReasoner) complete(ctx context.Context, model string, req modelro
 	}
 	if sections := stableSectionsFrom(ctx); len(sections) > 0 {
 		req.StableSections = append([]string(nil), sections...)
+	}
+	if layout := anthropicLayoutFrom(ctx); len(layout.System) > 0 || len(layout.Dynamic) > 0 {
+		req.SystemSections = append([]string(nil), layout.System...)
+		req.DynamicSections = append([]string(nil), layout.Dynamic...)
 	}
 	if cliModel, discovery, targeted, routeErr := r.grokBuildRoute(ctx, model); targeted {
 		if routeErr != nil {

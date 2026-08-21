@@ -39,8 +39,8 @@ func TestFollowUpRunSeesPriorSessionAnswer(t *testing.T) {
 	if !strings.Contains(reasoner.prompt, "This conversation so far") {
 		t.Fatalf("follow-up missing session dialogue:\n%s", truncate(reasoner.prompt, 800))
 	}
-	if !strings.Contains(reasoner.prompt, "names no new object") {
-		t.Fatalf("follow-up must treat deictic asks as about the current topic:\n%s", truncate(reasoner.prompt, 800))
+	if !strings.Contains(reasoner.prompt, "referring to the last answer does not inspect the workspace") {
+		t.Fatalf("follow-up must not treat the transcript as workspace evidence:\n%s", truncate(reasoner.prompt, 800))
 	}
 	if !strings.Contains(reasoner.prompt, "Operator: 分析这个 repo") {
 		t.Fatalf("follow-up missing prior operator turn:\n%s", truncate(reasoner.prompt, 800))

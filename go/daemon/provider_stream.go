@@ -566,11 +566,10 @@ func (a *anthropicProvider) Stream(ctx context.Context, req modelrouter.Request,
 		return nil, fmt.Errorf("%s: supported credential not set", a.errorName())
 	}
 	model, responseModel, override := a.resolveModel(req)
-	messages := any([]map[string]string{{"role": "user", "content": req.Prompt}})
-	if blocks, ok := anthropicUserBlocks(req); ok {
-		messages = []map[string]any{{"role": "user", "content": blocks}}
+	bodyMap := map[string]any{"model": model, "max_tokens": agentMaxOutputTokens, "messages": anthropicMessages(req), "stream": true}
+	if system := anthropicSystemBlocks(req); len(system) > 0 {
+		bodyMap["system"] = system
 	}
-	bodyMap := map[string]any{"model": model, "max_tokens": agentMaxOutputTokens, "messages": messages, "stream": true}
 	mergeRawBody(bodyMap, a.body)
 	mergeRawBody(bodyMap, override.Body)
 	attachAnthropicTools(bodyMap, req.Tools)

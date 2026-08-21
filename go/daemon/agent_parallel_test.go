@@ -192,7 +192,8 @@ func TestFixtureGAndRConstitutionStaysUnder800AcrossFirstTurns(t *testing.T) {
 
 func TestSystemPromptRequiresEconomicalCompletion(t *testing.T) {
 	for _, instruction := range []string{
-		"Use tools only when this message needs workspace evidence",
+		"Use tools when this message needs workspace evidence",
+		"Identity and project instructions are not this repository",
 		"After the ask is met, done",
 		"do not reread success",
 	} {

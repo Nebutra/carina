@@ -19,7 +19,12 @@ func TestAnthropicProviderUsesStablePrefixCacheControlAndParsesUsage(t *testing.
 		}
 		var body struct {
 			MaxTokens int `json:"max_tokens"`
-			Messages  []struct {
+			System    []struct {
+				Type         string            `json:"type"`
+				Text         string            `json:"text"`
+				CacheControl map[string]string `json:"cache_control"`
+			} `json:"system"`
+			Messages []struct {
 				Role    string `json:"role"`
 				Content []struct {
 					Type         string            `json:"type"`
@@ -34,13 +39,13 @@ func TestAnthropicProviderUsesStablePrefixCacheControlAndParsesUsage(t *testing.
 		if body.MaxTokens != agentMaxOutputTokens {
 			t.Fatalf("max_tokens = %d, want %d", body.MaxTokens, agentMaxOutputTokens)
 		}
-		if len(body.Messages) != 1 || len(body.Messages[0].Content) != 2 {
+		if len(body.System) != 1 || body.System[0].Text != "stable" || body.System[0].CacheControl["type"] != "ephemeral" {
+			t.Fatalf("system = %+v", body.System)
+		}
+		if len(body.Messages) != 1 || len(body.Messages[0].Content) != 1 {
 			t.Fatalf("messages = %+v", body.Messages)
 		}
-		prefix, suffix := body.Messages[0].Content[0], body.Messages[0].Content[1]
-		if prefix.Text != "stable" || prefix.CacheControl["type"] != "ephemeral" {
-			t.Fatalf("stable prefix missing cache control: %+v", prefix)
-		}
+		suffix := body.Messages[0].Content[0]
 		if suffix.Text != "volatile" || len(suffix.CacheControl) != 0 {
 			t.Fatalf("volatile suffix should not be cacheable: %+v", suffix)
 		}
@@ -71,6 +76,11 @@ func TestAnthropicProviderUsesStablePrefixCacheControlAndParsesUsage(t *testing.
 func TestAnthropicProviderCachesEachPromptSection(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
+			System []struct {
+				Type         string            `json:"type"`
+				Text         string            `json:"text"`
+				CacheControl map[string]string `json:"cache_control"`
+			} `json:"system"`
 			Messages []struct {
 				Content []struct {
 					Type         string            `json:"type"`
@@ -82,17 +92,26 @@ func TestAnthropicProviderCachesEachPromptSection(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		blocks := body.Messages[0].Content
-		if len(blocks) != 4 {
-			t.Fatalf("want 3 cached sections + volatile, got %+v", blocks)
+		if len(body.System) != 3 {
+			t.Fatalf("want constitution + workspace + catalog on system, got %+v", body.System)
 		}
-		for i, name := range []string{"CONSTITUTION", "WORKSPACE", "CATALOG"} {
-			if blocks[i].Text != name || blocks[i].CacheControl["type"] != "ephemeral" {
-				t.Fatalf("section %d = %+v", i, blocks[i])
+		if body.System[0].Text != "CONSTITUTION" || body.System[0].CacheControl["type"] != "ephemeral" {
+			t.Fatalf("constitution system = %+v", body.System[0])
+		}
+		for i, name := range []string{"WORKSPACE", "CATALOG"} {
+			if body.System[1+i].Text != name || len(body.System[1+i].CacheControl) != 0 {
+				t.Fatalf("dynamic system %d = %+v", i, body.System[1+i])
 			}
 		}
-		if !strings.Contains(blocks[3].Text, "TASK: x") || !strings.Contains(blocks[3].Text, "turn") || len(blocks[3].CacheControl) != 0 {
-			t.Fatalf("volatile = %+v", blocks[3])
+		blocks := body.Messages[0].Content
+		if len(blocks) != 1 {
+			t.Fatalf("user must be volatile only, got %+v", blocks)
+		}
+		if !strings.Contains(blocks[0].Text, "TASK: x") || !strings.Contains(blocks[0].Text, "turn") || len(blocks[0].CacheControl) != 0 {
+			t.Fatalf("volatile = %+v", blocks[0])
+		}
+		if strings.Contains(blocks[0].Text, "CONSTITUTION") || strings.Contains(blocks[0].Text, "You are Carina") {
+			t.Fatalf("constitution leaked into user: %+v", blocks[0])
 		}
 		w.Header().Set("content-type", "application/json")
 		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
@@ -113,7 +132,10 @@ func TestAnthropicProviderCachesEachPromptSection(t *testing.T) {
 	}, "x", "turn", "GO")
 	_, err := p.Complete(context.Background(), modelrouter.Request{
 		Model: "default", Prompt: seg.full(), StablePrefix: seg.StablePrefix,
-		StableSections: seg.CacheSections(), VolatileSuffix: seg.VolatileSuffix,
+		StableSections:  seg.CacheSections(),
+		SystemSections:  seg.ConstitutionSections(),
+		DynamicSections: seg.DynamicSections(),
+		VolatileSuffix:  seg.VolatileSuffix,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -123,6 +145,11 @@ func TestAnthropicProviderCachesEachPromptSection(t *testing.T) {
 func TestAnthropicProviderCapsCacheControlAtFourBreakpoints(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
+			System []struct {
+				Type         string            `json:"type"`
+				Text         string            `json:"text"`
+				CacheControl map[string]string `json:"cache_control"`
+			} `json:"system"`
 			Messages []struct {
 				Content []struct {
 					Type         string            `json:"type"`
@@ -134,23 +161,26 @@ func TestAnthropicProviderCapsCacheControlAtFourBreakpoints(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		blocks := body.Messages[0].Content
-		if len(blocks) != 7 {
-			t.Fatalf("want 6 stable + volatile, got %+v", blocks)
+		if len(body.System) != 6 {
+			t.Fatalf("want 4 cached A–D + 2 dynamic system, got %+v", body.System)
 		}
 		for i, name := range []string{"MODE", "IDENTITY", "PROTOCOL", "TOOLS"} {
-			if blocks[i].Text != name || blocks[i].CacheControl["type"] != "ephemeral" {
-				t.Fatalf("cached section %d = %+v", i, blocks[i])
+			if body.System[i].Text != name || body.System[i].CacheControl["type"] != "ephemeral" {
+				t.Fatalf("cached system %d = %+v", i, body.System[i])
 			}
 		}
 		for i, name := range []string{"WORKSPACE", "CATALOG"} {
-			block := blocks[4+i]
+			block := body.System[4+i]
 			if block.Text != name || len(block.CacheControl) != 0 {
-				t.Fatalf("uncached leftover %d = %+v", i, block)
+				t.Fatalf("dynamic system %d = %+v", i, block)
 			}
 		}
-		if !strings.Contains(blocks[6].Text, "TASK: x") || len(blocks[6].CacheControl) != 0 {
-			t.Fatalf("volatile = %+v", blocks[6])
+		blocks := body.Messages[0].Content
+		if len(blocks) != 1 || !strings.Contains(blocks[0].Text, "TASK: x") || len(blocks[0].CacheControl) != 0 {
+			t.Fatalf("volatile = %+v", blocks)
+		}
+		if strings.Contains(blocks[0].Text, "MODE") || strings.Contains(blocks[0].Text, "You are Carina") {
+			t.Fatalf("constitution leaked into user: %+v", blocks[0])
 		}
 		w.Header().Set("content-type", "application/json")
 		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
@@ -173,10 +203,55 @@ func TestAnthropicProviderCapsCacheControlAtFourBreakpoints(t *testing.T) {
 	}
 	_, err := p.Complete(context.Background(), modelrouter.Request{
 		Model: "default", Prompt: seg.full(), StablePrefix: seg.StablePrefix,
-		StableSections: seg.CacheSections(), VolatileSuffix: seg.VolatileSuffix,
+		StableSections:  seg.CacheSections(),
+		SystemSections:  seg.ConstitutionSections(),
+		DynamicSections: seg.DynamicSections(),
+		VolatileSuffix:  seg.VolatileSuffix,
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAnthropicGreetingUserOmitsConstitution(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "hi")
+	layers := d.composeAgentPromptLayers(sess, task, "")
+	seg := buildPromptSegmentsFromLayers(layers, task.UserPrompt, "", "GO")
+	req := modelrouter.Request{
+		Prompt:          seg.full(),
+		StablePrefix:    seg.StablePrefix,
+		SystemSections:  seg.ConstitutionSections(),
+		DynamicSections: seg.DynamicSections(),
+		VolatileSuffix:  seg.VolatileSuffix,
+	}
+	system := anthropicSystemBlocks(req)
+	if len(system) == 0 {
+		t.Fatal("greeting must still send constitution on system")
+	}
+	joinedSystem := ""
+	for _, block := range system {
+		text, _ := block["text"].(string)
+		joinedSystem += text
+	}
+	if !strings.Contains(joinedSystem, "You are Carina") {
+		t.Fatalf("identity missing from system: %q", truncate(joinedSystem, 200))
+	}
+	user, ok := anthropicUserBlocks(req)
+	if !ok || len(user) != 1 {
+		t.Fatalf("greeting user = %+v", user)
+	}
+	text, _ := user[0]["text"].(string)
+	if !strings.Contains(text, "TASK: hi") {
+		t.Fatalf("greeting user missing TASK: %q", text)
+	}
+	if strings.Contains(text, "You are Carina") || strings.Contains(text, "Harness protocol:") {
+		t.Fatalf("greeting user carried constitution: %q", truncate(text, 240))
+	}
+	if _, cached := user[0]["cache_control"]; cached {
+		t.Fatal("TASK must not carry cache_control")
 	}
 }
 

@@ -128,7 +128,7 @@ func builtinAgentSpecs() map[string]*AgentSpec {
 			Mode:         "primary",
 			MaxTurns:     8,
 			Source:       "built-in",
-			SystemPrompt: "converse: Answer the operator's actual intent. Use tools only when the message needs workspace evidence or a side effect. done ends the turn; it is not a personality.",
+			SystemPrompt: "converse: Answer the operator's actual intent. Use tools when the message needs workspace evidence or a side effect. done ends the turn; it is not a personality.",
 		},
 		"build": {
 			Name:         "build",

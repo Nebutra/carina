@@ -78,14 +78,13 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 		return nil, fmt.Errorf("%s: supported credential not set", a.errorName())
 	}
 	model, responseModel, override := a.resolveModel(req)
-	messages := any([]map[string]string{{"role": "user", "content": req.Prompt}})
-	if blocks, ok := anthropicUserBlocks(req); ok {
-		messages = []map[string]any{{"role": "user", "content": blocks}}
-	}
 	bodyMap := map[string]any{
 		"model":      model,
 		"max_tokens": agentMaxOutputTokens,
-		"messages":   messages,
+		"messages":   anthropicMessages(req),
+	}
+	if system := anthropicSystemBlocks(req); len(system) > 0 {
+		bodyMap["system"] = system
 	}
 	mergeRawBody(bodyMap, a.body)
 	mergeRawBody(bodyMap, override.Body)
@@ -158,43 +157,78 @@ func (a *anthropicProvider) Complete(ctx context.Context, req modelrouter.Reques
 	}, nil
 }
 
-// anthropicUserBlocks splits the stuffed user prompt into cacheable text
-// sections plus a volatile suffix. Image blocks stay after text so they do
-// not move a cache breakpoint. Grok CLI never calls this helper.
-func anthropicUserBlocks(req modelrouter.Request) ([]map[string]any, bool) {
-	sections := append([]string(nil), req.StableSections...)
-	if len(sections) == 0 && req.StablePrefix != "" {
-		sections = []string{req.StablePrefix}
+// Anthropic Messages prompt caching allows at most four cache_control
+// breakpoints. A–D take them on `system`. Workspace/catalog sit after the
+// boundary as uncached system text. TASK/transcript stay on the user turn.
+const maxAnthropicCacheBreakpoints = 4
+
+func anthropicTextBlock(text string, cache bool) map[string]any {
+	block := map[string]any{"type": "text", "text": text}
+	if cache {
+		block["cache_control"] = map[string]string{"type": "ephemeral"}
 	}
-	if len(sections) == 0 && len(req.Media) == 0 {
-		return nil, false
+	return block
+}
+
+func anthropicSystemTexts(req modelrouter.Request) (system, dynamic []string) {
+	if len(req.SystemSections) > 0 || len(req.DynamicSections) > 0 {
+		return req.SystemSections, req.DynamicSections
 	}
-	// Anthropic Messages prompt caching allows at most four cache_control
-	// breakpoints. A–D take them first so Identity/Mode/Protocol/Tools stay
-	// independently cacheable; leftover workspace/catalog ride as plain text.
-	const maxAnthropicCacheBreakpoints = 4
-	blocks := make([]map[string]any, 0, len(sections)+1+len(req.Media))
+	if strings.TrimSpace(req.StablePrefix) != "" {
+		return []string{req.StablePrefix}, nil
+	}
+	return nil, nil
+}
+
+func anthropicSystemBlocks(req modelrouter.Request) []map[string]any {
+	system, dynamic := anthropicSystemTexts(req)
+	if len(system) == 0 && len(dynamic) == 0 {
+		return nil
+	}
+	blocks := make([]map[string]any, 0, len(system)+len(dynamic))
 	cached := 0
-	for _, section := range sections {
-		if strings.TrimSpace(section) == "" {
+	for _, text := range system {
+		if strings.TrimSpace(text) == "" {
 			continue
 		}
-		block := map[string]any{
-			"type": "text",
-			"text": section,
-		}
-		if cached < maxAnthropicCacheBreakpoints {
-			block["cache_control"] = map[string]string{"type": "ephemeral"}
+		cache := cached < maxAnthropicCacheBreakpoints
+		if cache {
 			cached++
 		}
-		blocks = append(blocks, block)
+		blocks = append(blocks, anthropicTextBlock(text, cache))
 	}
-	if len(blocks) > 0 || req.VolatileSuffix != "" {
-		blocks = append(blocks, map[string]any{"type": "text", "text": req.VolatileSuffix})
-	} else if req.Prompt != "" {
-		blocks = append(blocks, map[string]any{"type": "text", "text": req.Prompt})
+	for _, text := range dynamic {
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		blocks = append(blocks, anthropicTextBlock(text, false))
+	}
+	return blocks
+}
+
+func anthropicMessages(req modelrouter.Request) any {
+	if blocks, ok := anthropicUserBlocks(req); ok {
+		return []map[string]any{{"role": "user", "content": blocks}}
+	}
+	return []map[string]string{{"role": "user", "content": req.Prompt}}
+}
+
+// anthropicUserBlocks is the volatile user turn: TASK, transcript, closing,
+// then image blocks. Constitution does not belong here.
+func anthropicUserBlocks(req modelrouter.Request) ([]map[string]any, bool) {
+	system := anthropicSystemBlocks(req)
+	var blocks []map[string]any
+	if strings.TrimSpace(req.VolatileSuffix) != "" {
+		blocks = append(blocks, anthropicTextBlock(req.VolatileSuffix, false))
+	} else if len(system) == 0 && strings.TrimSpace(req.Prompt) != "" {
+		return nil, false
 	}
 	blocks = append(blocks, anthropicImageBlocks(req.Media)...)
+	if len(blocks) == 0 && len(system) > 0 {
+		// Anthropic requires a user message; keep a minimal turn if the
+		// caller supplied system without a suffix (tests always send both).
+		return []map[string]any{anthropicTextBlock(" ", false)}, true
+	}
 	return blocks, len(blocks) > 0
 }
 

@@ -344,6 +344,11 @@ func TestAnthropicProviderEncodesImageBlocks(t *testing.T) {
 	png := tinyPNG()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
+			System []struct {
+				Type         string            `json:"type"`
+				Text         string            `json:"text"`
+				CacheControl map[string]string `json:"cache_control"`
+			} `json:"system"`
 			Messages []struct {
 				Content []struct {
 					Type         string            `json:"type"`
@@ -360,14 +365,17 @@ func TestAnthropicProviderEncodesImageBlocks(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
+		if len(body.System) != 1 || body.System[0].Text != "stable" || body.System[0].CacheControl["type"] != "ephemeral" {
+			t.Fatalf("stable prefix must stay on system: %+v", body.System)
+		}
 		blocks := body.Messages[0].Content
-		if len(blocks) != 3 {
-			t.Fatalf("want text+text+image blocks, got %d", len(blocks))
+		if len(blocks) != 2 {
+			t.Fatalf("want volatile text+image on user, got %d", len(blocks))
 		}
-		if blocks[0].CacheControl["type"] != "ephemeral" {
-			t.Fatalf("stable prefix must keep cache control: %+v", blocks[0])
+		if blocks[0].Text != "volatile" || len(blocks[0].CacheControl) != 0 {
+			t.Fatalf("volatile user text = %+v", blocks[0])
 		}
-		img := blocks[2]
+		img := blocks[1]
 		if img.Type != "image" || img.Source.Type != "base64" || img.Source.MediaType != "image/png" {
 			t.Fatalf("bad image block: %+v", img)
 		}

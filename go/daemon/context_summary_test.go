@@ -289,6 +289,9 @@ func TestContextSummaryLedgerLabelsOpenAICacheNone(t *testing.T) {
 	if ledger["cache"] != "none" {
 		t.Fatalf("OpenAI route must label cache=none: %#v", ledger)
 	}
+	if ledger["constitution_role"] != "user" {
+		t.Fatalf("OpenAI still stuffs constitution in user: %#v", ledger["constitution_role"])
+	}
 	for _, raw := range ledgerLayers(t, ledger["layers"]) {
 		if raw["cache"] != "none" {
 			t.Fatalf("OpenAI layer must be cache=none: %#v", raw)
@@ -323,22 +326,29 @@ func TestContextSummaryLedgerLabelsAnthropicCache(t *testing.T) {
 	if ledger["cache"] != "anthropic" {
 		t.Fatalf("Anthropic route must keep cache=anthropic: %#v", ledger)
 	}
+	if ledger["constitution_role"] != "system" {
+		t.Fatalf("Anthropic constitution must be labeled system: %#v", ledger["constitution_role"])
+	}
 	foundIdentity, foundMode := false, false
 	for _, raw := range ledgerLayers(t, ledger["layers"]) {
 		switch raw["id"] {
 		case "identity":
 			foundIdentity = true
-			if raw["cache"] != "anthropic" {
-				t.Fatalf("Anthropic identity must stay cacheable: %#v", raw)
+			if raw["cache"] != "anthropic" || raw["role"] != "system" {
+				t.Fatalf("Anthropic identity must stay cacheable system: %#v", raw)
 			}
 		case "mode":
 			foundMode = true
-			if raw["cache"] != "anthropic" {
-				t.Fatalf("Anthropic mode must stay cacheable: %#v", raw)
+			if raw["cache"] != "anthropic" || raw["role"] != "system" {
+				t.Fatalf("Anthropic mode must stay cacheable system: %#v", raw)
 			}
-		case "transcript":
-			if raw["cache"] != "none" {
-				t.Fatalf("transcript layer is volatile: %#v", raw)
+		case "workspace", "catalog":
+			if raw["cache"] != "dynamic" || raw["role"] != "system" {
+				t.Fatalf("Anthropic workspace/catalog sit after the boundary: %#v", raw)
+			}
+		case "trailer", "transcript":
+			if raw["cache"] != "none" || raw["role"] != "user" {
+				t.Fatalf("TASK/transcript must stay user/none: %#v", raw)
 			}
 		}
 	}

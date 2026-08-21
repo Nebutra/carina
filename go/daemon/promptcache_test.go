@@ -65,6 +65,12 @@ func TestPromptSectionsKeepOrderAndOmitEmpty(t *testing.T) {
 	if len(got) != 3 || got[0] != "CONSTITUTION" || got[1] != "WORKSPACE" || got[2] != "CATALOG" {
 		t.Fatalf("cache sections = %#v", got)
 	}
+	if cons := seg.ConstitutionSections(); len(cons) != 1 || cons[0] != "CONSTITUTION" {
+		t.Fatalf("constitution sections = %#v", cons)
+	}
+	if dyn := seg.DynamicSections(); len(dyn) != 2 || dyn[0] != "WORKSPACE" || dyn[1] != "CATALOG" {
+		t.Fatalf("dynamic sections = %#v", dyn)
+	}
 	if strings.Join(got, "\n\n") != seg.StablePrefix {
 		t.Fatalf("sections must reassemble the stuffed prefix: sections=%q prefix=%q", strings.Join(got, "\n\n"), seg.StablePrefix)
 	}

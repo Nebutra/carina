@@ -19,7 +19,13 @@ type Request struct {
 	// constitution / workspace / catalog(+task) text blocks. Adapters that
 	// do not understand sections keep using StablePrefix as one blob.
 	StableSections []string `json:"stable_sections,omitempty"`
-	VolatileSuffix string   `json:"volatile_suffix,omitempty"`
+	// SystemSections are constitution A–D (or a legacy constitution blob).
+	// Anthropic sends them as the Messages `system` array with cache_control.
+	SystemSections []string `json:"system_sections,omitempty"`
+	// DynamicSections are workspace/catalog after the cache boundary.
+	// Anthropic sends them as uncached `system` blocks, not as user text.
+	DynamicSections []string `json:"dynamic_sections,omitempty"`
+	VolatileSuffix  string   `json:"volatile_suffix,omitempty"`
 	// Media carries image parts for vision-capable models. Raw bytes here,
 	// provider-specific encoding (base64 data URI vs source block) in each
 	// adapter. Callers are responsible for gating on the model's declared

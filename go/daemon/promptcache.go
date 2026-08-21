@@ -147,16 +147,27 @@ func compactNonEmpty(parts ...string) []string {
 	return out
 }
 
-// CacheSections returns Anthropic-compatible cached text blocks: named A–D
+// ConstitutionSections returns cacheable A–D (or the legacy constitution blob).
+func (s promptSegments) ConstitutionSections() []string {
+	parts := compactNonEmpty(s.Mode, s.Identity, s.Protocol, s.Tools)
+	if len(parts) == 0 && strings.TrimSpace(s.Constitution) != "" {
+		return []string{strings.TrimSpace(s.Constitution)}
+	}
+	return parts
+}
+
+// DynamicSections returns workspace and catalog: after the cache boundary,
+// not in the user TASK block.
+func (s promptSegments) DynamicSections() []string {
+	return compactNonEmpty(s.Workspace, s.Catalog)
+}
+
+// CacheSections returns Anthropic-compatible prefix blocks: named A–D
 // when present, otherwise the legacy constitution blob, then workspace and
 // catalog. REQUESTED skills, TASK, and transcript stay out. The Anthropic
-// adapter attaches at most four cache_control breakpoints (API cap).
+// adapter caches at most four A–D breakpoints (API cap) on `system`.
 func (s promptSegments) CacheSections() []string {
-	parts := compactNonEmpty(s.Mode, s.Identity, s.Protocol, s.Tools)
-	if len(parts) == 0 && s.Constitution != "" {
-		parts = []string{s.Constitution}
-	}
-	return append(parts, compactNonEmpty(s.Workspace, s.Catalog)...)
+	return append(s.ConstitutionSections(), s.DynamicSections()...)
 }
 
 // full is the complete prompt (prefix + suffix) — what the loop sends.
@@ -166,6 +177,12 @@ func (s promptSegments) full() string { return s.StablePrefix + s.VolatileSuffix
 func (s promptSegments) CacheBreakpoint() int { return len(s.StablePrefix) }
 
 type stableSectionsKey struct{}
+type anthropicLayoutKey struct{}
+
+type anthropicSectionLayout struct {
+	System  []string
+	Dynamic []string
+}
 
 func (d *Daemon) composeAgentPromptLayers(sess *sessionstore.Session, task *scheduler.ExecutionRun, memorySnapshot string) promptLayers {
 	layers := promptLayers{
@@ -257,4 +274,24 @@ func stableSectionsFrom(ctx context.Context) []string {
 	}
 	sections, _ := ctx.Value(stableSectionsKey{}).([]string)
 	return sections
+}
+
+func withAnthropicLayout(ctx context.Context, layout anthropicSectionLayout) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if len(layout.System) == 0 && len(layout.Dynamic) == 0 {
+		return ctx
+	}
+	layout.System = append([]string(nil), layout.System...)
+	layout.Dynamic = append([]string(nil), layout.Dynamic...)
+	return context.WithValue(ctx, anthropicLayoutKey{}, layout)
+}
+
+func anthropicLayoutFrom(ctx context.Context) anthropicSectionLayout {
+	if ctx == nil {
+		return anthropicSectionLayout{}
+	}
+	layout, _ := ctx.Value(anthropicLayoutKey{}).(anthropicSectionLayout)
+	return layout
 }
