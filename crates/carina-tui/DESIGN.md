@@ -5,12 +5,13 @@
 > `styles.md` is the renderer contract. When a P0 slice ships, rewrite the
 > matching `styles.md` section. Do not keep two competing empty-state stories.
 >
-> Baseline: Carina v0.8.40. Chrome P0, conversation-document P0, recovered
+> Baseline: Carina v0.8.41. Chrome P0, conversation-document P0, recovered
 > failures leaving the page, collapse-clear, honest Grok isolation copy,
 > hot-path P0, Intent-Meta prompt, session-dialogue hydrate, unboxed chat
 > tables, history-fork rewind, constitution A–D, Harness naming, todo/web.search,
-> prefix-stable skills, Grok ACP stdio persist, and Grok cache isolation
-> robustness **landed**.
+> prefix-stable skills, Grok ACP stdio persist, Grok cache isolation
+> robustness, persist session-title leftovers, and canonical proxy model
+> chips **landed**.
 > Steal principles, not pixels.
 > Rejected wholesale: GrokNight / TokyoNight, OMP π branding, Claude terracotta
 > as Carina identity, Jcode idle donut, Buddy/pets, Codex 36-frame ASCII loops.
