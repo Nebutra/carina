@@ -32,6 +32,8 @@ type InputMediaRef struct {
 // ExecutionRun is the foreground conversation execution owned by the daemon.
 type ExecutionRun struct {
 	RunID                       string           `json:"run_id"`
+	ParentRunID                 string           `json:"parent_run_id,omitempty"`
+	RootRunID                   string           `json:"root_run_id"`
 	RetryOfRunID                string           `json:"retry_of_run_id,omitempty"`
 	ClientSubmissionID          string           `json:"client_submission_id,omitempty"`
 	ClientSubmissionFingerprint string           `json:"-"` // durable internal identity; never exposed through Task JSON
@@ -66,9 +68,11 @@ type ExecutionRun struct {
 }
 
 type Scheduler struct {
-	mu    sync.Mutex
-	queue []string
-	runs  map[string]*ExecutionRun
+	mu             sync.Mutex
+	queue          []string
+	runs           map[string]*ExecutionRun
+	nextSubscriber uint64
+	subscribers    map[uint64]*runSubscriber
 	// dispatchQueue holds delegated tasks awaiting a remote worker's lease.
 	// It is separate from queue/the in-process path so the two never race for
 	// the same unit of work.
@@ -76,8 +80,24 @@ type Scheduler struct {
 	tasks         map[string]*Task
 }
 
+// RunUpdate is a coalesced signal that a durable run revision changed.
+// Consumers must re-read scheduler snapshots after every signal.
+type RunUpdate struct {
+	RunID    string
+	Revision int64
+}
+
+type runSubscriber struct {
+	runIDs  map[string]struct{}
+	updates chan RunUpdate
+}
+
 func New() *Scheduler {
-	return &Scheduler{runs: make(map[string]*ExecutionRun), tasks: make(map[string]*Task)}
+	return &Scheduler{
+		runs:        make(map[string]*ExecutionRun),
+		subscribers: make(map[uint64]*runSubscriber),
+		tasks:       make(map[string]*Task),
+	}
 }
 
 func (s *Scheduler) Submit(sessionID, workspaceID, prompt string) *ExecutionRun {
@@ -96,6 +116,41 @@ func (s *Scheduler) SubmitWithGoalAndModel(sessionID, workspaceID, prompt, model
 }
 
 func (s *Scheduler) SubmitWithGoalModelAgent(sessionID, workspaceID, prompt, model, agent string, criteria []SuccessCheck) *ExecutionRun {
+	return s.submitExecutionRun("", sessionID, workspaceID, prompt, model, agent, criteria)
+}
+
+// SubmitChildWithGoalModelAgent creates a durable child in the parent's root
+// lineage. Parent lookup and child publication are atomic so a returned child
+// can never reference a parent that was absent when it was accepted.
+func (s *Scheduler) SubmitChildWithGoalModelAgent(parentRunID, sessionID, workspaceID, prompt, model, agent string, criteria []SuccessCheck) (*ExecutionRun, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	parent, ok := s.runs[parentRunID]
+	if !ok {
+		return nil, fmt.Errorf("scheduler: unknown parent task %s", parentRunID)
+	}
+	task := newExecutionRun(sessionID, workspaceID, prompt, model, agent, criteria)
+	task.ParentRunID = parent.RunID
+	task.RootRunID = parent.RootRunID
+	s.installRunLocked(task)
+	s.queue = append(s.queue, task.RunID)
+	return cloneExecutionRun(task), nil
+}
+
+func (s *Scheduler) submitExecutionRun(parentRunID, sessionID, workspaceID, prompt, model, agent string, criteria []SuccessCheck) *ExecutionRun {
+	task := newExecutionRun(sessionID, workspaceID, prompt, model, agent, criteria)
+	task.ParentRunID = parentRunID
+	if parentRunID == "" {
+		task.RootRunID = task.RunID
+	}
+	s.mu.Lock()
+	s.installRunLocked(task)
+	s.queue = append(s.queue, task.RunID)
+	s.mu.Unlock()
+	return cloneExecutionRun(task)
+}
+
+func newExecutionRun(sessionID, workspaceID, prompt, model, agent string, criteria []SuccessCheck) *ExecutionRun {
 	now := time.Now().UTC()
 	task := &ExecutionRun{
 		RunID:           sessionstore.NewID("run"),
@@ -107,15 +162,11 @@ func (s *Scheduler) SubmitWithGoalModelAgent(sessionID, workspaceID, prompt, mod
 		UserPrompt:      prompt,
 		Model:           model,
 		Agent:           agent,
-		SuccessCriteria: criteria,
+		SuccessCriteria: append([]SuccessCheck(nil), criteria...),
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
 	task.Continuity.Progress = continuity.ProgressStarted
-	s.mu.Lock()
-	s.runs[task.RunID] = task
-	s.queue = append(s.queue, task.RunID)
-	s.mu.Unlock()
 	return task
 }
 
@@ -123,7 +174,37 @@ func (s *Scheduler) Get(taskID string) (*ExecutionRun, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t, ok := s.runs[taskID]
-	return t, ok
+	return cloneExecutionRun(t), ok
+}
+
+// SubscribeRunUpdates registers a bounded, coalescing subscription for the
+// requested run IDs. Registration happens under the same lock as mutations,
+// so callers can subscribe before reading state without a lost-wakeup gap.
+func (s *Scheduler) SubscribeRunUpdates(runIDs ...string) (<-chan RunUpdate, func()) {
+	runSet := make(map[string]struct{}, len(runIDs))
+	for _, runID := range runIDs {
+		if runID != "" {
+			runSet[runID] = struct{}{}
+		}
+	}
+	s.mu.Lock()
+	s.nextSubscriber++
+	id := s.nextSubscriber
+	sub := &runSubscriber{runIDs: runSet, updates: make(chan RunUpdate, 1)}
+	s.subscribers[id] = sub
+	s.mu.Unlock()
+
+	var once sync.Once
+	return sub.updates, func() {
+		once.Do(func() {
+			s.mu.Lock()
+			if current, ok := s.subscribers[id]; ok {
+				delete(s.subscribers, id)
+				close(current.updates)
+			}
+			s.mu.Unlock()
+		})
+	}
 }
 
 func (s *Scheduler) SetClientSubmission(taskID, clientSubmissionID, fingerprint string) {
@@ -134,7 +215,7 @@ func (s *Scheduler) SetClientSubmission(taskID, clientSubmissionID, fingerprint 
 		updated.ClientSubmissionID = clientSubmissionID
 		updated.ClientSubmissionFingerprint = fingerprint
 		touchRun(&updated)
-		s.runs[taskID] = &updated
+		s.installRunLocked(&updated)
 	}
 }
 
@@ -145,7 +226,7 @@ func (s *Scheduler) SetRetryOf(taskID, retryOfRunID string) {
 		updated := *task
 		updated.RetryOfRunID = retryOfRunID
 		touchRun(&updated)
-		s.runs[taskID] = &updated
+		s.installRunLocked(&updated)
 	}
 }
 
@@ -156,7 +237,7 @@ func (s *Scheduler) SetInputMediaRefs(taskID string, refs []InputMediaRef) {
 		updated := *task
 		updated.InputMediaRefs = append([]InputMediaRef(nil), refs...)
 		touchRun(&updated)
-		s.runs[taskID] = &updated
+		s.installRunLocked(&updated)
 	}
 }
 
@@ -168,7 +249,7 @@ func (s *Scheduler) SetModelState(taskID, requested, effective string) {
 		updated.RequestedModel = requested
 		updated.EffectiveModel = effective
 		touchRun(&updated)
-		s.runs[taskID] = &updated
+		s.installRunLocked(&updated)
 	}
 }
 
@@ -180,7 +261,7 @@ func (s *Scheduler) SetReasoningEffortState(taskID, requested, effective string)
 		updated.RequestedReasoningEffort = requested
 		updated.EffectiveReasoningEffort = effective
 		touchRun(&updated)
-		s.runs[taskID] = &updated
+		s.installRunLocked(&updated)
 	}
 }
 
@@ -191,7 +272,7 @@ func (s *Scheduler) SetLocale(taskID, locale string) {
 		updated := *task
 		updated.Locale = locale
 		touchRun(&updated)
-		s.runs[taskID] = &updated
+		s.installRunLocked(&updated)
 	}
 }
 
@@ -202,29 +283,34 @@ func (s *Scheduler) SetEffectiveModel(taskID, effective string) {
 		updated := *task
 		updated.EffectiveModel = effective
 		touchRun(&updated)
-		s.runs[taskID] = &updated
+		s.installRunLocked(&updated)
 	}
 }
 
 func (s *Scheduler) Cancel(taskID string) (*ExecutionRun, error) {
-	cancelled, err := s.transition(taskID, "cancelled")
-	if err == nil && cancelled != nil {
-		s.mu.Lock()
-		if current := s.runs[taskID]; current != nil {
-			updated := *current
-			updated.Continuity.Interruption = &continuity.InterruptionRecord{
-				Kind: continuity.InterruptionOperatorCancelled, Actor: "user", ObservedAt: time.Now().UTC(),
-				TaskID: taskID, Certainty: continuity.CertaintyObserved, Retryable: false,
-				UserAction: "explicitly continue from a retained checkpoint or start a new task",
-			}
-			updated.Continuity.Recovery = continuity.RecoveryDecision{Disposition: continuity.RecoveryNone, Reason: "operator cancellation is never automatically recovered"}
-			touchRun(&updated)
-			s.runs[taskID] = &updated
-			cancelled = &updated
-		}
-		s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current := s.runs[taskID]
+	if current == nil {
+		return nil, fmt.Errorf("scheduler: unknown task %s", taskID)
 	}
-	return cancelled, err
+	if current.Status == "cancelled" {
+		return cloneExecutionRun(current), nil
+	}
+	if isTerminal(current.Status) {
+		return cloneExecutionRun(current), fmt.Errorf("scheduler: task %s is already %s", taskID, current.Status)
+	}
+	updated := *current
+	updated.Status = "cancelled"
+	updated.Continuity.Interruption = &continuity.InterruptionRecord{
+		Kind: continuity.InterruptionOperatorCancelled, Actor: "user", ObservedAt: time.Now().UTC(),
+		TaskID: taskID, Certainty: continuity.CertaintyObserved, Retryable: false,
+		UserAction: "explicitly continue from a retained checkpoint or start a new task",
+	}
+	updated.Continuity.Recovery = continuity.RecoveryDecision{Disposition: continuity.RecoveryNone, Reason: "operator cancellation is never automatically recovered"}
+	touchRun(&updated)
+	s.installRunLocked(&updated)
+	return cloneExecutionRun(&updated), nil
 }
 
 // Next pops the oldest queued task and marks it running.
@@ -239,8 +325,8 @@ func (s *Scheduler) Next() *ExecutionRun {
 			updated := *t
 			updated.Status = "running"
 			touchRun(&updated)
-			s.runs[id] = &updated
-			return &updated
+			s.installRunLocked(&updated)
+			return cloneExecutionRun(&updated)
 		}
 	}
 	return nil
@@ -276,14 +362,13 @@ func (s *Scheduler) transition(taskID, status string) (*ExecutionRun, error) {
 		return nil, fmt.Errorf("scheduler: unknown task %s", taskID)
 	}
 	if t.Status == "cancelled" && status != "cancelled" {
-		copy := *t
-		return &copy, fmt.Errorf("scheduler: cancelled task %s is terminal", taskID)
+		return cloneExecutionRun(t), fmt.Errorf("scheduler: cancelled task %s is terminal", taskID)
 	}
 	updated := *t
 	updated.Status = status
 	touchRun(&updated)
-	s.runs[taskID] = &updated
-	return &updated, nil
+	s.installRunLocked(&updated)
+	return cloneExecutionRun(&updated), nil
 }
 
 // SetResult attaches a finished run's summary and applied-patch ids, so a
@@ -297,9 +382,9 @@ func (s *Scheduler) SetResult(taskID, summary string, patches []string) {
 	}
 	updated := *t
 	updated.Summary = summary
-	updated.AppliedPatches = patches
+	updated.AppliedPatches = append([]string(nil), patches...)
 	touchRun(&updated)
-	s.runs[taskID] = &updated
+	s.installRunLocked(&updated)
 }
 
 // SetResultKind records the typed identity of a completed result before the
@@ -311,7 +396,7 @@ func (s *Scheduler) SetResultKind(taskID, resultKind string) {
 		updated := *t
 		updated.ResultKind = resultKind
 		touchRun(&updated)
-		s.runs[taskID] = &updated
+		s.installRunLocked(&updated)
 	}
 }
 
@@ -322,7 +407,7 @@ func (s *Scheduler) SetAppliedPatches(taskID string, patches []string) {
 		updated := *t
 		updated.AppliedPatches = append([]string(nil), patches...)
 		touchRun(&updated)
-		s.runs[taskID] = &updated
+		s.installRunLocked(&updated)
 	}
 }
 
@@ -346,8 +431,8 @@ func (s *Scheduler) RestoreCheckpoint(taskID string, patches []string) (*Executi
 	updated.ReconciliationRequired = false
 	updated.BlockedReason = ""
 	touchRun(&updated)
-	s.runs[taskID] = &updated
-	return &updated, nil
+	s.installRunLocked(&updated)
+	return cloneExecutionRun(&updated), nil
 }
 
 // MarkReconciliationRequired keeps a failed restore non-runnable until the
@@ -370,8 +455,8 @@ func (s *Scheduler) MarkReconciliationRequired(taskID, reason string, patches ..
 		updated.AppliedPatches = append([]string(nil), patches[0]...)
 	}
 	touchRun(&updated)
-	s.runs[taskID] = &updated
-	return &updated, nil
+	s.installRunLocked(&updated)
+	return cloneExecutionRun(&updated), nil
 }
 
 // Resume atomically claims a paused task for execution. Callers must persist
@@ -392,8 +477,8 @@ func (s *Scheduler) Resume(taskID string) (*ExecutionRun, error) {
 	updated := *t
 	updated.Status = "running"
 	touchRun(&updated)
-	s.runs[taskID] = &updated
-	return &updated, nil
+	s.installRunLocked(&updated)
+	return cloneExecutionRun(&updated), nil
 }
 
 // SetOutputSchema records the required keys the task's final JSON output must
@@ -405,7 +490,7 @@ func (s *Scheduler) SetOutputSchema(taskID string, schema json.RawMessage) {
 		updated := *t
 		updated.OutputSchema = append(json.RawMessage(nil), schema...)
 		touchRun(&updated)
-		s.runs[taskID] = &updated
+		s.installRunLocked(&updated)
 	}
 }
 
@@ -417,7 +502,7 @@ func (s *Scheduler) AddTokens(taskID string, n int) {
 		updated := *t
 		updated.TokensUsed += n
 		touchRun(&updated)
-		s.runs[taskID] = &updated
+		s.installRunLocked(&updated)
 	}
 }
 func (s *Scheduler) SetTokenBudget(taskID string, budget int) {
@@ -427,7 +512,7 @@ func (s *Scheduler) SetTokenBudget(taskID string, budget int) {
 		updated := *t
 		updated.TokenBudget = budget
 		touchRun(&updated)
-		s.runs[taskID] = &updated
+		s.installRunLocked(&updated)
 	}
 }
 
@@ -439,7 +524,7 @@ func (s *Scheduler) SetMode(taskID, mode string) {
 		updated := *t
 		updated.Mode = mode
 		touchRun(&updated)
-		s.runs[taskID] = &updated
+		s.installRunLocked(&updated)
 	}
 }
 
@@ -449,7 +534,7 @@ func (s *Scheduler) List() []*ExecutionRun {
 	defer s.mu.Unlock()
 	out := make([]*ExecutionRun, 0, len(s.runs))
 	for _, t := range s.runs {
-		out = append(out, t)
+		out = append(out, cloneExecutionRun(t))
 	}
 	return out
 }
@@ -481,13 +566,16 @@ func (s *Scheduler) Load(t *ExecutionRun) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.runs[t.RunID]; !exists {
-		loaded := *t
-		normalizeRun(&loaded)
-		s.runs[t.RunID] = &loaded
+		loaded := cloneExecutionRun(t)
+		normalizeRun(loaded)
+		s.installRunLocked(loaded)
 	}
 }
 
 func normalizeRun(task *ExecutionRun) {
+	if task.RootRunID == "" {
+		task.RootRunID = task.RunID
+	}
 	if task.Revision < 1 {
 		task.Revision = 1
 	}
@@ -501,4 +589,49 @@ func touchRun(task *ExecutionRun) {
 	task.Revision++
 	task.UpdatedAt = time.Now().UTC()
 	task.Continuity = continuity.MergeTaskStatus(task.Continuity, task.Status, len(task.SuccessCriteria) > 0)
+}
+
+func (s *Scheduler) installRunLocked(task *ExecutionRun) {
+	installed := cloneExecutionRun(task)
+	s.runs[installed.RunID] = installed
+	update := RunUpdate{RunID: installed.RunID, Revision: installed.Revision}
+	for _, sub := range s.subscribers {
+		if _, ok := sub.runIDs[installed.RunID]; !ok {
+			continue
+		}
+		select {
+		case sub.updates <- update:
+		default:
+		}
+	}
+}
+
+func cloneExecutionRun(task *ExecutionRun) *ExecutionRun {
+	if task == nil {
+		return nil
+	}
+	cloned := *task
+	cloned.InputMediaRefs = append([]InputMediaRef(nil), task.InputMediaRefs...)
+	cloned.SuccessCriteria = append([]SuccessCheck(nil), task.SuccessCriteria...)
+	cloned.AppliedPatches = append([]string(nil), task.AppliedPatches...)
+	cloned.OutputSchema = append(json.RawMessage(nil), task.OutputSchema...)
+	if task.Continuity.Interruption != nil {
+		interruption := *task.Continuity.Interruption
+		cloned.Continuity.Interruption = &interruption
+	}
+	if task.Continuity.WorkspaceAnchor != nil {
+		anchor := *task.Continuity.WorkspaceAnchor
+		anchor.DependencyFiles = append([]continuity.FileDigest(nil), task.Continuity.WorkspaceAnchor.DependencyFiles...)
+		anchor.DependencySpans = append([]continuity.FileSpanDigest(nil), task.Continuity.WorkspaceAnchor.DependencySpans...)
+		anchor.MutationFiles = append([]continuity.FileDigest(nil), task.Continuity.WorkspaceAnchor.MutationFiles...)
+		anchor.PatchLineage = append([]string(nil), task.Continuity.WorkspaceAnchor.PatchLineage...)
+		cloned.Continuity.WorkspaceAnchor = &anchor
+	}
+	if task.Continuity.Recovery.Proofs != nil {
+		cloned.Continuity.Recovery.Proofs = make(map[string]bool, len(task.Continuity.Recovery.Proofs))
+		for proof, passed := range task.Continuity.Recovery.Proofs {
+			cloned.Continuity.Recovery.Proofs[proof] = passed
+		}
+	}
+	return &cloned
 }

@@ -47,7 +47,7 @@ fn transcript_uses_owned_role_and_accent_helpers() {
     for owned in [
         "transcript_user()",
         "transcript_user_band()",
-        "transcript_assistant()",
+        "transcript_markdown_accent()",
         "transcript_thinking()",
         "transcript_tool()",
         "transcript_tool_settled()",

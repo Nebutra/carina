@@ -1,20 +1,21 @@
 # Carina TUI Aesthetic Design System (DRAFT)
 
 > Status: **draft law for aesthetic work**. Live SSOT:
-> `docs/research/competitive-2026-08/18-tui-aesthetic-post-0.8.29.md`.
+> `docs/research/competitive-2026-08/30-tui-aesthetic-audit.md`（`18` 为 0.8.29 历史）。
 > `styles.md` is the renderer contract. When a P0 slice ships, rewrite the
 > matching `styles.md` section. Do not keep two competing empty-state stories.
 >
-> Baseline: Carina v0.8.42. Chrome P0, conversation-document P0, recovered
+> Baseline: Carina v0.9.0. Chrome P0, conversation-document P0, recovered
 > failures leaving the page, collapse-clear, honest Grok isolation copy,
 > hot-path P0, Intent-Meta prompt, session-dialogue hydrate, unboxed chat
 > tables, history-fork rewind, constitution A–D, Harness naming, todo/web.search,
 > prefix-stable skills, Grok ACP stdio persist, Grok cache isolation
 > robustness, persist session-title leftovers, canonical proxy model
 > chips, Anthropic system-role constitution, and identity≠workspace **landed**.
-> Steal principles, not pixels.
-> Rejected wholesale: GrokNight / TokyoNight, OMP π branding, Claude terracotta
-> as Carina identity, Jcode idle donut, Buddy/pets, Codex 36-frame ASCII loops.
+> **好看优先。** 别人已经解过的画面问题直接拿来：Codex 的 OSC user 带、
+> Claude 的开口轨、OMP 的状态进顶规则、Grok 的 live `┃` 与 demand-gated 动画。
+> 不拿的是身份：GrokNight 皮肤店、OMP π、Claude terracotta 当 Carina、
+> Jcode idle donut、Buddy/pets、Codex 36 帧 ASCII 循环。拒绝换皮不是拒绝变好看。
 
 This document exists because `styles.md` already proves Carina can be
 **correct**. Correct and ugly is still **FAIL**. The first open must feel
@@ -40,9 +41,19 @@ color. Ion-cyan (`#8edbd2`) is focus, live work, and added-line emphasis.
 Root canvas stays `Color::Reset`. Transcript still uses at most three saturated
 foregrounds at once: ion-cyan, copper-amber, event-red.
 
-**Token drift (must fix):** `theme.rs` `Palette::dark().brand` is currently
-`#de859b` (`222,133,155`). Canonical is `#8e4053`. The TUI mark must match
-the identity master, not a brighter improvisation.
+Dark TUI `brand` is `terminal-brand-display` (`#a86d79`). Light TUI `brand` is
+canonical brand-rose. Do not paint `#8e4053` on dark Reset, and do not invent a
+third pink. The mark is the only consumer of `brand`.
+
+**Landed visual P0:** A115 user OSC tint, A106 slash one accent, A107 live-Theme
+muted chips, A109 toy chrome speaks production, A116 overlay rest not a cyan
+room, A114′ terminal-brand-display.
+**Landed voice/header P1:** A108 operator English (`context` not `ctx`, queue
+preview not steer_id, Doctor); A117 import header no reasoning dump; A105
+question `glyphs.selected()`; A118 one-row header has no mini mark; A103
+`/changes` identity truncates on path/`-` segments; header mode recedes
+(Build muted, Plan accent only as the exception); A015 assistant
+markdown list/table labels recede, heading takes a document beat.
 
 ---
 
@@ -56,12 +67,12 @@ Renderers consume helpers on `Theme`. Never `Color::Rgb` outside `theme.rs`.
 | `gray_bright` | User identity | User `❯` |
 | `gray` / `muted` | Secondary, settled receipts | Descriptions, completed tool titles |
 | `gray_dim` | Tertiary / meta | Thinking, timestamps, paths, chrome rest |
-| `brand` | Mark only | 10×5 braille glyph. Never composer, never buttons |
+| `brand` | Mark only | 10x5 braille glyph. Dark: `terminal-brand-display`. Light: brand-rose. Never composer, never buttons |
 | `accent` | Interaction / live / add | Focus ring, focused composer border, live activity, `+` lines, links |
 | `warning` | Attention still live | Approval wait, live tool, context heat, notices |
 | `danger` | Failure / remove / destructive | Failure cell mark, `-` lines, destructive confirm. **Not** a full-frame fill |
 | `success` | Non-transcript completion | Settings specimen, media ready, doctor. **Never** assistant identity |
-| `user_message_bg` | User band | User turn only; Basic/`NO_COLOR` → Reset |
+| `user_message_bg` | User band | User turn only. **Must be an OSC/probed-bg veil**, not a mineral slab: dark = 12% white over the detected default bg, light = 4% black (Codex `user_message_bg_rgb`). No probe → Reset or a documented faint fallback that still reads as the same page. Basic/`NO_COLOR` → Reset. Occupied cells only. |
 | `selection_bg` | One selected row | Lists, overlays. Never two adjacent filled bands |
 | `border` | Resting chrome | Idle composer, header hairline, unfocused overlay |
 | `code_*` / `diff_*` | Code and workbench diffs | Fenced code; `/changes` hunk pane. Transcript diffs stay fg-only |
@@ -85,6 +96,12 @@ Pick **one** chrome family and keep it:
 
 **Allowed boxes:** composer (the signature), overlays/modals, product menu,
 slash/file/history popups, `/changes` workbench, plan review, approval.
+
+**Overlay rest vs live:** four-sided rounded overlays use `border` or `muted`
+for the frame. `focus()` / ion-cyan is for the selected row, the open product
+menu trigger, or a focused composer — not the whole modal. Approval stays
+**warning**. Inbox already uses muted; plan review and Settings must match that
+family (audit **A116**). Do not paint a cyan room around a decision list.
 
 **Forbidden boxes:** transcript turns, status/notice rows, header, idle empty
 mark. Dialogue is a document, not a stack of cards.
@@ -230,10 +247,12 @@ Header (conversation, 1 content row + hairline):
 
 - Left: product trigger `Carina ▾` (opens menu). Below 24 cells, keep the
   word; never squeeze the braille mark into this row.
-- Right: **one** fact. Priority: Review/Resume (warning) → Mode → Model.
-  Drop `reasoning off` from the always-visible row.
+- Right: **one** fact. Priority: Review/Resume (warning) → Plan (accent,
+  exception) → Model. Default **Build** is muted. Never paint Build as the
+  live object. Drop `reasoning off` from the always-visible row.
 - Product name is `text`+bold at rest, `accent`+bold only while the menu is
-  open. Mode may use accent. Do not paint both name and mode accent at once.
+  open. Plan may use accent. Do not paint both name and mode accent at once.
+  A paused Review outranks Plan.
 
 ---
 
@@ -420,3 +439,21 @@ Shipped on 0.8.31: recovered/settled-retry failures leave the reading column;
 collapsing a tool clears wrap remnants from the unread gutter.
 
 Do not start A102 shine or a theme catalog until Fixture A is the daily binary.
+
+Remaining visual P0 from `docs/research/competitive-2026-08/30-tui-aesthetic-audit.md`:
+
+| ID | Knife | Status |
+|----|-------|--------|
+| A115 | User band = OSC-relative 12%/4% tint, never `#262b2c` | **landed** |
+| A106 | Slash: one accent (selected row). Names are text. Frame is border | **landed** |
+| A107 | Chips take the live `Theme`; muted pills; no `Theme::detected(None)` | **landed** |
+| A109 | Toy `golden_frames` speak production chrome, or they are deleted | **landed** |
+| A116 | Overlay rest border muted; no cyan rooms | **landed** |
+| A114′ | Terminal brand-display token (readable on Reset) or structural mark | **landed** |
+| A108 | Operator English: context not ctx; queue; Doctor title | **landed** |
+| A117 | Import/setup header: one fact, no reasoning dump | **landed** |
+| A105 | Question lists use `glyphs.selected()`, never a hardcoded `>` | **landed** |
+| A118 | One-row conversation header is wordmark-only; no mini mark | **landed** |
+| A103 | `/changes` identity truncates on path/`-` segments, not mid-token | **landed** |
+| A119 | Header mode recedes: Build muted; Plan accent only as the exception | **landed** |
+| A015 | Assistant markdown: list/table labels muted; `transcript_markdown_accent` is not the bullet | **landed** |

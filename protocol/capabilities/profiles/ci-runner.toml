@@ -8,6 +8,8 @@ command_exec = { allow = "allowlist", max_risk_level = 2 }
 network_access = { allow = "allowlist" }
 secret_read = { allow = "scoped" }
 patch_apply = { allow = "auto" }
+browser_interact = { allow = "none" }
+browser_attach = { allow = "none" }
 
 [command_allowlist]
 patterns = ["npm ci", "npm test", "npm run build", "cargo build", "cargo test", "go build ./...", "go test ./...", "make", "make test"]

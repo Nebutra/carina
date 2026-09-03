@@ -66,10 +66,13 @@ Each turn the reasoner emits one JSON action — or a batch of **read-only** act
 | `{"tool":"list"}` | FileRead | Zig `carina-scan` |
 | `{"tool":"read","path":"…"}` | FileRead | kernel-gated read |
 | `{"tool":"search","pattern":"…"}` | FileRead | Zig `carina-grep` |
+| `{"tool":"git.status/git.diff/git.log",…}` | FileRead | bounded read-only repository evidence; typed views, no raw Git argv |
 | `{"tool":"run","command":["…"]}` | CommandExec (risk-classified) | Zig `carina-run` |
 | `{"tool":"edit","path","old","new"}` | PatchApply | exact unique span → same transactional patch as `patch` |
 | `{"tool":"patch",…}` | PatchApply | Rust transaction → Zig `carina-patch-native` |
 | `{"tool":"web.fetch","url"}` | NetworkAccess | public HTTPS; host approval; no redirects |
+| `{"tool":"browser.open/snapshot/tabs/capture/close",…}` | BrowserInteract (+ NetworkAccess for navigation) | isolated native Chromium lifecycle, bounded snapshots and artifacts |
+| `{"tool":"browser.action",…}` | BrowserInteract (+ FileRead for uploads) | one typed ref action; high-impact effects pause for live approval |
 | `{"tool":"memory",…}` | MemoryWrite | governed long-term memory |
 | `{"tool":"ask_user",…}` | — | structured operator choice |
 | `{"tool":"code.search/symbols/…"}` | FileRead | code-intelligence index (+LSP) |

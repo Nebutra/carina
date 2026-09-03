@@ -8,6 +8,8 @@ command_exec = { allow = "allowlist", max_risk_level = 1 }
 network_access = { allow = "approval" }
 secret_read = { allow = "none" }
 patch_apply = { allow = "approval" }
+browser_interact = { allow = "managed" }
+browser_attach = { allow = "none" }
 
 [command_allowlist]
 patterns = [

@@ -200,6 +200,7 @@ impl App {
             CommandId::Fullscreen => self.request_screen_mode(ScreenMode::Fullscreen),
             CommandId::Inline => self.request_screen_mode(ScreenMode::Inline),
             CommandId::Queue => self.apply_action(Action::OpenQueue),
+            CommandId::Inbox => self.apply_action(Action::OpenInbox),
             CommandId::Agents => self.apply_action(Action::OpenAgents),
             CommandId::Plugins => self.apply_action(Action::OpenPlugins),
             CommandId::Quit => self.quit = true,

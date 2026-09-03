@@ -2,10 +2,12 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Nebutra/carina/go/agentview"
 	"github.com/Nebutra/carina/go/artifact"
@@ -14,9 +16,31 @@ import (
 )
 
 const (
-	maxSubagentDepth = 4 // bound nested delegation cost and complexity
-	subagentMaxTurns = 10
+	maxSubagentDepth       = 4 // bound nested delegation cost and complexity
+	subagentMaxTurns       = 10
+	maxBackgroundSpawnJobs = 8
 )
+
+type preparedSubagent struct {
+	parent     *sessionstore.Session
+	parentTask *scheduler.ExecutionRun
+	child      *sessionstore.Session
+	childTask  *scheduler.ExecutionRun
+	spec       *AgentSpec
+	agentName  string
+	cleanup    func()
+}
+
+type backgroundSpawnHandle struct {
+	JobID     string    `json:"job_id"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type backgroundSpawnFailure struct {
+	Agent   string `json:"agent"`
+	Message string `json:"message"`
+}
 
 // executeSpawn dispatches the spawn tool: a single delegation
 // ({agent, task}) or a parallel fan-out ({tasks: [...]}). Each subagent runs
@@ -35,12 +59,18 @@ func (d *Daemon) executeSpawnOutcome(parent *sessionstore.Session, parentTask *s
 	if err := d.ensureActiveToolStarted(parentTask.RunID); err != nil {
 		return toolFailed("governance error: "+err.Error(), "audit_persistence_error")
 	}
+	if len(act.Tasks) > maxBackgroundSpawnJobs {
+		return toolFailed(fmt.Sprintf("error: spawn supports at most %d jobs", maxBackgroundSpawnJobs), "invalid_input")
+	}
 	// Spawning is a gated, audited effect — the actual Capability::SubagentSpawn
 	// request happens per-agent inside spawnSubagentContext (below), which
 	// runs for both the single-agent and parallel fan-out cases, and is the
 	// single choke point workflow.go's spawn-fanout also goes through. A
 	// denial/refused-approval surfaces as an error string in that subagent's
 	// own result, not a toolDenied here.
+	if act.Background {
+		return d.executeBackgroundSpawn(ctx, parent, parentTask, act)
+	}
 
 	if len(act.Tasks) > 0 {
 		// Parallel fan-out (goroutine per subagent).
@@ -55,7 +85,7 @@ func (d *Daemon) executeSpawnOutcome(parent *sessionstore.Session, parentTask *s
 		}
 		wg.Wait()
 		if ctx.Err() != nil {
-			return toolExecutionOutcome{display: "subagent batch cancelled", status: "cancelled", errorCategory: "operator_cancelled"}
+			return toolCancelled("subagent batch cancelled", "operator_cancelled")
 		}
 		return classifyLegacyToolResult(strings.Join(results, "\n\n"))
 	}
@@ -64,9 +94,45 @@ func (d *Daemon) executeSpawnOutcome(parent *sessionstore.Session, parentTask *s
 	}
 	result := d.spawnSubagentContext(ctx, parent, parentTask, act.Agent, act.Task)
 	if ctx.Err() != nil {
-		return toolExecutionOutcome{display: result, status: "cancelled", errorCategory: "operator_cancelled"}
+		return toolCancelled(result, "operator_cancelled")
 	}
 	return classifyLegacyToolResult(result)
+}
+
+func (d *Daemon) executeBackgroundSpawn(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.ExecutionRun, act *action) toolExecutionOutcome {
+	tasks := act.Tasks
+	if len(tasks) == 0 {
+		if act.Agent == "" {
+			return toolFailed("error: background spawn needs an 'agent' (or a 'tasks' list)", "invalid_input")
+		}
+		tasks = []SpawnTask{{Agent: act.Agent, Task: act.Task}}
+	}
+	handles := make([]backgroundSpawnHandle, 0, len(tasks))
+	failures := make([]backgroundSpawnFailure, 0)
+	for _, spawnTask := range tasks {
+		prepared, failure := d.prepareSubagent(ctx, parent, parentTask, spawnTask.Agent, spawnTask.Task, nil, true)
+		if prepared == nil {
+			failures = append(failures, backgroundSpawnFailure{Agent: spawnTask.Agent, Message: failure})
+			continue
+		}
+		d.sched.SetMode(prepared.childTask.RunID, "background")
+		d.persistRun(prepared.childTask.RunID)
+		current, _ := d.sched.Get(prepared.childTask.RunID)
+		handles = append(handles, backgroundSpawnHandle{JobID: current.RunID, Status: current.Status, CreatedAt: current.CreatedAt})
+		d.launchPreparedSubagent(ctx, prepared)
+	}
+	result := struct {
+		Jobs     []backgroundSpawnHandle  `json:"jobs"`
+		Failures []backgroundSpawnFailure `json:"failures,omitempty"`
+	}{Jobs: handles, Failures: failures}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return toolFailed("background spawn failed to encode handles", "internal_error")
+	}
+	if len(handles) == 0 {
+		return toolFailed(string(raw), "spawn_failed")
+	}
+	return toolCompleted(string(raw))
 }
 
 // spawnSubagent creates an isolated, capability-attenuated child session,
@@ -99,19 +165,28 @@ func (d *Daemon) spawnSubagentContextID(ctx context.Context, parent *sessionstor
 // Store-before/deferred-Delete-after lifetime pattern already used below for
 // restrictedTools/allowedTools/allowedSpawnAgents.
 func (d *Daemon) spawnSubagentContextIDBound(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.ExecutionRun, agentName, taskDesc string, binding *swarmChannelBinding) (string, string) {
+	prepared, failure := d.prepareSubagent(ctx, parent, parentTask, agentName, taskDesc, binding, false)
+	if prepared == nil {
+		return failure, ""
+	}
+	summary := d.runPreparedSubagent(ctx, prepared, false)
+	return summary, prepared.child.SessionID
+}
+
+func (d *Daemon) prepareSubagent(ctx context.Context, parent *sessionstore.Session, parentTask *scheduler.ExecutionRun, agentName, taskDesc string, binding *swarmChannelBinding, requireDurableParent bool) (*preparedSubagent, string) {
 	if ctx.Err() != nil {
-		return "subagent cancelled", ""
+		return nil, "subagent cancelled"
 	}
 	specs := loadAgentSpecs(parent.WorkspaceRoot)
 	spec := specs[agentName]
 	if spec == nil {
-		return fmt.Sprintf("unknown agent %q (available: %s)", agentName, strings.Join(specNames(specs), ", ")), ""
+		return nil, fmt.Sprintf("unknown agent %q (available: %s)", agentName, strings.Join(specNames(specs), ", "))
 	}
 	if taskDesc == "" {
-		return "error: spawn needs a task for the subagent", ""
+		return nil, "error: spawn needs a task for the subagent"
 	}
 	if !d.spawnAllowed(parent.SessionID, agentName) {
-		return fmt.Sprintf("DENIED: this session's agent spec does not permit spawning %q", agentName), ""
+		return nil, fmt.Sprintf("DENIED: this session's agent spec does not permit spawning %q", agentName)
 	}
 
 	// Capability monotonic decrease: child ⊆ parent.
@@ -123,61 +198,91 @@ func (d *Daemon) spawnSubagentContextIDBound(ctx context.Context, parent *sessio
 	spawnResource := fmt.Sprintf("agent:%s:profile:%s", agentName, childProfile)
 	dec, err := d.kern.Request(parent.SessionID, "SubagentSpawn", spawnResource, parentTask.RunID)
 	if err != nil {
-		return "spawn governance error: " + err.Error(), ""
+		return nil, "spawn governance error: " + err.Error()
 	}
 	if dec.Decision == "denied" {
-		return "DENIED: this session may not spawn subagents", ""
+		return nil, "DENIED: this session may not spawn subagents"
 	}
 	if dec.Decision == "requires_approval" {
 		approved, ok := d.resolveApprovalOrEscalate(parent, parentTask, dec, "SubagentSpawn", spawnResource, "spawn "+agentName)
 		if !ok {
-			return "requires approval (not granted): " + dec.Reason, ""
+			return nil, "requires approval (not granted): " + dec.Reason
 		}
 		dec = approved
 	}
 
 	childRoot, worktreeID, releaseWorktree, err := d.prepareSpawnWorkspace(parent.WorkspaceRoot, parent.SessionID, spawnUsesWorktree(childProfile))
 	if err != nil {
-		return "spawn isolation failed: " + err.Error(), ""
+		return nil, "spawn isolation failed: " + err.Error()
 	}
-	defer releaseWorktree()
+	cleanupFns := []func(){releaseWorktree}
+	var cleanupOnce sync.Once
+	cleanup := func() {
+		cleanupOnce.Do(func() {
+			for i := len(cleanupFns) - 1; i >= 0; i-- {
+				cleanupFns[i]()
+			}
+		})
+	}
 
 	child, err := d.createSubSession(childRoot, childProfile, parent.ApprovalMode, parent.SessionID, parent.Depth+1)
 	if err != nil {
-		return "spawn failed: " + err.Error(), ""
+		cleanup()
+		return nil, "spawn failed: " + err.Error()
+	}
+	cleanupChild := func() {
+		_, _ = d.store.SetStatus(child.SessionID, "closed")
+		_ = d.store.Delete(child.SessionID)
 	}
 	if err := d.kern.InitSessionFull(child.SessionID, child.WorkspaceRoot, childProfile, parent.ApprovalMode, d.org); err != nil {
-		return "spawn init failed: " + err.Error(), ""
+		cleanupChild()
+		cleanup()
+		return nil, "spawn init failed: " + err.Error()
 	}
 	if d.isPlanMode(parent.SessionID) {
 		if _, err := d.store.SetPlanMode(child.SessionID, true); err != nil {
-			_, _ = d.store.SetStatus(child.SessionID, "closed")
-			_ = d.store.Delete(child.SessionID)
-			return "spawn failed to inherit plan mode: " + err.Error(), ""
+			cleanupChild()
+			cleanup()
+			return nil, "spawn failed to inherit plan mode: " + err.Error()
 		}
 		d.setPlanMode(child.SessionID, true)
 	}
 	if len(spec.RestrictedTools) > 0 {
 		d.restrictedTools.Store(child.SessionID, spec.RestrictedTools)
-		defer d.restrictedTools.Delete(child.SessionID)
+		cleanupFns = append(cleanupFns, func() { d.restrictedTools.Delete(child.SessionID) })
 	}
 	if len(spec.ToolNames) > 0 {
 		d.allowedTools.Store(child.SessionID, toSet(spec.ToolNames))
-		defer d.allowedTools.Delete(child.SessionID)
+		cleanupFns = append(cleanupFns, func() { d.allowedTools.Delete(child.SessionID) })
 	}
 	if len(spec.SpawnableAgents) > 0 {
 		d.allowedSpawnAgents.Store(child.SessionID, toSet(spec.SpawnableAgents))
-		defer d.allowedSpawnAgents.Delete(child.SessionID)
+		cleanupFns = append(cleanupFns, func() { d.allowedSpawnAgents.Delete(child.SessionID) })
 	}
 	if binding != nil {
 		d.swarmChannels.Store(child.SessionID, binding)
-		defer d.swarmChannels.Delete(child.SessionID)
+		cleanupFns = append(cleanupFns, func() { d.swarmChannels.Delete(child.SessionID) })
 	}
 
 	childModel := d.resolveSubagentModel(spec, parentTask)
-	// Audit the delegation on the parent, linking to the child session.
+	childTask, err := d.sched.SubmitChildWithGoalModelAgent(parentTask.RunID, child.SessionID, child.WorkspaceID, taskDesc, childModel, spec.Name, nil)
+	if err != nil && !requireDurableParent {
+		childTask = d.sched.SubmitWithGoalModelAgent(child.SessionID, child.WorkspaceID, taskDesc, childModel, spec.Name, nil)
+		err = nil
+	}
+	if err != nil {
+		cleanupChild()
+		cleanup()
+		return nil, "spawn failed to create child job: " + err.Error()
+	}
+	d.sched.SetLocale(childTask.RunID, parentTask.Locale)
+	childTask, _ = d.sched.Get(childTask.RunID)
+	d.registerSubagentParent(child.SessionID, parentTask.RunID)
+
+	// Audit the delegation on the parent, linking to the child session and run.
 	spawnAudit := map[string]any{
 		"spawn_agent": agentName, "child_session": child.SessionID,
+		"child_run":     childTask.RunID,
 		"child_profile": childProfile, "child_model": childModel,
 		"depth": child.Depth, "task": taskDesc,
 		"isolation": spawnIsolationMode(worktreeID),
@@ -192,22 +297,82 @@ func (d *Daemon) spawnSubagentContextIDBound(ctx context.Context, parent *sessio
 		spawnAudit["prompt_mode"] = "explore_lean"
 	}
 	d.record(parent.SessionID, "ToolApproved", parentTask.RunID, "go", spawnAudit, dec.DecisionID)
+	return &preparedSubagent{
+		parent: parent, parentTask: parentTask, child: child, childTask: childTask,
+		spec: spec, agentName: agentName, cleanup: cleanup,
+	}, ""
+}
 
-	childTask := d.sched.SubmitWithGoalModelAgent(child.SessionID, child.WorkspaceID, taskDesc, childModel, spec.Name, nil)
-	d.sched.SetLocale(childTask.RunID, parentTask.Locale)
-	// Record the parent-task linkage so the leader bridge can escalate a refused
-	// child capability to the parent task (ParentID gives the session, not the task).
-	d.registerSubagentParent(child.SessionID, parentTask.RunID)
+func (d *Daemon) runPreparedSubagent(ctx context.Context, prepared *preparedSubagent, guarded bool) string {
 	var summary string
-	d.withTaskParentContext(ctx, childTask.RunID, func(childCtx context.Context) {
-		summary = d.runSubagentLoopContext(childCtx, child, childTask, spec)
+	d.withTaskParentContext(ctx, prepared.childTask.RunID, func(childCtx context.Context) {
+		summary = d.runPreparedSubagentContext(childCtx, prepared, guarded)
 	})
+	return summary
+}
 
-	d.record(parent.SessionID, "ModelResponded", parentTask.RunID, "go", map[string]any{
-		"spawn_agent": agentName, "child_session": child.SessionID,
+// launchPreparedSubagent installs cancellation ownership before returning the
+// handle. This closes the race where an immediate job.cancel could otherwise
+// arrive before the background goroutine registered its task context.
+func (d *Daemon) launchPreparedSubagent(parent context.Context, prepared *preparedSubagent) {
+	ctx, cancel := context.WithCancelCause(parent)
+	d.taskContextMu.Lock()
+	d.taskContexts[prepared.childTask.RunID] = ctx
+	d.taskCancels[prepared.childTask.RunID] = cancel
+	d.taskContextMu.Unlock()
+	go func() {
+		defer cancel(nil)
+		defer func() {
+			d.taskContextMu.Lock()
+			delete(d.taskContexts, prepared.childTask.RunID)
+			delete(d.taskCancels, prepared.childTask.RunID)
+			d.taskContextMu.Unlock()
+		}()
+		d.runPreparedSubagentContext(ctx, prepared, true)
+	}()
+}
+
+func (d *Daemon) runPreparedSubagentContext(ctx context.Context, prepared *preparedSubagent, guarded bool) string {
+	defer prepared.cleanup()
+	var summary string
+	run := func() {
+		summary = d.runSubagentLoopContext(ctx, prepared.child, prepared.childTask, prepared.spec)
+		d.finalizeSubagentRun(prepared.child, prepared.childTask, summary)
+	}
+	if guarded {
+		d.guardRun(ctx, prepared.child, prepared.childTask, run)
+	} else {
+		run()
+	}
+	if summary == "" && ctx.Err() != nil {
+		summary = "subagent cancelled"
+	}
+
+	d.record(prepared.parent.SessionID, "ModelResponded", prepared.parentTask.RunID, "go", map[string]any{
+		"spawn_agent": prepared.agentName, "child_session": prepared.child.SessionID,
+		"child_run":      prepared.childTask.RunID,
 		"result_summary": truncate(summary, 300),
 	}, "")
-	return summary, child.SessionID
+	return summary
+}
+
+func (d *Daemon) finalizeSubagentRun(child *sessionstore.Session, childTask *scheduler.ExecutionRun, summary string) {
+	current, ok := d.sched.Get(childTask.RunID)
+	if !ok {
+		return
+	}
+	if current.Status == "cancelled" || current.Status == "completed" {
+		d.persistRun(current.RunID)
+		return
+	}
+	status := current.Status
+	if status != "failed" && status != "degraded" {
+		status = "failed"
+	}
+	if _, err := d.sched.SetTerminalResultFenced(current.RunID, current.Continuity.Execution.LeaseGeneration, status, summary, d.appliedPatchIDsForRun(child, current.RunID)); err != nil {
+		return
+	}
+	d.persistRun(current.RunID)
 }
 
 // spawnAllowed reports whether sessionID's own AgentSpec.SpawnableAgents
@@ -259,6 +424,7 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 		return "subagent cancelled"
 	}
 	d.sched.SetStatus(task.RunID, "running")
+	d.persistRun(task.RunID)
 	ctx = withExecutionKeepalive(ctx, d, sess.SessionID, task.RunID)
 	maxTurns := spec.MaxTurns
 	if maxTurns <= 0 || maxTurns > subagentMaxTurns {
@@ -381,6 +547,7 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 			d.sched.SetStatus(task.RunID, "failed")
 			return "subagent failed: context compression failed: " + err.Error()
 		}
+		compressedObs.Error = outcome.observationError
 		newTurn := Turn{Thought: act.Thought, Tool: act.Tool, ActionBrief: briefAction(&act),
 			Obs: compressedObs}
 		// Same path-keyed stale-read dedup as the main loop (agent.go's

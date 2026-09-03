@@ -44,7 +44,7 @@ const captures = [
       },
       {
         path: 'crates/carina-tui/src/app/snapshots/carina_tui__app__render__transcript_tests__composer_chrome_en_running_120.snap',
-        row: 28,
+        row: 27,
       },
     ],
   },

@@ -309,8 +309,8 @@ func (d *Daemon) handleUsageCost(params json.RawMessage) (any, error) {
 		}
 	}
 	if p.SessionID != "" {
-		if _, ok := d.store.Get(p.SessionID); !ok {
-			return nil, fmt.Errorf("unknown session %s", p.SessionID)
+		if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+			return nil, err
 		}
 	}
 	if p.TaskID != "" {
@@ -320,6 +320,9 @@ func (d *Daemon) handleUsageCost(params json.RawMessage) (any, error) {
 		}
 		if p.SessionID != "" && task.SessionID != p.SessionID {
 			return nil, fmt.Errorf("task %s does not belong to session %s", p.TaskID, p.SessionID)
+		}
+		if _, err := d.requireNamedSession(task.SessionID, params); err != nil {
+			return nil, fmt.Errorf("unknown task %s", p.TaskID)
 		}
 	}
 	return d.usage.costs(p.SessionID, p.TaskID, d.providerCatalog), nil

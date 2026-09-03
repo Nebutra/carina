@@ -1,16 +1,16 @@
 use std::path::Path;
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
-use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::component::{Action, ComponentId, HitRegion, InteractionMap};
-use crate::i18n::{text, Locale, MessageId};
+use crate::i18n::{Locale, MessageId, text};
 use crate::layout_contract as layout;
-use crate::terminal_logo::{lines as terminal_logo_lines, MARK_HEIGHT_CELLS, MARK_WIDTH_CELLS};
+use crate::terminal_logo::{MARK_HEIGHT_CELLS, MARK_WIDTH_CELLS, lines as terminal_logo_lines};
 use crate::theme::Theme;
 
 const COMPACT_NAME: &str = "Carina";
@@ -150,12 +150,6 @@ impl ProductHeader<'_> {
             theme.accent,
             theme,
         );
-        let model_reasoning = format!(
-            "{}  {}  {}",
-            self.model,
-            theme.glyphs.separator(),
-            self.reasoning
-        );
         self.render_metadata_line(
             frame,
             Rect::new(
@@ -165,7 +159,7 @@ impl ProductHeader<'_> {
                 1,
             ),
             text(self.locale, MessageId::Model),
-            &model_reasoning,
+            self.model,
             theme.text,
             theme,
         );
@@ -232,16 +226,7 @@ impl ProductHeader<'_> {
                 1,
             ),
         );
-        let summary = format!(
-            "{}  {}  {}  {}  {}  {}  {}",
-            self.model,
-            theme.glyphs.separator(),
-            self.reasoning,
-            theme.glyphs.separator(),
-            self.provider,
-            theme.glyphs.separator(),
-            workspace_label(self.workspace, true, self.locale)
-        );
+        let summary = workspace_label(self.workspace, true, self.locale);
         frame.render_widget(
             Paragraph::new(truncate_width(
                 &summary,
@@ -460,9 +445,9 @@ fn truncate_width(value: &str, max_width: usize, glyphs: crate::glyphs::Glyphs) 
 
 #[cfg(test)]
 mod tests {
+    use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::layout::Position;
-    use ratatui::Terminal;
 
     use super::*;
 
@@ -544,7 +529,7 @@ mod tests {
                     locale: Locale::En,
                     title: None,
                     phase: Some("Conversation"),
-                    provider: "TDS / CC Switch",
+                    provider: "Relay profile / CC Switch",
                     model: "gpt-5.5",
                     reasoning: "high",
                     workspace: Path::new("/workspace/carina"),
@@ -563,9 +548,11 @@ mod tests {
             .flat_map(|row| (1..=MARK_WIDTH_CELLS).map(move |column| (column, row)))
             .map(|position| buffer.cell(position).unwrap().symbol())
             .collect::<String>();
-        assert!(rendered
-            .chars()
-            .any(|glyph| ('\u{2801}'..='\u{28ff}').contains(&glyph)));
+        assert!(
+            rendered
+                .chars()
+                .any(|glyph| ('\u{2801}'..='\u{28ff}').contains(&glyph))
+        );
         assert!(!rendered.contains('\u{10eeee}'));
         assert!(!rendered.contains("\x1b_G"));
     }
@@ -580,7 +567,7 @@ mod tests {
                     locale: Locale::En,
                     title: Some("Provider onboarding"),
                     phase: Some("Conversation"),
-                    provider: "TDS / CC Switch",
+                    provider: "Relay profile / CC Switch",
                     model: "gpt-5.5",
                     reasoning: "high reasoning",
                     workspace: Path::new("/private/runtime/ws/carina"),
@@ -605,17 +592,28 @@ mod tests {
             .join("\n");
         assert!(rendered.contains("Carina"));
         assert!(rendered.contains("Provider onboarding"));
-        assert!(rendered.contains("TDS / CC Switch"));
-        assert!(rendered.contains("gpt-5.5"));
-        assert!(rendered.contains("high reasoning"));
         assert!(rendered.contains("carina"));
+        assert!(
+            !rendered.contains("high reasoning"),
+            "compact header must not dump reasoning telemetry"
+        );
+        assert!(
+            !rendered.contains("Relay profile / CC Switch"),
+            "compact header must not dump provider telemetry"
+        );
+        assert!(
+            !rendered.contains("CC Switch"),
+            "compact header must not dump the import source"
+        );
         assert!(!rendered.contains("private session id"));
         assert!(!rendered.contains("failed"));
-        assert!(buffer
-            .cell((0, 0))
-            .unwrap()
-            .modifier
-            .contains(Modifier::BOLD));
+        assert!(
+            buffer
+                .cell((0, 0))
+                .unwrap()
+                .modifier
+                .contains(Modifier::BOLD)
+        );
     }
 
     #[test]

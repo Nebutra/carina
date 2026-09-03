@@ -28,6 +28,24 @@ Built-in policy requires approval by default. The child's capabilities are atten
 - Per-agent tool allow-list
 - `"tasks":[…]` runs multiple tasks in parallel
 
+Set `"background":true` to return durable job handles after governed child
+setup instead of waiting for summaries:
+
+```json title="spawn-background.json"
+{"tool":"spawn","agent":"scout","task":"Map module boundaries","background":true,"intent":"Delegate bounded repository mapping"}
+```
+
+Background fan-out is limited to eight jobs. The parent can use `job.list`,
+`job.wait` (`any` or `all`, up to 30 seconds), and `job.cancel`. These tools
+only resolve jobs in the caller's tenant, workspace ownership chain, session
+boundary, and root run lineage. Job results expose bounded summaries, status,
+timestamps, usage, and patch artifact references, never child prompts,
+reasoning, transcripts, or raw tool observations.
+
+After a daemon restart, terminal jobs remain terminal. A formerly live job is
+reconciled through the ordinary continuity policy and is never reported as
+still running merely because its last persisted state was live.
+
 ## Patterns
 
 | Pattern | Description |

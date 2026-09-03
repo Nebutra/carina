@@ -1,7 +1,9 @@
 # Product Positioning
 
-Carina is a local-first harness for AI coding agents. It is built for the point
-where an agent leaves conversation and starts acting on a real repository.
+Carina is a local-first, embeddable harness for AI coding agents. It is built
+for the point where an agent leaves conversation and starts acting on a real
+repository — including when that repository belongs to a tenant of someone
+else's hosted coding product.
 
 ## Primary Users
 
@@ -12,10 +14,11 @@ Carina is for:
 - platform teams building an internal agent runner;
 - security-conscious teams evaluating how agents read files, run commands, and
   handle secrets;
-- tool builders who need a harness behind an IDE, TUI, CI workflow, or web UI.
+- tool builders who need a harness behind an IDE, TUI, CI workflow, or web UI;
+- teams who self-host Carina and embed it in their own Lovable/v0/Bolt-class
+  Web, with kernel-enforced isolation between their end-user tenants.
 
-It is not primarily for people who want a finished editor assistant or a hosted
-managed agent service.
+Nebutra does not ship that Web. Carina is the runtime those products embed.
 
 ## User Value
 
@@ -36,11 +39,14 @@ Carina turns agent execution into a controlled runtime:
 
 Carina should not pretend to be:
 
-- a full editor product;
-- a hosted cloud agent app;
-- a complete VM/container isolation platform;
+- a full editor product or a Nebutra-branded Lovable/v0 clone;
 - a replacement for Git history or code review;
+- a Firecracker/e2b VM platform. Non-local tenant `run` uses the OS syscall
+  sandbox (`sandbox-exec` / `bwrap`) fail-closed: writes stay in the workspace.
+  Full VM cabins remain a later slice;
 - a mature signed binary distribution while the project is still source-first.
+
+Gateway `workspace_pin` is a local single-directory bind. It is not a tenant.
 
 ## Objective Alternative Positioning
 

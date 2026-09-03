@@ -84,10 +84,7 @@ func (d *Daemon) validateSessionWorkspace(root string) (string, error) {
 }
 
 func (d *Daemon) createSession(workspaceRoot, profile, approvalMode string) (*sessionstore.Session, error) {
-	if d.runtimeSpec != nil && d.runtimeSpec.Mode == localruntime.ModeWorkspace {
-		return d.store.CreateSessionModeForWorkspace(d.runtimeSpec.Workspace.ID, workspaceRoot, profile, approvalMode)
-	}
-	return d.store.CreateSessionMode(workspaceRoot, profile, approvalMode)
+	return d.createSessionForTenant(sessionstore.LocalTenantID, workspaceRoot, profile, approvalMode)
 }
 
 func (d *Daemon) createSubSession(workspaceRoot, profile, approvalMode, parentID string, depth int) (*sessionstore.Session, error) {

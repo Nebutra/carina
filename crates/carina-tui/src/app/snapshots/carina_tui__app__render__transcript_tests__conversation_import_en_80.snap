@@ -5,7 +5,7 @@ expression: rendered
 size=80x30
 
   Carina                                                Conversation recovery
-  model  ·  reasoning off  ·  Provider  ·  Direct API  ·  <workspace>
+  <workspace>
   ────────────────────────────────────────────────────────────────────────────
 
   ▌ Import conversations

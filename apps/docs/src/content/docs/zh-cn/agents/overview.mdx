@@ -27,10 +27,13 @@ Carina 驱动真实的 ReAct 编程 Agent。模型**只负责决定下一步**�
 | 动作 | 所需能力 / 路径 | 结果 |
 | --- | --- | --- |
 | `list` / `read` / `search` | `FileRead` | 工作区内文件树、内容或搜索结果 |
+| `git.status` / `git.diff` / `git.log` | `FileRead` | 有上限的只读仓库证据；类型化视图，不接受原始 Git 参数 |
 | `run` | `CommandExec` + 风险分级 | 受超时和环境变量白名单约束的命令结果 |
 | `edit` | `PatchApply` | 精确唯一片段替换，走同一套补丁事务 |
 | `patch` | `PatchApply` | 可验证、可回滚的补丁事务 |
 | `web.fetch` | `NetworkAccess` | 仅公开 HTTPS；按主机审批；不跟随重定向 |
+| `browser.open` / `snapshot` / `tabs` / `capture` / `close` | `BrowserInteract`；导航另需 `NetworkAccess` | 隔离的原生 Chromium 生命周期、有上限的快照和 artifact |
+| `browser.action` | `BrowserInteract`；上传另需 `FileRead` | 单次类型化 ref 动作；高影响效果前实时审批 |
 | `memory` | `MemoryWrite` | 经审批的持久记忆变更 |
 | `mcp` / `mcp_find` | MCP manager + 对应能力 | 受治理的外部工具调用 |
 | `spawn` | `SubagentSpawn` | 能力衰减的隔离子 Agent |

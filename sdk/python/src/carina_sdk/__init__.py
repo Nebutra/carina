@@ -1,4 +1,4 @@
-"""Blocking Carina JSON-RPC SDK compatible with Runtime 0.8.42."""
+"""Blocking Carina JSON-RPC SDK compatible with Runtime 0.9.0."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Iterator, TypedDict
 
 __version__ = "0.2.0"
-compatible_runtime_version = "0.8.42"
+compatible_runtime_version = "0.9.0"
 _stream_queue_limit = 64
 __all__ = [
     "CarinaClient",
@@ -330,11 +330,23 @@ class CarinaClient:
                 self._disconnect()
                 raise ConnectionError(f"rpc {method}: carina-daemon disconnected: {err}") from err
 
-    def create_session(self, workspace_root: str, profile: str = "safe-edit") -> dict[str, Any]:
-        return self.call("session.create", {"workspace_root": workspace_root, "profile": profile})
+    def create_session(self, workspace_root: str, profile: str = "safe-edit", tenant_id: str | None = None) -> dict[str, Any]:
+        params: dict[str, Any] = {"workspace_root": workspace_root, "profile": profile}
+        if tenant_id:
+            params["tenant_id"] = tenant_id
+        return self.call("session.create", params)
 
-    def get_session(self, session_id: str) -> dict[str, Any]:
-        return self.call("session.get", {"session_id": session_id})
+    def get_session(self, session_id: str, tenant_id: str | None = None) -> dict[str, Any]:
+        params: dict[str, Any] = {"session_id": session_id}
+        if tenant_id:
+            params["tenant_id"] = tenant_id
+        return self.call("session.get", params)
+
+    def list_sessions(self, tenant_id: str | None = None) -> Any:
+        params: dict[str, Any] = {}
+        if tenant_id:
+            params["tenant_id"] = tenant_id
+        return self.call("session.list", params)
 
     def start_thread(self, working_directory: str, profile: str = "safe-edit") -> CarinaThread:
         self.initialize()
@@ -349,9 +361,6 @@ class CarinaClient:
         if last_task_id: params["last_task_id"] = last_task_id
         if through_turn: params["through_turn"] = through_turn
         return CarinaThread(self, self.call("session.fork", params))
-
-    def list_sessions(self) -> list[dict[str, Any]]:
-        return self.call("session.list")
 
     def submit_task(self, session_id: str, prompt: str, client_submission_id: str | None = None, input_media_refs: list[MediaRef] | None = None) -> CarinaTask:
         if input_media_refs is not None and len(input_media_refs) > 4:

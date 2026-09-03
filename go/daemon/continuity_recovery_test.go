@@ -70,7 +70,7 @@ func TestWorkspaceAnchorRejectsDriftBeforeCheckpointAndSymlinkEscape(t *testing.
 	}
 
 	d.readProvMu.Lock()
-	d.readProv[sess.SessionID] = map[string]string{}
+	d.readProv[sess.SessionID] = sessionReadProvenance{}
 	d.readProvMu.Unlock()
 	outside := filepath.Join(t.TempDir(), "outside.txt")
 	if err := os.WriteFile(outside, []byte("outside"), 0o600); err != nil {
@@ -148,7 +148,7 @@ func TestWorkspaceAnchorStillRejectsAbsoluteSymlinkEscape(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.readProvMu.Lock()
-	d.readProv[sess.SessionID] = map[string]string{link: "deadbeef"}
+	d.readProv[sess.SessionID] = sessionReadProvenance{link: []readProvenance{{Version: readProvenanceVersion, Kind: readProvenanceWhole, SHA256: "deadbeef"}}}
 	d.readProvMu.Unlock()
 	if _, err := d.captureWorkspaceAnchor(sess); err == nil {
 		t.Fatal("absolute symlink escape was accepted")

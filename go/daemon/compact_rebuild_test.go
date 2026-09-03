@@ -88,6 +88,44 @@ func TestRebuildAfterCompactRehydratesCitedFiles(t *testing.T) {
 	}
 }
 
+func TestRebuildAfterCompactRehydratesProjectInstructionsForBuild(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	if err := os.WriteFile(filepath.Join(ws, "cited.go"), []byte("package cited\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "AGENTS.md"), []byte("BUILD_RULE_MUST_SURVIVE_COMPACT\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "hi")
+	task.Agent = "build"
+	tr := newTranscript(task.UserPrompt)
+	paths := d.rebuildAfterCompact(sess, task, tr, &CompactionReceipt{CitedFiles: []string{"cited.go"}})
+	if len(paths) != 1 || paths[0] != "cited.go" {
+		t.Fatalf("rebuild paths = %v", paths)
+	}
+	if !strings.Contains(tr.Rebuild, "package cited") {
+		t.Fatalf("build rebuild missing cited file:\n%s", tr.Rebuild)
+	}
+	if !strings.Contains(tr.Rebuild, "PROJECT INSTRUCTIONS") || !strings.Contains(tr.Rebuild, "BUILD_RULE_MUST_SURVIVE_COMPACT") {
+		t.Fatalf("build rebuild must rehydrate AGENTS.md:\n%s", tr.Rebuild)
+	}
+	layers := d.composeAgentPromptLayers(sess, task, "")
+	if strings.Contains(layers.Workspace, "package cited") {
+		t.Fatal("rebuild must not mutate the Workspace prefix")
+	}
+
+	plan := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "plan it")
+	plan.Agent = "plan"
+	planTr := newTranscript(plan.UserPrompt)
+	d.rebuildAfterCompact(sess, plan, planTr, &CompactionReceipt{})
+	if !strings.Contains(planTr.Rebuild, "BUILD_RULE_MUST_SURVIVE_COMPACT") {
+		t.Fatalf("plan rebuild must still rehydrate AGENTS.md without cited files:\n%s", planTr.Rebuild)
+	}
+}
+
 func TestRebuildAfterCompactSkipsUncitedProjectInstructions(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()

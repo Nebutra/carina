@@ -25,6 +25,7 @@ import (
 	"github.com/Nebutra/carina/go/agentview"
 	"github.com/Nebutra/carina/go/artifact"
 	"github.com/Nebutra/carina/go/auth"
+	"github.com/Nebutra/carina/go/browser"
 	"github.com/Nebutra/carina/go/channels"
 	"github.com/Nebutra/carina/go/contextengine"
 	"github.com/Nebutra/carina/go/continuity"
@@ -96,6 +97,9 @@ type Options struct {
 	ExtensionTrustedRoots      []string           // local roots allowed as extension install sources
 	TelemetryWriter            io.Writer          // nil keeps OpenTelemetry export disabled
 	BestOfNEnabled             bool               // opt-in: expose the best_of_n tool (default false — off)
+	BuiltinToolRegistryMode    string             // descriptor (default) | shadow | legacy (one-release emergency rollback)
+	BrowserChromePath          string             // optional deployment-owned Chromium executable
+	BrowserAttachEndpoint      string             // optional deployment-owned CDP endpoint; never model-visible
 }
 
 // EgressCredential authenticates outbound requests to a host by injecting a
@@ -200,7 +204,7 @@ type Daemon struct {
 	sessionFences    sync.Map // session_id -> *sync.RWMutex; restore is writer, execution/mutations are readers
 	preferenceFences sync.Map // session_id -> *sync.RWMutex; model preference CAS and execution snapshot only
 
-	readProv   map[string]map[string]string // session -> relpath -> sha256 of last read (dirty-write guard)
+	readProv   map[string]sessionReadProvenance // session -> relpath -> typed whole/span observations
 	readProvMu sync.Mutex
 
 	todos sync.Map // session_id -> []todoItem (operator-visible checklist; not a workspace effect)
@@ -208,6 +212,9 @@ type Daemon struct {
 	restrictedTools sync.Map // session -> map[string]bool of tool verbs this session's loop must never dispatch (set for best-of-n candidate drafters)
 
 	indexBuilt sync.Map // session -> true once the code index was lazily built (code.* tools)
+
+	listSearchMemo *listSearchMemo // per-run list/search observations; skip Zig on hit (P0-H12)
+	proposals      *proposalStore  // session 奏折 cards; never transcript turns; CARINA_PROACTIVE=1
 
 	indexSnapshot sync.Map // session -> *sweepSnapshot from the last index sync (V4 mtime staleness sweep)
 	indexJobs     sync.Map // workspace root -> *backgroundIndexJob (one incremental build per workspace)
@@ -265,15 +272,18 @@ type Daemon struct {
 	planMode map[string]bool // session -> plan mode (read-only until approved)
 	planMu   sync.Mutex
 
-	mcp             *mcp.Manager // external MCP servers (proxied tools, kernel-gated)
-	contextEng      contextengine.Engine
-	egress          *egress.Proxy // deny-by-default network egress proxy (optional)
-	egressURL       string
-	egressCAPath    string      // process-local CA bundle for MITM-enabled children
-	sandbox         atomic.Bool // run commands under an OS syscall sandbox (hot-reloadable)
-	safeMode        bool
-	replayTailV1    bool // advertise/accept event_replay_tail v1 for the local TUI
-	nativeToolsHTTP bool // send native tools on eligible HTTP model-router routes
+	mcp                          *mcp.Manager // external MCP servers (proxied tools, kernel-gated)
+	contextEng                   contextengine.Engine
+	egress                       *egress.Proxy // deny-by-default network egress proxy (optional)
+	egressURL                    string
+	egressCAPath                 string      // process-local CA bundle for MITM-enabled children
+	sandbox                      atomic.Bool // run commands under an OS syscall sandbox (hot-reloadable)
+	safeMode                     bool
+	replayTailV1                 bool // advertise/accept event_replay_tail v1 for the local TUI
+	nativeToolsHTTP              bool // send native tools on eligible HTTP model-router routes
+	builtinTools                 *builtinToolRegistry
+	builtinToolsMode             builtinToolRegistryMode
+	builtinToolsShadowMismatches []string
 
 	stopCh    chan struct{} // closed on Close; stops background loops (lease reaper)
 	stopOnce  sync.Once
@@ -339,6 +349,8 @@ type Daemon struct {
 	compactionBreaker        *compactionCircuitBreaker
 	retryGovernance          *retryGovernance
 	artifacts                *artifact.Store
+	browsers                 *browser.Manager
+	browserAttachEndpoint    string
 	artifactUploadMu         sync.Mutex
 	artifactUploads          map[string]*artifactUploadState
 	runtimeLease             *runtimeLease
@@ -357,6 +369,18 @@ type Daemon struct {
 const artifactGCInterval = 30 * time.Minute
 
 func New(opts Options) (*Daemon, error) {
+	if err := defaultBuiltinTools.Validate(); err != nil {
+		return nil, fmt.Errorf("daemon: builtin tool registry: %w", err)
+	}
+	builtinToolsModeValue := opts.BuiltinToolRegistryMode
+	if strings.TrimSpace(builtinToolsModeValue) == "" {
+		builtinToolsModeValue = os.Getenv("CARINA_BUILTIN_TOOL_REGISTRY_MODE")
+	}
+	builtinToolsMode, err := normalizeBuiltinToolRegistryMode(builtinToolsModeValue)
+	if err != nil {
+		return nil, fmt.Errorf("daemon: %w", err)
+	}
+	builtinToolsShadowMismatches := builtinRegistryShadowMismatches(defaultBuiltinTools)
 	if opts.StateDir == "" {
 		opts.StateDir = ".carina-state"
 	}
@@ -428,44 +452,49 @@ func New(opts Options) (*Daemon, error) {
 		return nil, fmt.Errorf("daemon: cannot start capability kernel: %w", err)
 	}
 	d := &Daemon{
-		store:                 store,
-		sched:                 scheduler.New(),
-		pool:                  worker.NewPool(),
-		backpressure:          newBackpressureManager(),
-		router:                modelrouter.New(),
-		server:                rpc.NewServer(),
-		kern:                  kern,
-		tools:                 tools,
-		events:                NewBus(),
-		debugTrace:            newDebugTrace(defaultDebugTraceCapacity),
-		org:                   loadOrgPolicy(opts.PolicyDir),
-		policyDir:             opts.PolicyDir,
-		stateDir:              opts.StateDir,
-		offline:               opts.Offline,
-		cloudEndpoint:         cloudEndpoint,
-		syncMode:              syncMode,
-		started:               time.Now().UTC(),
-		pendingCmds:           make(map[string]pendingCommand),
-		pendingMemWrites:      make(map[string]pendingMemoryWrite),
-		pendingMemControls:    make(map[string]pendingMemoryControl),
-		pendingMemProjections: make(map[string]pendingMemoryProjection),
-		patchGates:            make(map[string]*patchGate),
-		patchGateByDecision:   make(map[string]string),
-		taskSubmissions:       make(map[string]string),
-		hookOutcomes:          make(map[string]hookOutcome),
-		memory:                newMemoryStore(opts.StateDir),
-		memoryVersions:        newMemoryControllerStore(opts.StateDir),
-		schedules:             scheduler.OpenScheduleStore(opts.StateDir),
-		contextEng:            contextEng,
-		gatewayTokens:         gatewayTokens,
-		gatewayTokenMaxTTL:    gatewayTokenMaxTTL,
-		gatewayResponses:      map[string]string{},
-		runtimeLease:          runtimeLease,
-		runtimeSpec:           runtimeSpec,
-		indexSyncFileLimit:    synchronousRepoMapFileLimit,
-		indexBuildBatchSize:   backgroundIndexBatchSize,
-		replayTailV1:          true,
-		nativeToolsHTTP:       true,
+		store:                        store,
+		sched:                        scheduler.New(),
+		pool:                         worker.NewPool(),
+		backpressure:                 newBackpressureManager(),
+		router:                       modelrouter.New(),
+		server:                       rpc.NewServer(),
+		kern:                         kern,
+		tools:                        tools,
+		events:                       NewBus(),
+		debugTrace:                   newDebugTrace(defaultDebugTraceCapacity),
+		org:                          loadOrgPolicy(opts.PolicyDir),
+		policyDir:                    opts.PolicyDir,
+		stateDir:                     opts.StateDir,
+		offline:                      opts.Offline,
+		cloudEndpoint:                cloudEndpoint,
+		syncMode:                     syncMode,
+		started:                      time.Now().UTC(),
+		pendingCmds:                  make(map[string]pendingCommand),
+		pendingMemWrites:             make(map[string]pendingMemoryWrite),
+		pendingMemControls:           make(map[string]pendingMemoryControl),
+		pendingMemProjections:        make(map[string]pendingMemoryProjection),
+		patchGates:                   make(map[string]*patchGate),
+		patchGateByDecision:          make(map[string]string),
+		taskSubmissions:              make(map[string]string),
+		hookOutcomes:                 make(map[string]hookOutcome),
+		memory:                       newMemoryStore(opts.StateDir),
+		memoryVersions:               newMemoryControllerStore(opts.StateDir),
+		schedules:                    scheduler.OpenScheduleStore(opts.StateDir),
+		contextEng:                   contextEng,
+		gatewayTokens:                gatewayTokens,
+		gatewayTokenMaxTTL:           gatewayTokenMaxTTL,
+		gatewayResponses:             map[string]string{},
+		runtimeLease:                 runtimeLease,
+		runtimeSpec:                  runtimeSpec,
+		indexSyncFileLimit:           synchronousRepoMapFileLimit,
+		indexBuildBatchSize:          backgroundIndexBatchSize,
+		listSearchMemo:               newListSearchMemo(),
+		proposals:                    newProposalStore(opts.StateDir),
+		replayTailV1:                 true,
+		nativeToolsHTTP:              true,
+		builtinTools:                 defaultBuiltinTools,
+		builtinToolsMode:             builtinToolsMode,
+		builtinToolsShadowMismatches: append([]string(nil), builtinToolsShadowMismatches...),
 	}
 	d.server.SetRemoteParamsGuard(d.gatewayRemoteParamsAllowed)
 	if err := d.configureGatewayWorkspacePin(opts.GatewayWorkspace); err != nil {
@@ -598,6 +627,19 @@ func New(opts Options) (*Daemon, error) {
 		_ = kern.Close()
 		return nil, fmt.Errorf("daemon: artifact gc: %w", err)
 	}
+	d.browsers, err = browser.NewManager(
+		browser.NewChromedpDriver(browser.ChromedpConfig{ChromePath: opts.BrowserChromePath}),
+		browser.Config{ProfileRoot: filepath.Join(opts.StateDir, "browser-profiles")},
+	)
+	if err != nil {
+		_ = kern.Close()
+		return nil, fmt.Errorf("daemon: browser runtime: %w", err)
+	}
+	d.browserAttachEndpoint = strings.TrimSpace(opts.BrowserAttachEndpoint)
+	if err = resetBrowserUploadRoot(opts.StateDir); err != nil {
+		_ = kern.Close()
+		return nil, fmt.Errorf("daemon: browser runtime: %w", err)
+	}
 	d.riskReviewMode.Store(riskReviewMode)
 	_ = hardenProcess() // Linux: non-dumpable, anti-ptrace (best-effort)
 	d.registerMethods()
@@ -655,7 +697,7 @@ func New(opts Options) (*Daemon, error) {
 		maxConcurrent = 8
 	}
 	d.runSem = make(chan struct{}, maxConcurrent)
-	d.readProv = map[string]map[string]string{}
+	d.readProv = map[string]sessionReadProvenance{}
 	d.trust = newTrustStore(opts.StateDir)
 	d.requireTrust.Store(opts.RequireWorkspaceTrust)
 	d.maxTaskTokens.Store(int64(opts.MaxTaskTokens))
@@ -991,11 +1033,23 @@ func (d *Daemon) close() error {
 		_ = srv.Close()
 	}
 	closeReasoners(d.reasoner, d.summarizer, d.verifier, d.riskReviewer)
+	var browserErr error
+	if d.browsers != nil {
+		browserErr = d.browsers.CloseAll()
+	}
+	if uploadRoot, err := browserUploadRootPath(d.stateDir); err == nil {
+		if err := os.RemoveAll(uploadRoot); browserErr == nil {
+			browserErr = err
+		}
+	}
 	kernelErr := d.kern.Close()
 	leaseErr := d.runtimeLease.close(true)
 	descriptorStoppedErr := d.publishRuntimeDescriptor(localruntime.LifecycleStopped, socketPath)
 	if kernelErr != nil {
 		return kernelErr
+	}
+	if browserErr != nil {
+		return browserErr
 	}
 	if leaseErr != nil {
 		return leaseErr
@@ -1183,6 +1237,9 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("governance.approval.resolve", rpc.ScopeAdmin, false, d.handleApprovalResolve, true)
 	d.registerRPC("question.answer", rpc.ScopeWrite, false, d.handleUserAnswer)
 	d.registerRPC("question.pending", rpc.ScopeRead, false, d.handlePendingUserQuestions)
+	d.registerRPC("proposal.list", rpc.ScopeRead, false, d.handleProposalList)
+	d.registerRPC("proposal.accept", rpc.ScopeWrite, false, d.handleProposalAccept)
+	d.registerRPC("proposal.ignore", rpc.ScopeWrite, false, d.handleProposalIgnore)
 	d.registerRPC("execution.btw", rpc.ScopeWrite, false, d.handleTaskBtw)
 	d.registerRPC("history.recent", rpc.ScopeRead, false, d.handleHistoryRecent)
 	d.registerRPC("memory.list", rpc.ScopeRead, false, d.handleMemoryList)
@@ -1350,9 +1407,9 @@ func (d *Daemon) handleAgentList(params json.RawMessage) (any, error) {
 	}
 	root := p.WorkspaceRoot
 	if p.SessionID != "" {
-		sess, ok := d.store.Get(p.SessionID)
-		if !ok {
-			return nil, fmt.Errorf("unknown session %s", p.SessionID)
+		sess, err := d.requireNamedSession(p.SessionID, params)
+		if err != nil {
+			return nil, err
 		}
 		root = sess.WorkspaceRoot
 	}
@@ -1375,9 +1432,9 @@ func (d *Daemon) handleCommandList(params json.RawMessage) (any, error) {
 	}
 	root := p.WorkspaceRoot
 	if p.SessionID != "" {
-		sess, ok := d.store.Get(p.SessionID)
-		if !ok {
-			return nil, fmt.Errorf("unknown session %s", p.SessionID)
+		sess, err := d.requireNamedSession(p.SessionID, params)
+		if err != nil {
+			return nil, err
 		}
 		root = sess.WorkspaceRoot
 	}
@@ -1840,6 +1897,7 @@ func (d *Daemon) handleSessionCreate(params json.RawMessage) (any, error) {
 		WorkspaceRoot string `json:"workspace_root"`
 		Profile       string `json:"profile"`
 		ApprovalMode  string `json:"approval_mode"`
+		TenantID      string `json:"tenant_id"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -1854,13 +1912,14 @@ func (d *Daemon) handleSessionCreate(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	sess, err := d.createSession(workspaceRoot, p.Profile, p.ApprovalMode)
+	sess, err := d.createSessionForTenant(p.TenantID, workspaceRoot, p.Profile, p.ApprovalMode)
 	if err != nil {
 		return nil, err
 	}
 	if err := d.kern.InitSessionFull(sess.SessionID, sess.WorkspaceRoot, sess.PermissionProfile, sess.ApprovalMode, d.org); err != nil {
 		return nil, fmt.Errorf("kernel session init: %w", err)
 	}
+	d.warmupSessionIndex(sess)
 	d.runLifecycleHooks(sess.WorkspaceRoot, "SessionStart", map[string]any{"session_id": sess.SessionID, "workspace_root": sess.WorkspaceRoot})
 	return sess, nil
 }
@@ -1897,16 +1956,17 @@ func (d *Daemon) handleSessionGet(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	sess, ok := d.store.Get(id)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", id)
+	sess, err := d.lookupSession(id, callerTenantID(params))
+	if err != nil {
+		return nil, err
 	}
 	return d.projectSession(sess, d.latestSessionTask(id)), nil
 }
 
 func (d *Daemon) handleSessionList(params json.RawMessage) (any, error) {
 	var p struct {
-		Archived *bool `json:"archived"`
+		Archived *bool  `json:"archived"`
+		TenantID string `json:"tenant_id"`
 	}
 	if len(params) > 0 && string(params) != "null" {
 		if err := json.Unmarshal(params, &p); err != nil {
@@ -1921,8 +1981,9 @@ func (d *Daemon) handleSessionList(params json.RawMessage) (any, error) {
 			latest[task.SessionID] = task
 		}
 	}
-	out := make([]sessionContinuityEntry, 0, len(d.store.List()))
-	for _, sess := range d.store.List() {
+	tenantID := sessionstore.NormalizeTenantID(p.TenantID)
+	out := make([]sessionContinuityEntry, 0, len(d.store.ListByTenant(tenantID)))
+	for _, sess := range d.store.ListByTenant(tenantID) {
 		if p.Archived != nil && (sess.Status == "closed") != *p.Archived {
 			continue
 		}
@@ -1947,14 +2008,11 @@ func (d *Daemon) handleSessionList(params json.RawMessage) (any, error) {
 }
 
 func (d *Daemon) handleSessionPause(params json.RawMessage) (any, error) {
-	id, err := sessionID(params)
+	current, err := d.requireSession(params)
 	if err != nil {
 		return nil, err
 	}
-	current, ok := d.store.Get(id)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", id)
-	}
+	id := current.SessionID
 	if current.Status == "closed" {
 		return nil, fmt.Errorf("session %s is closed", id)
 	}
@@ -1970,14 +2028,11 @@ func (d *Daemon) handleSessionPause(params json.RawMessage) (any, error) {
 }
 
 func (d *Daemon) handleSessionResume(params json.RawMessage) (any, error) {
-	id, err := sessionID(params)
+	current, err := d.requireSession(params)
 	if err != nil {
 		return nil, err
 	}
-	current, ok := d.store.Get(id)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", id)
-	}
+	id := current.SessionID
 	if current.Status == "closed" {
 		return nil, fmt.Errorf("session %s is closed", id)
 	}
@@ -2010,11 +2065,11 @@ func (d *Daemon) handleSessionClose(params json.RawMessage) (any, error) {
 }
 
 func (d *Daemon) handleSessionReplay(params json.RawMessage) (any, error) {
-	id, err := sessionID(params)
+	sess, err := d.requireSession(params)
 	if err != nil {
 		return nil, err
 	}
-	return d.kern.ReadEvents(id)
+	return d.kern.ReadEvents(sess.SessionID)
 }
 
 // handleSessionAttach is cursor-based replay for a reconnecting client (attach +
@@ -2031,8 +2086,8 @@ func (d *Daemon) handleSessionAttach(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	if p.SessionID == "" {
-		return nil, fmt.Errorf("session_id required")
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, err
 	}
 	mode, err := parseEventMode(p.EventMode)
 	if err != nil {
@@ -2099,9 +2154,9 @@ func (d *Daemon) handleSessionFork(params json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("session_id is required")
 	}
 	id := p.SessionID
-	src, ok := d.store.Get(id)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", id)
+	src, err := d.requireNamedSession(id, params)
+	if err != nil {
+		return nil, err
 	}
 	if p.BeforeFirst && (p.requestedTaskID() != "" || p.ThroughTurn > 0) {
 		return nil, fmt.Errorf("before_first cannot be combined with last_task_id or through_turn")
@@ -2180,6 +2235,9 @@ func (d *Daemon) handlePlanMode(params json.RawMessage) (any, error) {
 	if p.SessionID == "" {
 		return nil, fmt.Errorf("session_id is required")
 	}
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, err
+	}
 	if !p.On {
 		return nil, fmt.Errorf("plan mode can only be exited through session.approve_plan")
 	}
@@ -2202,9 +2260,9 @@ func (d *Daemon) handleSessionModelGet(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	sess, err := d.requireNamedSession(p.SessionID, params)
+	if err != nil {
+		return nil, err
 	}
 	return sessionModelPreference(sess), nil
 }
@@ -2227,6 +2285,9 @@ func (d *Daemon) handleSessionModelSet(params json.RawMessage) (any, error) {
 	// Stale session effort (e.g. low after switching onto a no-effort route)
 	// must not hard-fail the preference write.
 	p.ReasoningEffort = resolveEffortForModel(d.reasoningEffortSpec(p.Model), p.ReasoningEffort)
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, err
+	}
 	fence := d.sessionPreferenceFence(p.SessionID)
 	fence.Lock()
 	sess, changed, err := d.store.SetNextModelPreferenceIfRevision(
@@ -2289,9 +2350,9 @@ func (d *Daemon) handleAddDir(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	sess, err := d.lookupSession(p.SessionID, callerTenantID(params))
+	if err != nil {
+		return nil, err
 	}
 	abs, err := filepath.Abs(p.Path)
 	if err != nil {
@@ -2299,6 +2360,9 @@ func (d *Daemon) handleAddDir(params json.RawMessage) (any, error) {
 	}
 	if info, err := os.Stat(abs); err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("add_dir requires an existing directory: %s", abs)
+	}
+	if d.store.PathOwnedByOtherTenant(sess.TenantID, abs) {
+		return nil, fmt.Errorf("unknown session %s", p.SessionID)
 	}
 	if err := d.kern.AddDir(sess.SessionID, abs); err != nil {
 		return nil, err
@@ -2329,9 +2393,9 @@ func (d *Daemon) handleApprovePlan(params json.RawMessage) (any, error) {
 			return nil, fmt.Errorf("run_id must not be empty when provided")
 		}
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	sess, err := d.requireNamedSession(p.SessionID, params)
+	if err != nil {
+		return nil, err
 	}
 	if !sess.PlanMode {
 		result := map[string]any{"session_id": p.SessionID, "plan_mode": false, "approved": true}
@@ -2435,21 +2499,17 @@ func (d *Daemon) handleMemoryList(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	sess, err := d.requireNamedSession(p.SessionID, params)
+	if err != nil {
+		return nil, err
 	}
 	return d.memory.list(memoryScopeFromSession(sess), p.Target)
 }
 
 func (d *Daemon) handleMemoryContext(params json.RawMessage) (any, error) {
-	id, err := sessionID(params)
+	sess, err := d.requireSession(params)
 	if err != nil {
 		return nil, err
-	}
-	sess, ok := d.store.Get(id)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", id)
 	}
 	scope := memoryScopeFromSession(sess)
 	return map[string]any{
@@ -2470,21 +2530,17 @@ func (d *Daemon) handleMemorySearch(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	sess, err := d.requireNamedSession(p.SessionID, params)
+	if err != nil {
+		return nil, err
 	}
 	return d.searchMemory(memoryScopeFromSession(sess), p.Query, p.Target, p.Limit, p.Mode, p.Model)
 }
 
 func (d *Daemon) handleMemoryStatus(params json.RawMessage) (any, error) {
-	id, err := sessionID(params)
+	sess, err := d.requireSession(params)
 	if err != nil {
 		return nil, err
-	}
-	sess, ok := d.store.Get(id)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", id)
 	}
 	scope := memoryScopeFromSession(sess)
 	recallProvider := map[string]any{
@@ -2550,9 +2606,9 @@ func (d *Daemon) handleMemoryWrite(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	sess, err := d.requireNamedSession(p.SessionID, params)
+	if err != nil {
+		return nil, err
 	}
 	req := memoryWriteRequest{
 		Action:           p.Action,
@@ -2893,9 +2949,9 @@ func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, provenance tas
 		}
 		d.submissionMu.Unlock()
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	sess, err := d.requireNamedSession(p.SessionID, params)
+	if err != nil {
+		return nil, err
 	}
 	if sess.Status != "active" {
 		return nil, fmt.Errorf("session %s is %s, not active", p.SessionID, sess.Status)
@@ -2929,10 +2985,10 @@ func (d *Daemon) handleTaskSubmitInternal(params json.RawMessage, provenance tas
 	// effort tuple, never a mixture from two preference revisions.
 	preferenceFence := d.sessionPreferenceFence(p.SessionID)
 	preferenceFence.RLock()
-	sess, ok = d.store.Get(p.SessionID)
-	if !ok {
+	sess, err = d.requireNamedSession(p.SessionID, params)
+	if err != nil {
 		preferenceFence.RUnlock()
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+		return nil, err
 	}
 	if sess.Status != "active" {
 		preferenceFence.RUnlock()
@@ -3424,13 +3480,17 @@ func (d *Daemon) handleTaskCancel(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	return d.cancelExecution(runID, "operator")
+}
+
+func (d *Daemon) cancelExecution(runID, actor string) (any, error) {
 	task, err := d.sched.Cancel(runID)
 	if err != nil {
 		return nil, err
 	}
-	d.record(task.SessionID, "ExecutionCancelled", task.RunID, "operator", map[string]any{
+	d.record(task.SessionID, "ExecutionCancelled", task.RunID, actor, map[string]any{
 		"reason": "operator_cancelled", "reason_code": "operator_cancelled",
-		"owner": "operator", "retryable": true,
+		"owner": actor, "retryable": true,
 	}, "")
 	persistErr := d.runs.saveChecked(task)
 	controlErr := d.discardExecutionControl(runID)
@@ -3748,6 +3808,13 @@ func (d *Daemon) persistTask(taskID string) {
 }
 
 func (d *Daemon) workspaceProvenanceKey(sessionID, path string) (string, bool) {
+	if d == nil || d.store == nil {
+		clean := filepath.Clean(path)
+		if filepath.IsAbs(clean) {
+			return "", false
+		}
+		return clean, true
+	}
 	sess, ok := d.store.Get(sessionID)
 	if !ok {
 		clean := filepath.Clean(path)
@@ -3757,79 +3824,6 @@ func (d *Daemon) workspaceProvenanceKey(sessionID, path string) (string, bool) {
 		return clean, true
 	}
 	return workspaceRelPath(sess.WorkspaceRoot, path)
-}
-
-// recordRead notes the hash of content the agent read for a path, so a later
-// blind or stale full-file overwrite (a dirty write) can be caught.
-// Workspace-relative keys are stored so an in-workspace absolute read cannot
-// poison the checkpoint digest. Paths outside the workspace are not replay
-// dependencies and are not recorded.
-func (d *Daemon) recordRead(sessionID, path, content string) {
-	key := path
-	if rel, ok := d.workspaceProvenanceKey(sessionID, path); ok {
-		key = rel
-	} else if filepath.IsAbs(filepath.Clean(path)) {
-		return
-	}
-	h := sha256.Sum256([]byte(content))
-	d.readProvMu.Lock()
-	defer d.readProvMu.Unlock()
-	if d.readProv[sessionID] == nil {
-		d.readProv[sessionID] = map[string]string{}
-	}
-	d.readProv[sessionID][key] = hex.EncodeToString(h[:])
-}
-
-// lastReadHash returns the sha256 (hex) this session last recorded for path
-// via recordRead, and whether any read was ever recorded at all. Used to
-// transfer real read-provenance between sessions (see bestofn.go) instead of
-// re-stamping current disk content, which would make drift undetectable.
-func (d *Daemon) lastReadHash(sessionID, path string) (string, bool) {
-	key, _ := d.workspaceProvenanceKey(sessionID, path)
-	d.readProvMu.Lock()
-	defer d.readProvMu.Unlock()
-	m := d.readProv[sessionID]
-	if m == nil {
-		return "", false
-	}
-	if key != "" {
-		if h, ok := m[key]; ok {
-			return h, true
-		}
-	}
-	h, ok := m[path]
-	return h, ok
-}
-
-// checkWriteProvenance rejects a full-file overwrite that would clobber an
-// existing file the agent never read, or one that drifted since it was last
-// read (a concurrent agent/hook/formatter touched it). New files are allowed.
-func (d *Daemon) checkWriteProvenance(sessionID, relpath, abspath string) error {
-	cur, err := os.ReadFile(abspath)
-	if err != nil {
-		return nil // file does not exist yet — nothing to clobber
-	}
-	sum := sha256.Sum256(cur)
-	curHash := hex.EncodeToString(sum[:])
-	key, _ := d.workspaceProvenanceKey(sessionID, relpath)
-	d.readProvMu.Lock()
-	seen := ""
-	if m := d.readProv[sessionID]; m != nil {
-		if key != "" {
-			seen = m[key]
-		}
-		if seen == "" {
-			seen = m[relpath]
-		}
-	}
-	d.readProvMu.Unlock()
-	if seen == "" {
-		return fmt.Errorf("refusing blind overwrite of existing file %q — read it first", relpath)
-	}
-	if seen != curHash {
-		return fmt.Errorf("stale write: %q changed since you last read it — re-read before editing", relpath)
-	}
-	return nil
 }
 
 // guardRun runs a background agent function under a concurrency cap and a panic
@@ -3962,8 +3956,8 @@ func (d *Daemon) handleApprove(params json.RawMessage) (any, error) {
 	actualScope := scope
 	grantError := ""
 	if decision.Decision == "allowed" && scope != approvalScopeOnce {
-		sess, ok := d.store.Get(p.SessionID)
-		if !ok {
+		sess, err := d.requireNamedSession(p.SessionID, params)
+		if err != nil {
 			actualScope = approvalScopeOnce
 			grantError = "unknown session " + p.SessionID
 		} else if err := d.rememberApprovalGrant(sess, decision, scope, p.Approver, p.Role); err != nil {
@@ -4164,9 +4158,13 @@ func (d *Daemon) handleWorkspaceSearch(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	sess, err := d.requireNamedSession(p.SessionID, params)
+	if err != nil {
+		return nil, err
+	}
+	pattern := strings.TrimSpace(p.Pattern)
+	if pattern == "" {
+		return nil, fmt.Errorf("search needs a non-empty pattern")
 	}
 	decision, err := d.kern.Request(sess.SessionID, "FileRead", sess.WorkspaceRoot, "")
 	if err != nil {
@@ -4175,7 +4173,8 @@ func (d *Daemon) handleWorkspaceSearch(params json.RawMessage) (any, error) {
 	if decision.Decision != "allowed" {
 		return nil, fmt.Errorf("denied: %s", decision.Reason)
 	}
-	return d.tools.Grep(p.Pattern, sess.WorkspaceRoot)
+	matches, _, err := d.tools.GrepBounded(pattern, sess.WorkspaceRoot, searchMatchCap)
+	return matches, err
 }
 
 func (d *Daemon) handleFileGet(params json.RawMessage) (any, error) {
@@ -4186,9 +4185,9 @@ func (d *Daemon) handleFileGet(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	sess, err := d.requireNamedSession(p.SessionID, params)
+	if err != nil {
+		return nil, err
 	}
 	abs, err := resolveWorkspacePreviewPath(sess.WorkspaceRoot, p.Path)
 	if err != nil {
@@ -4407,6 +4406,9 @@ func (d *Daemon) handlePatchPropose(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, err
+	}
 	patch, err := d.kern.PatchPropose(p.SessionID, p.TaskID, p.Reason, p.Files)
 	if err != nil {
 		return nil, err
@@ -4505,6 +4507,9 @@ func (d *Daemon) handlePatchApply(params json.RawMessage) (any, error) {
 	}
 	if p.Approver == "" {
 		p.Approver = "user"
+	}
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, err
 	}
 	fence := d.sessionExecutionFence(p.SessionID)
 	fence.RLock()
@@ -4648,6 +4653,9 @@ func (d *Daemon) handlePatchRollback(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, err
+	}
 	fence := d.sessionExecutionFence(p.SessionID)
 	fence.RLock()
 	defer fence.RUnlock()
@@ -4659,6 +4667,7 @@ func (d *Daemon) handlePatchRollback(params json.RawMessage) (any, error) {
 	// Keep the code index in step with the restore (best-effort; an index
 	// error never fails the rollback).
 	d.invalidateIndex(p.SessionID, patch.AffectedFiles)
+	d.invalidateListSearchMemo(p.SessionID)
 	return patch, nil
 }
 
@@ -4669,6 +4678,9 @@ func (d *Daemon) handlePatchRollbackPreview(params json.RawMessage) (any, error)
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, err
 	}
 	return d.kern.PatchRollbackPreview(p.SessionID, p.PatchID)
 }
@@ -4681,6 +4693,9 @@ func (d *Daemon) handlePatchVerify(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, err
+	}
 	patch, err := d.kern.PatchVerify(p.SessionID, p.PatchID)
 	if err != nil {
 		return nil, err
@@ -4690,11 +4705,11 @@ func (d *Daemon) handlePatchVerify(params json.RawMessage) (any, error) {
 }
 
 func (d *Daemon) handlePatchList(params json.RawMessage) (any, error) {
-	id, err := sessionID(params)
+	sess, err := d.requireSession(params)
 	if err != nil {
 		return nil, err
 	}
-	return d.kern.PatchList(id)
+	return d.kern.PatchList(sess.SessionID)
 }
 
 func (d *Daemon) handlePatchShow(params json.RawMessage) (any, error) {
@@ -4704,6 +4719,9 @@ func (d *Daemon) handlePatchShow(params json.RawMessage) (any, error) {
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, err
 	}
 	return d.kern.PatchShow(p.SessionID, p.PatchID)
 }
@@ -4722,9 +4740,9 @@ func (d *Daemon) handleCommandExec(params json.RawMessage) (any, error) {
 	if len(p.Argv) == 0 {
 		return nil, fmt.Errorf("argv is required")
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	sess, err := d.requireNamedSession(p.SessionID, params)
+	if err != nil {
+		return nil, err
 	}
 	command := strings.Join(p.Argv, " ")
 	decision, err := d.kern.Request(sess.SessionID, "CommandExec", command, p.TaskID)
@@ -4764,13 +4782,17 @@ func (d *Daemon) executeCommand(sessionID, taskID string, argv []string, decisio
 	// events are attributed to the Zig actor. Package-manager mutations are
 	// flagged so lockfile changes are auditable (PRD §13.7).
 	commandID := sessionstore.NewID("cmd")
-	started := map[string]any{"command_id": commandID, "command": command, "cwd": sess.WorkspaceRoot, "risk_level": risk}
+	sandbox := d.commandSandbox(sess)
+	started := map[string]any{"command_id": commandID, "command": command, "cwd": sess.WorkspaceRoot, "risk_level": risk, "sandbox": sandbox}
+	if tenantSessionRequiresSandbox(sess) {
+		started["sandbox_reason"] = "tenant"
+	}
 	if mutatesPackages(command) {
 		started["package_mutation"] = true
 	}
 	d.record(sessionID, "CommandStarted", taskID, "zig", started, decision.DecisionID)
 
-	result, err := d.tools.Run(argv, sess.WorkspaceRoot, 2*time.Minute, d.egressEnv(), d.sandbox.Load())
+	result, err := d.tools.Run(argv, sess.WorkspaceRoot, 2*time.Minute, d.egressEnv(), sandbox)
 	if err != nil {
 		d.record(sessionID, "CommandExited", taskID, "zig", map[string]any{"command_id": commandID, "exit_code": -1, "error": err.Error()}, "")
 		return nil, err
@@ -4833,6 +4855,9 @@ func (d *Daemon) handleSecretGrant(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, err
+	}
 	handle, err := d.kern.GrantSecret(p.SessionID, p.Name, p.Value)
 	if err != nil {
 		return nil, err
@@ -4847,6 +4872,9 @@ func (d *Daemon) handleSecretRequest(params json.RawMessage) (any, error) {
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, err
 	}
 	decision, handle, err := d.kern.RequestSecret(p.SessionID, p.Name)
 	if err != nil {
@@ -4878,8 +4906,8 @@ func (d *Daemon) handlePluginRun(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	if _, ok := d.store.Get(p.SessionID); !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, err
 	}
 	return d.kern.PluginRun(p.SessionID, p.ManifestTOML, p.WasmBase64, p.SignatureBase64)
 }
@@ -4887,6 +4915,9 @@ func (d *Daemon) handlePluginRun(params json.RawMessage) (any, error) {
 func (d *Daemon) handleEventStream(params json.RawMessage, sub *rpc.Subscription) error {
 	sessionID, since, mode, tailVersion, err := parseEventStreamRequest(params)
 	if err != nil {
+		return err
+	}
+	if _, err := d.requireNamedSession(sessionID, params); err != nil {
 		return err
 	}
 	if err := d.authorizeReplayTail(tailVersion, sub.RequestSeq()); err != nil {
@@ -5139,15 +5170,11 @@ func (d *Daemon) handleWorkerRevoke(params json.RawMessage) (any, error) {
 }
 
 func (d *Daemon) session(params json.RawMessage) (*sessionstore.Session, string, error) {
-	id, err := sessionID(params)
+	sess, err := d.requireSession(params)
 	if err != nil {
 		return nil, "", err
 	}
-	sess, ok := d.store.Get(id)
-	if !ok {
-		return nil, "", fmt.Errorf("unknown session %s", id)
-	}
-	return sess, id, nil
+	return sess, sess.SessionID, nil
 }
 
 // mutatesPackages reports whether a command installs/updates dependencies

@@ -26,6 +26,22 @@ agent:NAME:profile:PROFILE
 - `"tasks":[…]` 可并行运行多个同构任务。
 - 输出回到父任务，父任务仍是审批与恢复权威。
 
+设置 `"background":true` 后，系统会先完成受治理的子会话、权限衰减、
+lineage 与持久化，再立即返回 durable job handle，而不是等待摘要：
+
+```json title="spawn-background.json"
+{"tool":"spawn","agent":"scout","task":"Map module boundaries","background":true,"intent":"Delegate bounded repository mapping"}
+```
+
+后台 fan-out 最多包含 8 个 job。父任务可以使用 `job.list`、`job.wait`
+（`any` / `all`，最长 30 秒）与 `job.cancel`。这些工具只解析同时属于当前
+tenant、工作区所有权链、会话边界与 root run lineage 的 job。返回结果仅包含
+有界摘要、状态、时间戳、用量与补丁 artifact 引用，不包含子任务 prompt、
+reasoning、transcript 或原始工具观察。
+
+daemon 重启后，终态 job 保持终态；此前仍在运行的 job 必须经过现有
+continuity 策略协调，不能仅凭旧持久化状态继续显示为 running。
+
 ## 常见模式
 
 | 模式 | 适用场景 | 推荐权限 |

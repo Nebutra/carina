@@ -204,7 +204,7 @@ func (d *Daemon) handleModelList(params json.RawMessage) (any, error) {
 		d.enrichInventoryModelHealth(providers[i].Models)
 	}
 	reasoner := d.modelInventoryReasoner(providers)
-	readiness := d.modelInventoryReadiness(request, providers, reasoner)
+	readiness := d.modelInventoryReadiness(request, callerTenantID(params), providers, reasoner)
 	if d.journey != nil {
 		d.journey.observeReady(readiness.CanSubmit)
 	}
@@ -238,7 +238,7 @@ func (d *Daemon) enrichInventoryModelHealth(models []modelInventoryModel) {
 	}
 }
 
-func (d *Daemon) modelInventoryReadiness(request modelInventoryParams, providers []modelInventoryProvider, reasoner modelInventoryReasoner) modelInventoryReadiness {
+func (d *Daemon) modelInventoryReadiness(request modelInventoryParams, tenantID string, providers []modelInventoryProvider, reasoner modelInventoryReasoner) modelInventoryReadiness {
 	snapshot := modelInventoryReadiness{
 		Step: "locale", Blockers: []string{}, Generation: d.readinessGeneration.Add(1),
 	}
@@ -261,7 +261,7 @@ func (d *Daemon) modelInventoryReadiness(request modelInventoryParams, providers
 	var sessionActive bool
 	if sessionID := strings.TrimSpace(request.SessionID); sessionID == "" {
 		snapshot.Blockers = append(snapshot.Blockers, "session_required")
-	} else if session, ok := d.store.Get(sessionID); !ok || session.Status != "active" {
+	} else if session, err := d.lookupSession(sessionID, tenantID); err != nil || session.Status != "active" {
 		snapshot.Blockers = append(snapshot.Blockers, "session_unavailable")
 	} else {
 		sessionActive = true

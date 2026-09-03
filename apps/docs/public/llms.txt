@@ -1,6 +1,6 @@
 # Carina Documentation
 
-> Local-first AI agent harness with policy, hash-chained audit, and transactional rollback.
+> Local-first AI agent runtime with policy, hash-chained audit, and transactional rollback.
 
 Site: https://carina.nebutra.com
 
@@ -23,7 +23,7 @@ Site: https://carina.nebutra.com
 - [Workers](https://carina.nebutra.com/deployment/workers/): Lease-based remote workers, production profile, drain, and containers.
 - [Common workflows](https://carina.nebutra.com/getting-started/common-workflows/): Short recipes aligned with the live CLI — first session, fix tests, audit, rollback, embed.
 - [Install](https://carina.nebutra.com/getting-started/installation/): Install the Carina CLI and daemon — shell installer, Homebrew, npm, or source.
-- [Overview](https://carina.nebutra.com/getting-started/introduction/): Carina is the local-first runtime for coding agents — policy, hash-chained audit, and transactional rollback.
+- [Overview](https://carina.nebutra.com/getting-started/introduction/): Carina is the local-first harness for coding agents — policy, hash-chained audit, and transactional rollback.
 - [Math notation](https://carina.nebutra.com/getting-started/math/): Moved to Reference — KaTeX LaTeX support.
 - [Quickstart](https://carina.nebutra.com/getting-started/quickstart/): doctor → run → audit verify → patch rollback — first governed session in minutes.
 - [Memory overview](https://carina.nebutra.com/memory/overview/): Governed local memory, MemoryWrite capability, and optional HMS projection.
@@ -40,7 +40,7 @@ Site: https://carina.nebutra.com
 
 ## 简体中文
 
-- [Carina](https://carina.nebutra.com/zh-cn/): 本地优先的 AI Agent 运行时：策略门控、哈希链审计、可事务回滚。
+- [Carina](https://carina.nebutra.com/zh-cn/): 本地优先的 AI Agent Harness：策略门控、哈希链审计、可事务回滚。
 - [Agents 概览](https://carina.nebutra.com/zh-cn/agents/overview/): ReAct 编程 Agent — 模型决策、内核授权、Zig 执行。
 - [子 Agent](https://carina.nebutra.com/zh-cn/agents/sub-agents/): 使用 SubagentSpawn 和能力衰减安全地委派工作。
 - [JSON-RPC 参考](https://carina.nebutra.com/zh-cn/api/json-rpc/): 本地 JSON-RPC 控制平面的核心方法、参数和安全边界。

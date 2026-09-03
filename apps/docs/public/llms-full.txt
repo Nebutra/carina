@@ -121,7 +121,7 @@ Install the Carina CLI and daemon — shell installer, Homebrew, npm, or source.
 
 ## Overview
 
-Carina is the local-first runtime for coding agents — policy, hash-chained audit, and transactional rollback.
+Carina is the local-first harness for coding agents — policy, hash-chained audit, and transactional rollback.
 
 - URL: https://carina.nebutra.com/getting-started/introduction/
 - Markdown: https://carina.nebutra.com/getting-started/introduction/index.md
@@ -219,7 +219,7 @@ Run the in-repo review workflow with parallel reviewers and a synthesis step.
 
 ## Carina
 
-本地优先的 AI Agent 运行时：策略门控、哈希链审计、可事务回滚。
+本地优先的 AI Agent Harness：策略门控、哈希链审计、可事务回滚。
 
 - URL: https://carina.nebutra.com/zh-cn/
 - Markdown: https://carina.nebutra.com/zh-cn/index.md

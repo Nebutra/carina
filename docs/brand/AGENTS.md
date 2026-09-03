@@ -16,6 +16,7 @@ When files disagree, do not blend them. Fix the lower-authority consumer to matc
 
 - Preserve the accepted symbol silhouette, rotation, central counterform, and approved wordmark outlines.
 - Use `#8e4053` (`brand-rose`) for the canonical colored symbol. Use monochrome `currentColor` when a host controls icon color, including VS Code.
+- Dark terminals cannot paint `#8e4053` on `Color::Reset` (contrast fails). Use `terminal-brand-display` (`#a86d79`) for the TUI mark on dark Reset. Light terminals use canonical `brand-rose`. Never invent a third pink.
 - Use the supplied horizontal or stacked lockup. Do not typeset `CARINA` with a substitute font to recreate the wordmark.
 - Do not add gradients, shadows, materials, outlines, animation, or seasonal skins to the canonical masters.
 - Do not use skin, mockup, or specimen files as a source for tracing.
@@ -46,6 +47,7 @@ Rules:
 ## Color Roles
 
 - `brand-rose` identifies the mark. It is not the default interaction color.
+- `terminal-brand-display` is the dark-terminal paint for that mark only. It is not a second brand identity and not an interaction color.
 - `ion-cyan` is the primary product interaction and focus signal.
 - Green, amber, red, blue, and violet are semantic/capability signals. Always pair status color with text or an icon.
 - Use semantic tokens in product code. Do not hardcode brand hex values inside individual views.

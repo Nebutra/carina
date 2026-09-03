@@ -675,6 +675,7 @@ pub struct App {
     notice_seen: bool,
     interactions: InteractionMap,
     overlays: OverlayStack,
+    inbox_pending: usize,
     active_run_id: Option<String>,
     active_run_presentation: ActiveRunPresentation,
     execution_timer: ExecutionTimer,
@@ -1230,6 +1231,7 @@ impl App {
             notice_seen: false,
             interactions: InteractionMap::default(),
             overlays: OverlayStack::default(),
+            inbox_pending: 0,
             active_run_id: None,
             active_run_presentation: ActiveRunPresentation::default(),
             execution_timer: ExecutionTimer::default(),
@@ -2031,7 +2033,10 @@ impl App {
                 .map(|active| active.session_id.clone())
                 .expect("remembered session is active");
             let labels = self.media_chip_labels();
-            for work in self.media.rebind_session(&mut self.composer, labels) {
+            for work in self
+                .media
+                .rebind_session(&mut self.composer, labels, self.theme)
+            {
                 self.start_media_upload(session_id.clone(), work);
             }
         }
@@ -2439,7 +2444,7 @@ impl App {
             Some(_) => {
                 self.options.locale = Some(locale.to_owned());
                 let labels = self.media_chip_labels();
-                self.media.relabel(&mut self.composer, labels);
+                self.media.relabel(&mut self.composer, labels, self.theme);
                 self.route_after_locale();
             }
             None => self.notice = Notice::localized(MessageId::LanguagePersistFailed),
@@ -3023,6 +3028,7 @@ impl App {
                         generation,
                         result,
                         labels,
+                        self.theme,
                     ) {
                         if self.media.failed_message().is_some() {
                             self.submit_after_paste = false;
@@ -3202,6 +3208,21 @@ impl App {
                                 })
                                 .map(str::to_owned);
                             let governance_resolution = event.governance_resolution();
+                            if event.kind == "proposal.created"
+                                && event.session_id
+                                    == self
+                                        .active_session
+                                        .as_ref()
+                                        .map(|session| session.session_id.as_str())
+                                        .unwrap_or_default()
+                            {
+                                self.inbox_pending = self.inbox_pending.saturating_add(1);
+                                self.notice = Notice::localized_with(
+                                    MessageId::InboxReady,
+                                    [("count", self.inbox_pending.to_string())],
+                                );
+                                visual_changed = true;
+                            }
                             let governance_changed = self.overlays.reconcile_event(&event);
                             if governance_changed {
                                 visual_changed = true;
@@ -3779,6 +3800,7 @@ impl App {
                 MediaSourceLabel::User(attachment_label)
             },
             labels,
+            self.theme,
         ) {
             Ok(identity) => identity,
             Err(error) => {
@@ -3839,7 +3861,7 @@ impl App {
         let labels = self.media_chip_labels();
         let Some((generation, path, media_type, temporary)) =
             self.media
-                .begin_retry(&mut self.composer, element_id, labels)
+                .begin_retry(&mut self.composer, element_id, labels, self.theme)
         else {
             return;
         };
@@ -3854,6 +3876,7 @@ impl App {
                 generation,
                 Err("Open a conversation before retrying the image".into()),
                 labels,
+                self.theme,
             );
             return;
         };
@@ -4750,7 +4773,10 @@ impl App {
             }
             Ok(None) => {}
         }
-        if self.context_completion.accept(&mut self.composer) {
+        if self
+            .context_completion
+            .accept(&mut self.composer, self.theme)
+        {
             self.composer_state = TextAreaState::default();
             self.media.reconcile(&self.composer);
             self.slash_selected = 0;
@@ -4820,6 +4846,7 @@ impl App {
                 &pending.path,
                 pending.lines,
                 &file.content,
+                self.theme,
             ) {
                 Ok(true) => {
                     self.composer_state = TextAreaState::default();
@@ -5507,6 +5534,83 @@ impl App {
             Err(error) => {
                 self.notice =
                     Notice::localized_with(MessageId::CancelFailed, [("error", error.to_string())]);
+            }
+        }
+    }
+
+    fn open_inbox_overlay(&mut self) {
+        let Some(session_id) = self
+            .active_session
+            .as_ref()
+            .map(|session| session.session_id.clone())
+        else {
+            self.notice = Notice::localized(MessageId::InboxEmpty);
+            return;
+        };
+        match self.rpc.list_proposals(&session_id) {
+            Ok(listed) => {
+                let pending: Vec<_> = listed
+                    .proposals
+                    .into_iter()
+                    .filter(|card| card.status == "pending")
+                    .collect();
+                self.inbox_pending = pending.len();
+                let Some(card) = pending.into_iter().next() else {
+                    self.notice = Notice::localized(MessageId::InboxEmpty);
+                    return;
+                };
+                self.overlays
+                    .replace(Overlay::Inbox(crate::overlay::InboxOverlay {
+                        proposal_id: card.id,
+                        run_id: card.run_id,
+                        title: card.title,
+                        why: card.why,
+                        done: card.done,
+                        propose: card.propose,
+                        risk: card.risk,
+                        resolving: false,
+                        error: String::new(),
+                    }));
+            }
+            Err(error) => {
+                self.notice =
+                    Notice::localized_with(MessageId::CancelFailed, [("error", error.to_string())]);
+            }
+        }
+    }
+
+    fn resolve_active_inbox(&mut self, mute: bool, accept: bool) {
+        let Some(Overlay::Inbox(inbox)) = self.overlays.active() else {
+            return;
+        };
+        if inbox.resolving {
+            return;
+        }
+        let proposal_id = inbox.proposal_id.clone();
+        if let Some(Overlay::Inbox(inbox)) = self.overlays.active_mut() {
+            inbox.resolving = true;
+            inbox.error.clear();
+        }
+        let result = if accept {
+            self.rpc.accept_proposal(&proposal_id)
+        } else {
+            self.rpc.ignore_proposal(&proposal_id, mute)
+        };
+        match result {
+            Ok(_) => {
+                self.inbox_pending = self.inbox_pending.saturating_sub(1);
+                self.overlays.resolve_active();
+                self.notice = Notice::localized(if accept {
+                    MessageId::InboxAdopted
+                } else {
+                    MessageId::InboxDismissed
+                });
+            }
+            Err(error) => {
+                if let Some(Overlay::Inbox(inbox)) = self.overlays.active_mut() {
+                    inbox.resolving = false;
+                    inbox.error = error.to_string();
+                }
             }
         }
     }
@@ -6578,6 +6682,18 @@ impl App {
                 KeyCode::Esc | KeyCode::Char('q') => deferred = Some(Action::CloseOverlay),
                 _ => {}
             },
+            Some(Overlay::Inbox(inbox)) => {
+                if inbox.resolving {
+                    return;
+                }
+                match key.code {
+                    KeyCode::Char('a') | KeyCode::Enter => deferred = Some(Action::InboxAccept),
+                    KeyCode::Char('i') => deferred = Some(Action::InboxIgnore { mute: false }),
+                    KeyCode::Char('m') => deferred = Some(Action::InboxIgnore { mute: true }),
+                    KeyCode::Esc | KeyCode::Char('q') => deferred = Some(Action::CloseOverlay),
+                    _ => {}
+                }
+            }
             Some(Overlay::Queue(queue)) => {
                 if queue.load.loading {
                     if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
@@ -7836,6 +7952,9 @@ impl App {
             Action::CancelThemePreview => self.cancel_theme_preview(),
             Action::ToggleDensity => self.toggle_density(),
             Action::OpenQueue => self.open_queue_overlay(),
+            Action::OpenInbox => self.open_inbox_overlay(),
+            Action::InboxAccept => self.resolve_active_inbox(false, true),
+            Action::InboxIgnore { mute } => self.resolve_active_inbox(mute, false),
             Action::OpenPlugins => self.open_plugins_overlay(),
             Action::OpenStatus => {
                 if matches!(self.overlays.active(), Some(Overlay::ProductMenu(_))) {
@@ -8075,7 +8194,7 @@ impl App {
                     _ => None,
                 };
                 if let Some(viewer) = viewer {
-                    viewer.confirm(&mut self.composer);
+                    viewer.confirm(&mut self.composer, self.theme);
                     self.composer_state = TextAreaState::default();
                     self.media.reconcile(&self.composer);
                     self.context_completion.update_context(&self.composer);
@@ -9045,6 +9164,7 @@ pub fn run(options: Options) -> Result<Outcome> {
         .ok();
     let mut app = App::bootstrap(options)?;
     let background = probe.and_then(|handle| handle.join().ok()).flatten();
+    app.theme_background = background;
     app.theme = Theme::detected(background);
     app.theme.glyphs = app.theme.glyphs.with_mode(app.glyph_resolution.mode);
     let graphics = TerminalGraphics::detect();

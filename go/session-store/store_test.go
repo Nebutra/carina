@@ -18,7 +18,7 @@ func TestCreateGetListPersist(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sess.Status != "active" || sess.PermissionProfile != "safe-edit" {
+	if sess.Status != "active" || sess.PermissionProfile != "safe-edit" || sess.TenantID != LocalTenantID {
 		t.Fatalf("unexpected session: %+v", sess)
 	}
 	got, ok := s.Get(sess.SessionID)

@@ -187,8 +187,8 @@ func (d *Daemon) handleGoalGet(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	if _, ok := d.store.Get(p.SessionID); !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, err
 	}
 	d.goals.mu.Lock()
 	defer d.goals.mu.Unlock()
@@ -225,8 +225,8 @@ func (d *Daemon) handleGoalSet(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	if _, ok := d.store.Get(p.SessionID); !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, err
 	}
 	p.Objective = strings.TrimSpace(p.Objective)
 	if p.Objective == "" {

@@ -54,6 +54,21 @@ Exact paths are printed by `carina doctor` and release notes.
 - Select external compatibility backends explicitly with
   `CARINA_REASONER_BACKEND=claude-cli` or `CARINA_REASONER_BACKEND=codex-cli`
 
+## Native browser runtime (optional)
+
+Managed browser tools discover Google Chrome, Chromium, or Microsoft Edge on
+macOS and Linux. Set `CARINA_BROWSER_PATH` to an absolute executable path only
+when automatic discovery is unsuitable. If no supported browser is installed,
+browser tools return an actionable unavailable result without preventing the
+daemon from starting.
+
+`CARINA_BROWSER_ATTACH_ENDPOINT` is an operator-only escape hatch for attaching
+one explicitly configured Chromium debugging endpoint. Keep it in deployment
+configuration, never project or model input. Attach mode never scans ports,
+requires a `full-workspace` session, and always pauses for live
+`BrowserAttach` approval even when ordinary approval mode is
+`always-approve`. Leave it unset for the normal isolated managed mode.
+
 ## Gateway (optional)
 
 Optional listeners are **off by default**. Enable WebSocket/HTTP Gateway only with a signing key and explicit bind — see [Runtime API](/api/overview/).

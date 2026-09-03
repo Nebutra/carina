@@ -30,7 +30,7 @@ impl ToolKind {
             "read" => Self::Read,
             "list" => Self::List,
             "search" => Self::Search,
-            "web.fetch" => Self::WebFetch,
+            "web.fetch" | "web.search" => Self::WebFetch,
             "run" => Self::Run,
             "edit" | "patch" => Self::Patch,
             "diff" => Self::Diff,

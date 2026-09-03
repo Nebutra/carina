@@ -13,6 +13,7 @@
   --carina-dust: #b0b7b3;
   --carina-disabled: #7e8885;
   --carina-brand-rose: #8e4053;
+  --carina-terminal-brand-display: #a86d79;
   --carina-ion-cyan: #8edbd2;
   --carina-ion-cyan-bright: #afe9e3;
   --carina-dust-violet: #c6a6ea;
@@ -40,6 +41,7 @@
   --color-border-subtle: var(--carina-border-subtle);
   --color-border: var(--carina-border);
   --color-brand-mark: var(--carina-brand-rose);
+  --color-terminal-brand-display: var(--carina-terminal-brand-display);
   --color-accent: var(--carina-ion-cyan);
   --color-accent-hover: var(--carina-ion-cyan-bright);
   --color-focus: var(--carina-ion-cyan);

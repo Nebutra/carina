@@ -3,7 +3,7 @@ use std::ops::Range;
 use ratatui::text::Line;
 use xai_ratatui_textarea::TextArea;
 
-use crate::context_completion::{file_chip, FILE_ELEMENT_KIND};
+use crate::context_completion::{FILE_ELEMENT_KIND, file_chip};
 
 pub const MAX_PREVIEW_BYTES: usize = 1024 * 1024;
 pub const MAX_FILE_CHIP_EXCERPT_CHARS: usize = 4000;
@@ -161,12 +161,12 @@ impl FileViewer {
         false
     }
 
-    pub fn confirm(self, textarea: &mut TextArea) {
+    pub fn confirm(self, textarea: &mut TextArea, theme: crate::theme::Theme) {
         let selected = self.selected_range();
         let content = self.lines.join("\n");
         let backing = file_chip_backing(&self.path, selected.clone(), &content)
             .unwrap_or_else(|_| format!("@{}:{}", self.path, self.selected_label()));
-        let display = file_chip(&self.path, Some(selected));
+        let display = file_chip(&self.path, Some(selected), theme);
         let (target, trailing_space) = match self.origin {
             FileViewerOrigin::Completion { range } => (range, true),
             FileViewerOrigin::Element { range } => (range, false),
@@ -358,7 +358,7 @@ mod tests {
         viewer.apply_content("one\ntwo\nthree".into(), "hash".into());
         viewer.toggle_range();
         viewer.move_cursor(2, 8);
-        viewer.confirm(&mut textarea);
+        viewer.confirm(&mut textarea, crate::theme::Theme::carina(false));
         assert!(textarea.text().starts_with("inspect @src/main.rs:1-3\n"));
         assert!(textarea.text().contains("1| one"));
         assert!(textarea.text().contains("3| three"));

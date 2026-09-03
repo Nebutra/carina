@@ -11,6 +11,11 @@
       "dust": { "$value": "#b0b7b3", "$type": "color" },
       "disabled": { "$value": "#7e8885", "$type": "color" },
       "brand-rose": { "$value": "#8e4053", "$type": "color" },
+      "terminal-brand-display": {
+        "$value": "#a86d79",
+        "$type": "color",
+        "$description": "Brand-rose lifted for dark terminals so the mark stays readable on Color::Reset / void (WCAG 4.5:1). Canonical colored symbol remains brand-rose. Not an interaction color."
+      },
       "ion-cyan": { "$value": "#8edbd2", "$type": "color" },
       "ion-cyan-bright": { "$value": "#afe9e3", "$type": "color" },
       "dust-violet": { "$value": "#c6a6ea", "$type": "color" },
@@ -27,6 +32,7 @@
       "text-secondary": { "$value": "{color.primitive.dust}", "$type": "color" },
       "border": { "$value": "{color.primitive.border}", "$type": "color" },
       "brand-mark": { "$value": "{color.primitive.brand-rose}", "$type": "color" },
+      "terminal-brand-display": { "$value": "{color.primitive.terminal-brand-display}", "$type": "color" },
       "accent": { "$value": "{color.primitive.ion-cyan}", "$type": "color" },
       "focus": { "$value": "{color.primitive.ion-cyan}", "$type": "color" },
       "success": { "$value": "{color.primitive.spectral-green}", "$type": "color" },

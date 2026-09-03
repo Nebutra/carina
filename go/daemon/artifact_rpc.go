@@ -121,7 +121,11 @@ func (d *Daemon) handleArtifactUpload(raw json.RawMessage) (any, error) {
 	if len(p.SHA256) != 64 || strings.TrimSpace(p.MediaType) == "" {
 		return nil, fmt.Errorf("sha256 and media_type are required")
 	}
-	if sess, ok := d.store.Get(p.SessionID); !ok || sess.Status != "active" {
+	sess, err := d.requireNamedSession(p.SessionID, raw)
+	if err != nil {
+		return nil, err
+	}
+	if sess.Status != "active" {
 		return nil, fmt.Errorf("unknown or inactive session %s", p.SessionID)
 	}
 	chunk, err := base64.StdEncoding.Strict().DecodeString(p.ContentBase64)

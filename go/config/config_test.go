@@ -164,6 +164,41 @@ func TestBestOfNEnabledCascade(t *testing.T) {
 	}
 }
 
+func TestBuiltinToolRegistryModeIsOperatorOnly(t *testing.T) {
+	scrubCarinaEnv(t)
+	home := t.TempDir()
+	cfg, err := Load(home, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BuiltinToolRegistryMode != "descriptor" {
+		t.Fatalf("default registry mode = %q", cfg.BuiltinToolRegistryMode)
+	}
+
+	writeConfig(t, home, `{"builtin_tool_registry_mode":"shadow"}`)
+	cfg, err = Load(home, t.TempDir())
+	if err != nil || cfg.BuiltinToolRegistryMode != "shadow" {
+		t.Fatalf("global registry mode = %q, err=%v", cfg.BuiltinToolRegistryMode, err)
+	}
+	t.Setenv("CARINA_BUILTIN_TOOL_REGISTRY_MODE", "legacy")
+	cfg, err = Load(home, t.TempDir())
+	if err != nil || cfg.BuiltinToolRegistryMode != "legacy" {
+		t.Fatalf("environment registry mode = %q, err=%v", cfg.BuiltinToolRegistryMode, err)
+	}
+
+	t.Setenv("CARINA_BUILTIN_TOOL_REGISTRY_MODE", "dynamic")
+	if _, err := Load(home, t.TempDir()); err == nil {
+		t.Fatal("unknown registry mode must fail closed")
+	}
+
+	scrubCarinaEnv(t)
+	project := t.TempDir()
+	writeConfig(t, project, `{"builtin_tool_registry_mode":"legacy"}`)
+	if _, err := Load(t.TempDir(), project); err == nil || !strings.Contains(err.Error(), "deployment-owned") {
+		t.Fatalf("project registry rollback selector was not rejected: %v", err)
+	}
+}
+
 func TestNoFilesYieldsDefaults(t *testing.T) {
 	scrubCarinaEnv(t)
 	home := t.TempDir()

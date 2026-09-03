@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 
@@ -12,77 +13,63 @@ import (
 
 const mcpServerVersion = "1.0.0"
 
-// strProp / arrProp / objSchema build minimal JSON Schemas for the tool catalog.
-func strProp(desc string) map[string]any {
-	return map[string]any{"type": "string", "description": desc}
-}
-
-func arrProp(desc string) map[string]any {
-	return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": desc}
-}
-
-func objSchema(props map[string]any, required []string) map[string]any {
-	s := map[string]any{"type": "object", "properties": props}
-	if len(required) > 0 {
-		s["required"] = required
-	}
-	if props == nil {
-		s["properties"] = map[string]any{}
-	}
-	return s
-}
-
 // carinaToolCatalog is the set of Carina tools exposed over MCP server mode.
-// Each maps onto the same kernel-gated action the agent loop uses.
-var carinaToolCatalog = []mcpserver.Tool{
-	{Name: "list", Description: "List the workspace file tree.", InputSchema: objSchema(nil, nil)},
-	{Name: "read", Description: "Read a file (capability-gated).",
-		InputSchema: objSchema(map[string]any{"path": strProp("workspace-relative file path")}, []string{"path"})},
-	{Name: "search", Description: "Search the workspace for a pattern.",
-		InputSchema: objSchema(map[string]any{"pattern": strProp("text/regex to find")}, []string{"pattern"})},
-	{Name: "run", Description: "Run a command (OS-sandboxed + policy-gated; risky commands are denied).",
-		InputSchema: objSchema(map[string]any{"command": arrProp("argv, e.g. [\"ls\",\"-la\"]")}, []string{"command"})},
-	{Name: "patch", Description: "Propose+apply a full-file edit (transactional, rollbackable, capability-gated).",
-		InputSchema: objSchema(map[string]any{
-			"path":    strProp("workspace-relative file path"),
-			"content": strProp("FULL new file content"),
-		}, []string{"path", "content"})},
-	{Name: "edit", Description: "Replace one unique span in a file (transactional, capability-gated).",
-		InputSchema: objSchema(map[string]any{
-			"path": strProp("workspace-relative file path"),
-			"old":  strProp("exact unique span to replace"),
-			"new":  strProp("replacement text"),
-		}, []string{"path", "old", "new"})},
+// Each is projected from the builtin descriptor registry and maps onto the
+// same normalized action and governed handler the agent loop uses.
+var carinaToolCatalog []mcpserver.Tool
+
+func externalMCPToolCatalog(registry *builtinToolRegistry) []mcpserver.Tool {
+	if registry == nil {
+		return nil
+	}
+	tools := make([]mcpserver.Tool, 0, len(registry.ordered))
+	for _, descriptor := range registry.ordered {
+		if !descriptor.ExternalMCP {
+			continue
+		}
+		schema := cloneStringAnyMap(descriptor.Schema)
+		properties, _ := schema["properties"].(map[string]any)
+		delete(properties, "intent")
+		required := schemaStringSlice(schema["required"])
+		filtered := required[:0]
+		for _, name := range required {
+			if name != "intent" {
+				filtered = append(filtered, name)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(schema, "required")
+		} else {
+			schema["required"] = filtered
+		}
+		tools = append(tools, mcpserver.Tool{
+			Name: descriptor.Name, Description: descriptor.ExternalMCPDescription, InputSchema: schema,
+		})
+	}
+	return tools
 }
 
 // actionFromMCP maps an MCP tool call onto an agent action. Returns nil for an
 // unknown tool.
 func actionFromMCP(name string, args map[string]any) *action {
-	str := func(k string) string { s, _ := args[k].(string); return s }
-	switch name {
-	case "list":
-		return &action{Tool: "list"}
-	case "read":
-		return &action{Tool: "read", Path: str("path")}
-	case "search":
-		return &action{Tool: "search", Pattern: str("pattern")}
-	case "patch":
-		return &action{Tool: "patch", Path: str("path"), Content: str("content")}
-	case "edit":
-		return &action{Tool: "edit", Path: str("path"), Old: str("old"), New: str("new")}
-	case "run":
-		var cmd []string
-		if raw, ok := args["command"].([]any); ok {
-			for _, c := range raw {
-				if s, ok := c.(string); ok {
-					cmd = append(cmd, s)
-				}
-			}
-		}
-		return &action{Tool: "run", Command: cmd}
-	default:
+	descriptor, ok := defaultBuiltinTools.lookup(name)
+	if !ok || !descriptor.ExternalMCP {
 		return nil
 	}
+	fields := make(map[string]any, len(args)+1)
+	for key, value := range args {
+		fields[key] = value
+	}
+	fields["tool"] = name
+	raw, err := json.Marshal(fields)
+	if err != nil {
+		return nil
+	}
+	act, err := decodeAction(raw)
+	if err != nil {
+		return nil
+	}
+	return &act
 }
 
 // carinaMCPHandler exposes one session's tools to an MCP client. Every call is
@@ -94,7 +81,12 @@ type carinaMCPHandler struct {
 	task *scheduler.ExecutionRun
 }
 
-func (h *carinaMCPHandler) Tools() []mcpserver.Tool { return carinaToolCatalog }
+func (h *carinaMCPHandler) Tools() []mcpserver.Tool {
+	if h != nil && h.d != nil {
+		return externalMCPToolCatalog(h.d.builtinToolRegistry())
+	}
+	return externalMCPToolCatalog(defaultBuiltinTools)
+}
 
 func (h *carinaMCPHandler) Call(name string, args map[string]any) (string, error) {
 	act := actionFromMCP(name, args)

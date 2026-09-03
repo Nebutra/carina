@@ -1244,6 +1244,40 @@ pub struct QueueListResult {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct ProposalCard {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default)]
+    pub run_id: String,
+    #[serde(default)]
+    pub class: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub why: String,
+    #[serde(default)]
+    pub done: String,
+    #[serde(default)]
+    pub propose: String,
+    #[serde(default)]
+    pub risk: String,
+    #[serde(default)]
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct ProposalListResult {
+    #[serde(default)]
+    pub proposals: Vec<ProposalCard>,
+    #[serde(default)]
+    pub pending: usize,
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct QueueDropResult {
     pub run_id: String,
     pub steer_id: String,

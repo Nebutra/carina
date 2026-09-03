@@ -146,8 +146,8 @@ func (d *Daemon) handleAgentMetadataSet(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	if _, ok := d.store.Get(p.SessionID); !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, err
 	}
 	m := agentview.Metadata{Title: strings.TrimSpace(p.Title), PullRequest: strings.TrimSpace(p.PullRequest), Branch: strings.TrimSpace(p.Branch), WorktreeID: strings.TrimSpace(p.WorktreeID)}
 	if err := d.agentView.Set(p.SessionID, m); err != nil {

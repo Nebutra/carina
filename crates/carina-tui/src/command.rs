@@ -38,6 +38,7 @@ pub enum CommandId {
     Fullscreen,
     Inline,
     Queue,
+    Inbox,
     Agents,
     Plugins,
     Doctor,
@@ -239,6 +240,12 @@ pub const COMMANDS: &[CommandSpec] = &[
         CommandId::Queue,
         "/queue",
         MessageId::CommandQueue,
+        AvailabilityRule::Always,
+    ),
+    command(
+        CommandId::Inbox,
+        "/inbox",
+        MessageId::CommandInbox,
         AvailabilityRule::Always,
     ),
     command(
@@ -884,13 +891,17 @@ mod tests {
 
     #[test]
     fn discovery_and_execution_share_capability_gates() {
-        assert!(!matching("/c", false)
-            .iter()
-            .any(|item| item.id == CommandId::Cancel));
+        assert!(
+            !matching("/c", false)
+                .iter()
+                .any(|item| item.id == CommandId::Cancel)
+        );
         assert!(resolve("/cancel", false).is_none());
-        assert!(matching("/c", true)
-            .iter()
-            .any(|item| item.id == CommandId::Cancel));
+        assert!(
+            matching("/c", true)
+                .iter()
+                .any(|item| item.id == CommandId::Cancel)
+        );
         assert_eq!(
             resolve("/cancel", true).map(|item| item.id),
             Some(CommandId::Cancel)
@@ -899,9 +910,11 @@ mod tests {
 
     #[test]
     fn status_is_discoverable_and_resolves_while_idle() {
-        assert!(matching("/st", false)
-            .iter()
-            .any(|item| item.id == CommandId::Status));
+        assert!(
+            matching("/st", false)
+                .iter()
+                .any(|item| item.id == CommandId::Status)
+        );
         assert_eq!(
             resolve("/status", false).map(|item| item.id),
             Some(CommandId::Status)
@@ -910,9 +923,11 @@ mod tests {
 
     #[test]
     fn plugins_is_a_builtin_command_available_while_idle() {
-        assert!(matching("/pl", false)
-            .iter()
-            .any(|item| item.id == CommandId::Plugins));
+        assert!(
+            matching("/pl", false)
+                .iter()
+                .any(|item| item.id == CommandId::Plugins)
+        );
         assert_eq!(
             resolve("/plugins", false).map(|item| item.id),
             Some(CommandId::Plugins)
@@ -922,6 +937,20 @@ mod tests {
             Some(MessageId::CommandPlugins)
         );
         assert!(!accepts_arguments(CommandId::Plugins));
+    }
+
+    #[test]
+    fn inbox_is_a_builtin_command_available_while_idle() {
+        assert!(
+            matching("/inb", false)
+                .iter()
+                .any(|item| item.id == CommandId::Inbox)
+        );
+        assert_eq!(
+            resolve("/inbox", false).map(|item| item.id),
+            Some(CommandId::Inbox)
+        );
+        assert!(!accepts_arguments(CommandId::Inbox));
     }
 
     #[test]
@@ -946,9 +975,11 @@ mod tests {
 
     #[test]
     fn agents_is_a_builtin_command_available_while_idle() {
-        assert!(matching("/ag", false)
-            .iter()
-            .any(|item| item.id == CommandId::Agents));
+        assert!(
+            matching("/ag", false)
+                .iter()
+                .any(|item| item.id == CommandId::Agents)
+        );
         assert_eq!(
             resolve("/agents", false).map(|item| item.id),
             Some(CommandId::Agents)
@@ -962,9 +993,11 @@ mod tests {
 
     #[test]
     fn density_is_discoverable_and_resolves_while_idle() {
-        assert!(matching("/den", false)
-            .iter()
-            .any(|item| item.id == CommandId::Density));
+        assert!(
+            matching("/den", false)
+                .iter()
+                .any(|item| item.id == CommandId::Density)
+        );
         assert_eq!(
             resolve("/density", false).map(|item| item.id),
             Some(CommandId::Density)
@@ -974,9 +1007,11 @@ mod tests {
     #[test]
     fn symbols_is_a_builtin_command_available_in_every_execution_state() {
         for has_active_execution in [false, true] {
-            assert!(matching("/sym", has_active_execution)
-                .iter()
-                .any(|item| item.id == CommandId::Symbols));
+            assert!(
+                matching("/sym", has_active_execution)
+                    .iter()
+                    .any(|item| item.id == CommandId::Symbols)
+            );
             assert_eq!(
                 resolve("/symbols", has_active_execution).map(|item| item.id),
                 Some(CommandId::Symbols)
@@ -991,9 +1026,11 @@ mod tests {
     #[test]
     fn theme_is_a_builtin_command_that_accepts_polarity_arguments() {
         for has_active_execution in [false, true] {
-            assert!(matching("/th", has_active_execution)
-                .iter()
-                .any(|item| item.id == CommandId::Theme));
+            assert!(
+                matching("/th", has_active_execution)
+                    .iter()
+                    .any(|item| item.id == CommandId::Theme)
+            );
             assert_eq!(
                 resolve("/theme", has_active_execution).map(|item| item.id),
                 Some(CommandId::Theme)
@@ -1008,9 +1045,11 @@ mod tests {
 
     #[test]
     fn view_plan_is_a_builtin_command_available_while_idle() {
-        assert!(matching("/view", false)
-            .iter()
-            .any(|item| item.id == CommandId::ViewPlan));
+        assert!(
+            matching("/view", false)
+                .iter()
+                .any(|item| item.id == CommandId::ViewPlan)
+        );
         assert_eq!(
             resolve("/view-plan", false).map(|item| item.id),
             Some(CommandId::ViewPlan)
@@ -1041,9 +1080,11 @@ mod tests {
 
     #[test]
     fn internal_checkpoints_are_not_a_user_command() {
-        assert!(COMMANDS
-            .iter()
-            .all(|command| command.name != "/checkpoints"));
+        assert!(
+            COMMANDS
+                .iter()
+                .all(|command| command.name != "/checkpoints")
+        );
         assert!(resolve("/checkpoints", false).is_none());
         assert!(resolve("/checkpoint", false).is_none());
     }

@@ -8,3 +8,5 @@ command_exec = { allow = "none" }
 network_access = { allow = "none" }
 secret_read = { allow = "none" }
 patch_apply = { allow = "none" }
+browser_interact = { allow = "none" }
+browser_attach = { allow = "none" }

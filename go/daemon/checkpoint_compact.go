@@ -67,8 +67,8 @@ func (d *Daemon) handleCheckpointCompact(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	if _, ok := d.store.Get(p.SessionID); !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, err
 	}
 	d.checkpointMu.Lock()
 	defer d.checkpointMu.Unlock()
@@ -131,7 +131,7 @@ func (d *Daemon) handleCheckpointCompact(params json.RawMessage) (any, error) {
 	if receipt == nil {
 		return map[string]any{"compacted": false, "task_id": task.RunID, "checkpoint_id": checkpointID(task, source), "reason": "checkpoint has no safely compactable head"}, nil
 	}
-	target := &runCheckpoint{Turn: source.Turn, Transcript: clone, MemorySnapshot: source.MemorySnapshot, AppliedPatches: append([]string(nil), source.AppliedPatches...)}
+	target := &runCheckpoint{Turn: source.Turn, Transcript: clone, MemorySnapshot: source.MemorySnapshot, AppliedPatches: append([]string(nil), source.AppliedPatches...), WorkspaceAnchor: source.WorkspaceAnchor, ReadProvenance: source.ReadProvenance}
 	operationID := sessionstore.NewID("compact")
 	j, err := d.runs.prepareCompact(task.RunID, operationID, checkpointID(task, source), target)
 	if err != nil {

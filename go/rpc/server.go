@@ -296,7 +296,7 @@ type Server struct {
 // RemoteParamsGuard inspects a remote-origin request after transport
 // authorization and before the handler. Local Unix-socket calls never
 // invoke it. A non-nil error refuses the call.
-type RemoteParamsGuard func(method string, params json.RawMessage) error
+type RemoteParamsGuard func(method string, params json.RawMessage, claims GatewayTokenClaims) error
 
 // SetConnectionObserver installs the transport lifecycle observer.
 func (s *Server) SetConnectionObserver(observer ConnectionObserver) {
@@ -348,6 +348,10 @@ func (s *Server) SetRemoteParamsGuard(guard RemoteParamsGuard) {
 }
 
 func (s *Server) applyRemoteParamsGuard(origin Origin, method string, params json.RawMessage) error {
+	return s.applyRemoteParamsGuardWithClaims(origin, method, params, GatewayTokenClaims{})
+}
+
+func (s *Server) applyRemoteParamsGuardWithClaims(origin Origin, method string, params json.RawMessage, claims GatewayTokenClaims) error {
 	if origin == OriginLocal {
 		return nil
 	}
@@ -357,7 +361,7 @@ func (s *Server) applyRemoteParamsGuard(origin Origin, method string, params jso
 	if guard == nil {
 		return nil
 	}
-	return guard(method, params)
+	return guard(method, params, claims)
 }
 
 // RequireDescriptors makes the server fail closed for registered methods that
@@ -588,6 +592,10 @@ func (s *Server) serve(conn net.Conn, origin Origin) {
 }
 
 func (s *Server) serveWithScopes(conn net.Conn, origin Origin, scopes []Scope) {
+	s.serveAuthenticated(conn, origin, scopes, GatewayTokenClaims{})
+}
+
+func (s *Server) serveAuthenticated(conn net.Conn, origin Origin, scopes []Scope, claims GatewayTokenClaims) {
 	defer conn.Close()
 	observer := s.connectionObserver()
 	if observer != nil {
@@ -652,10 +660,11 @@ func (s *Server) serveWithScopes(conn net.Conn, origin Origin, scopes []Scope) {
 				continue
 			}
 		}
-		if err := s.applyRemoteParamsGuard(origin, req.Method, req.Params); err != nil {
+		if err := s.applyRemoteParamsGuardWithClaims(origin, req.Method, req.Params, claims); err != nil {
 			_ = w.enqueue(Response{JSONRPC: "2.0", ID: req.ID, Error: responseError(err)})
 			continue
 		}
+		req.Params = BindTenantParams(req.Params, claims)
 
 		// Stream methods keep the connection open and push notifications.
 		s.mu.RLock()

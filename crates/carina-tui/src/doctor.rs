@@ -789,15 +789,13 @@ mod tests {
         });
         let report = project_doctor_report(&raw, 1);
         assert!(
-            !report.sections.iter().any(|section| section.id == "recover"),
-            "named recover is doctor/audit JSON, not TUI chrome: {report:?}"
-        );
-        assert!(
-            report
+            !report
                 .sections
                 .iter()
-                .any(|section| section.id == "kernel")
+                .any(|section| section.id == "recover"),
+            "named recover is doctor/audit JSON, not TUI chrome: {report:?}"
         );
+        assert!(report.sections.iter().any(|section| section.id == "kernel"));
     }
 
     #[test]

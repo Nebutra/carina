@@ -33,19 +33,20 @@ const (
 // by an elision placeholder or dropped into a summary; the original always
 // remains in the event log.
 type Observation struct {
-	Tool              string   `json:"tool,omitempty"`
-	Content           string   `json:"content"`
-	Pinned            bool     `json:"pinned,omitempty"` // failing tests / current edit / patch result — never elided
-	Elided            bool     `json:"elided,omitempty"`
-	OriginalRef       string   `json:"original_ref,omitempty"`
-	OriginalSHA256    string   `json:"original_sha256,omitempty"`
-	CompressionEngine string   `json:"compression_engine,omitempty"`
-	OriginalBytes     int      `json:"original_bytes,omitempty"`
-	CompressedBytes   int      `json:"compressed_bytes,omitempty"`
-	OriginalTokens    int      `json:"original_tokens,omitempty"`
-	CompressedTokens  int      `json:"compressed_tokens,omitempty"`
-	SavingsPercent    float64  `json:"savings_percent,omitempty"`
-	Transforms        []string `json:"transforms,omitempty"`
+	Tool              string                `json:"tool,omitempty"`
+	Content           string                `json:"content"`
+	Pinned            bool                  `json:"pinned,omitempty"` // failing tests / current edit / patch result — never elided
+	Elided            bool                  `json:"elided,omitempty"`
+	OriginalRef       string                `json:"original_ref,omitempty"`
+	OriginalSHA256    string                `json:"original_sha256,omitempty"`
+	CompressionEngine string                `json:"compression_engine,omitempty"`
+	OriginalBytes     int                   `json:"original_bytes,omitempty"`
+	CompressedBytes   int                   `json:"compressed_bytes,omitempty"`
+	OriginalTokens    int                   `json:"original_tokens,omitempty"`
+	CompressedTokens  int                   `json:"compressed_tokens,omitempty"`
+	SavingsPercent    float64               `json:"savings_percent,omitempty"`
+	Transforms        []string              `json:"transforms,omitempty"`
+	Error             *ToolObservationError `json:"error,omitempty"`
 	// MediaRefs are content-addressed references (see media.go) to non-text
 	// media produced by this observation. Only the placeholder line ever
 	// reaches the model view (see render); raw bytes stay in the artifact
@@ -356,6 +357,8 @@ func renderTranscriptRebuild(summary, rebuild string, turns []Turn) string {
 			// included — "[elided to save context]" already accounts for them,
 			// exactly as it does for Content.
 			obs = "[elided to save context]"
+		} else if turn.Obs.Error != nil {
+			obs = turn.Obs.Error.modelJSON()
 		} else {
 			for _, ref := range turn.Obs.MediaRefs {
 				obs += "\n" + ref.placeholder()
@@ -651,7 +654,7 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 			Version: receiptVersion, CreatedAt: time.Now().UTC(), FirstTurn: firstTurn, LastTurn: lastTurn,
 			RemovedTurns: len(folded), PreimageSHA256: preimageHash, SummarySHA256: sha256Hex(summary),
 			KeptTurnIndices: keptIdx, KeyFiles: keyFiles(folded, 5),
-			CitedFiles: citedFiles(folded, maxRebuildFiles),
+			CitedFiles:    citedFiles(folded, maxRebuildFiles),
 			PolicyVersion: t.policy.PolicyVersion, WindowTokens: t.policy.WindowTokens,
 			ReserveTokens: t.policy.ReserveTokens, MetadataSource: t.policy.MetadataSource,
 			PressureBefore: pressureBefore, PressureAfter: t.compactionPressure(),

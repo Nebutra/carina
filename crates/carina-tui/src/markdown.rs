@@ -22,7 +22,7 @@ pub struct MarkdownTheme {
     pub code_comment: Style,
     pub code_number: Style,
     pub code_type: Style,
-    /// Conversation answers stay unboxed. Sharp `┌┬┐` tables belong on
+    /// Conversation answers stay unboxed. Sharp box-drawing tables belong on
     /// workbenches (`/changes`), not in the reading column.
     pub unboxed_tables: bool,
 }
@@ -223,9 +223,9 @@ impl MarkdownWriter {
                     ..Table::default()
                 });
             }
-            Tag::Paragraph => self.ensure_content_line(),
+            Tag::Paragraph => self.begin_spaced_block(0),
             Tag::Heading { level, .. } => {
-                self.ensure_content_line();
+                self.begin_spaced_block(1);
                 let style = self.theme.headings[match level {
                     HeadingLevel::H1 => 0,
                     HeadingLevel::H2 => 1,
@@ -251,9 +251,14 @@ impl MarkdownWriter {
                     }
                 }
             }
-            Tag::List(start) => self.lists.push(ListState { next: start }),
+            Tag::List(start) => {
+                if self.lists.is_empty() {
+                    self.begin_spaced_block(0);
+                }
+                self.lists.push(ListState { next: start });
+            }
             Tag::Item => {
-                self.ensure_content_line();
+                self.newline_if_content();
                 let depth = self.lists.len().saturating_sub(1);
                 let prefix = match self.lists.last_mut().and_then(|list| list.next.as_mut()) {
                     Some(next) => {
@@ -495,7 +500,9 @@ impl MarkdownWriter {
 
     fn render_unboxed_table(&mut self, table: &Table, columns: usize) {
         let gap: usize = 2;
-        let available = self.width.saturating_sub(gap.saturating_mul(columns.saturating_sub(1)));
+        let available = self
+            .width
+            .saturating_sub(gap.saturating_mul(columns.saturating_sub(1)));
         let mut widths = (0..columns)
             .map(|column| {
                 table
@@ -579,8 +586,7 @@ impl MarkdownWriter {
                     line.spans.push(Span::raw(" ".repeat(padding)));
                 }
             }
-            self.lines
-                .push(Line::from(clip_spans(line.spans, width)));
+            self.lines.push(Line::from(clip_spans(line.spans, width)));
         }
     }
 
@@ -725,13 +731,31 @@ impl MarkdownWriter {
         }
     }
 
-    fn ensure_content_line(&mut self) {
-        if self.lines.len() > 1
-            && self.lines.last().is_some_and(|line| line.spans.is_empty())
-            && self.lines[self.lines.len() - 2].spans.is_empty()
-        {
+    fn trailing_empty_rows(&self) -> usize {
+        self.lines
+            .iter()
+            .rev()
+            .take_while(|line| line.spans.is_empty())
+            .count()
+    }
+
+    fn has_content(&self) -> bool {
+        self.lines.iter().any(|line| !line.spans.is_empty())
+    }
+
+    fn begin_spaced_block(&mut self, extra_blank: usize) {
+        if !self.has_content() {
+            return;
+        }
+        self.newline_if_content();
+        let want = 1 + extra_blank;
+        while self.trailing_empty_rows() > want {
             self.lines.pop();
         }
+        while self.trailing_empty_rows() < want {
+            self.newline();
+        }
+        self.newline();
     }
 
     fn finish_paragraph(&mut self) {
@@ -975,6 +999,13 @@ mod tests {
     }
 
     #[test]
+    fn headings_take_a_document_beat_above_the_title() {
+        let lines = render("Intro sentence.\n\n## Result\n\nBody after.", 80, theme());
+        let text = plain(&lines).join("\n");
+        assert_eq!(text, "Intro sentence.\n\n\nResult\n\nBody after.");
+    }
+
+    #[test]
     fn lays_out_gfm_tables_to_the_terminal_width() {
         let input = "| Name | 状态 |\n|:--|--:|\n| compiler | 已完成并验证 |";
         let wide = render(input, 32, theme());
@@ -1010,20 +1041,19 @@ mod tests {
         let input = "| 层 | 语言 | 职责 |\n|---|---|---|\n| Native Toolchain | Zig | scan / grep / diff / patch / 进程 / PTY |\n| Capability Kernel | Rust | 权限、policy、hash-chained 审计 |";
         let mut theme = theme();
         theme.unboxed_tables = true;
-        let prefix = StyledPrefix::hanging(
-            vec![Span::raw("• ")],
-            Style::default(),
-        );
+        let prefix = StyledPrefix::hanging(vec![Span::raw("• ")], Style::default());
         for width in [24_u16, 32, 48, 80, 120] {
             let lines = render_prefixed(input, width, theme, &prefix);
             assert!(
-                !plain(&lines).iter().any(|line| line.contains('┌')
-                    || line.contains('┬')
-                    || line.contains('┐')),
+                !plain(&lines)
+                    .iter()
+                    .any(|line| line.contains('┌') || line.contains('┬') || line.contains('┐')),
                 "conversation tables must not box: {width}"
             );
             assert!(
-                plain(&lines).iter().all(|line| line.width() <= usize::from(width)),
+                plain(&lines)
+                    .iter()
+                    .all(|line| line.width() <= usize::from(width)),
                 "prefixed table overflowed {width}: {:?}",
                 plain(&lines)
             );

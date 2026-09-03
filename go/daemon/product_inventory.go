@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"encoding/json"
-	"fmt"
 	"sort"
 )
 
@@ -13,9 +12,9 @@ func (d *Daemon) handleSkillInventory(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, err
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	sess, err := d.requireNamedSession(p.SessionID, params)
+	if err != nil {
+		return nil, err
 	}
 	specs := loadSkillSpecs(sess.WorkspaceRoot)
 	rows := make([]map[string]any, 0, len(specs))
@@ -36,9 +35,9 @@ func (d *Daemon) handleHookInventory(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, err
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	sess, err := d.requireNamedSession(p.SessionID, params)
+	if err != nil {
+		return nil, err
 	}
 	var rows []map[string]any
 	for _, hook := range loadHooks(sess.WorkspaceRoot) {
@@ -58,9 +57,9 @@ func (d *Daemon) handleProfileInventory(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, err
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	sess, err := d.requireNamedSession(p.SessionID, params)
+	if err != nil {
+		return nil, err
 	}
 	effective, err := d.handleProfileDescribe(params)
 	if err != nil {
@@ -76,38 +75,52 @@ func (d *Daemon) handleConfigInventory(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, err
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	sess, err := d.requireNamedSession(p.SessionID, params)
+	if err != nil {
+		return nil, err
 	}
 	d.planMu.Lock()
 	planMode := d.planMode[sess.SessionID]
 	d.planMu.Unlock()
 	mode := d.approvalModeString()
+	registry := d.builtinToolRegistry()
 	effective := map[string]any{
-		"safe_mode":              d.safeMode,
-		"sandbox_commands":       d.sandbox.Load(),
-		"interactive_approval":   d.interactiveApproval.Load(),
-		"approval_mode":          mode,
-		"disable_always_approve": d.disableAlwaysApprove.Load(),
-		"permission_profile":     sess.PermissionProfile,
-		"plan_mode":              planMode,
-		"model":                  sess.NextModel,
-		"reasoning_effort":       sess.NextReasoningEffort,
+		"safe_mode":                     d.safeMode,
+		"sandbox_commands":              d.commandSandbox(sess),
+		"tenant_sandbox":                tenantSessionRequiresSandbox(sess),
+		"interactive_approval":          d.interactiveApproval.Load(),
+		"approval_mode":                 mode,
+		"disable_always_approve":        d.disableAlwaysApprove.Load(),
+		"permission_profile":            sess.PermissionProfile,
+		"plan_mode":                     planMode,
+		"model":                         sess.NextModel,
+		"reasoning_effort":              sess.NextReasoningEffort,
+		"proactive":                     proactiveEnabled(),
+		"builtin_tool_registry_mode":    d.builtinRegistryMode(),
+		"builtin_tool_registry_version": registry.version,
 	}
 	choices := map[string]any{
-		"interaction_mode": []string{"converse", "build", "plan"},
-		"approval_mode":    []string{approvalModeAsk, approvalModeAlwaysApprove, approvalModeDontAsk, approvalModeAcceptEdits},
-		"approval_preset":  hitlPresetIDs(),
-		"reasoning_effort": []string{"default", "low", "medium", "high", "max", "auto"},
-		"sandbox":          []string{"on", "off (daemon policy may forbid)"},
+		"interaction_mode":           []string{"converse", "build", "plan"},
+		"approval_mode":              []string{approvalModeAsk, approvalModeAlwaysApprove, approvalModeDontAsk, approvalModeAcceptEdits},
+		"approval_preset":            hitlPresetIDs(),
+		"reasoning_effort":           []string{"default", "low", "medium", "high", "max", "auto"},
+		"sandbox":                    []string{"on", "off (daemon policy may forbid)"},
+		"builtin_tool_registry_mode": []string{string(builtinToolRegistryDescriptor), string(builtinToolRegistryShadow), string(builtinToolRegistryLegacy)},
 	}
 	return map[string]any{
-		"effective":    effective,
+		"effective":          effective,
+		"builtin_tools":      registry.inventory(),
+		"builtin_tool_count": len(registry.ordered),
+		"builtin_tool_shadow_parity": map[string]any{
+			"matched":           len(d.builtinToolsShadowMismatches) == 0,
+			"projection_digest": registry.projectionDigest(),
+			"fixture_digest":    legacyBuiltinProjectionDigest,
+			"mismatches":        append([]string(nil), d.builtinToolsShadowMismatches...),
+		},
 		"hitl_presets": hitlPresetCatalog(),
 		"hitl_preset":  matchHITLPreset(mode, sess.PermissionProfile),
 		"sources":      map[string]any{"session": "session store", "runtime": "daemon config/env/CLI (effective value shown)"},
 		"choices":      choices,
-		"mutation":     "use dedicated governed commands (/mode, /model, /always-approve, /approval-mode, /dont-ask, /permissions new …); named presets only set product HITL mode and do not change the session profile",
+		"mutation":     "use dedicated governed commands (/mode, /model, /always-approve, /approval-mode, /dont-ask, /permissions new …); named presets only set product HITL mode and do not change the session profile; builtin descriptors are operator-owned source and cannot be changed by models",
 	}, nil
 }

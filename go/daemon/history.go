@@ -32,9 +32,9 @@ func (d *Daemon) handleHistoryRecent(params json.RawMessage) (any, error) {
 	}
 	var workspaceRoot, nextModel, nextReasoningEffort string
 	if scope != "global" {
-		sess, ok := d.store.Get(p.SessionID)
-		if !ok {
-			return nil, fmt.Errorf("unknown session %s", p.SessionID)
+		sess, err := d.requireNamedSession(p.SessionID, params)
+		if err != nil {
+			return nil, err
 		}
 		workspaceRoot = sess.WorkspaceRoot
 		nextModel = sess.NextModel

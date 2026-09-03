@@ -41,6 +41,7 @@ export const carinaTheme = defineTheme({
     '--font-family-mono':
       '"Geist Mono", "SFMono-Regular", Consolas, monospace',
     '--color-brand-mark': ['#8e4053', '#8e4053'],
+    '--color-terminal-brand-display': ['#8e4053', '#a86d79'],
     '--color-accent': ['#176f70', '#8edbd2'],
     '--color-accent-muted': ['#dcefed', '#19302f'],
     '--color-on-accent': ['#ffffff', '#0b1716'],

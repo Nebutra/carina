@@ -3,7 +3,9 @@ package daemon
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // TestAddDirGrantsScopedRoot: session.add_dir widens a session to an additional
@@ -60,5 +62,89 @@ func TestAddDirGrantsScopedRoot(t *testing.T) {
 	if _, err := d.handleAddDir(mustJSON(t, map[string]any{
 		"session_id": sess.SessionID, "path": filepath.Join(extra, "nope")})); err == nil {
 		t.Fatal("add_dir on a missing directory must error")
+	}
+}
+
+func TestAgentAddDirGrantsAfterOperatorConsent(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "write to extra")
+	extra := t.TempDir()
+	target := filepath.Join(extra, "snake.html")
+
+	questions := make(chan map[string]any, 1)
+	d.events.Tap(func(_ string, ev map[string]any) {
+		if ev["type"] == "user.question" {
+			questions <- ev
+		}
+	})
+	result := make(chan toolExecutionOutcome, 1)
+	go func() {
+		result <- d.agentAddDirOutcome(sess, task, extra)
+	}()
+	var question map[string]any
+	select {
+	case question = <-questions:
+	case <-time.After(2 * time.Second):
+		t.Fatal("add_dir did not ask to grant")
+	}
+	questionID, _ := question["question_id"].(string)
+	if _, err := d.handleUserAnswer(mustJSON(t, map[string]any{"question_id": questionID, "value": "grant"})); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case outcome := <-result:
+		if outcome.status != "completed" || !strings.Contains(outcome.display, extra) {
+			t.Fatalf("grant outcome = %+v", outcome)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("add_dir did not resume")
+	}
+	if err := os.WriteFile(target, []byte("<html></html>\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dec, err := d.kern.Request(sess.SessionID, "FileRead", target, "t-grant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec.Decision != "allowed" {
+		t.Fatalf("read in granted dir = %q (%s)", dec.Decision, dec.Reason)
+	}
+}
+
+func TestAgentAddDirRefusesHomeAndMissing(t *testing.T) {
+	if home, err := os.UserHomeDir(); err == nil && addDirTooBroad(home) != true {
+		t.Fatal("home directory must be too broad to grant")
+	}
+	if !addDirTooBroad("/") {
+		t.Fatal("filesystem root must be too broad to grant")
+	}
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "grant missing")
+	got := d.agentAddDirOutcome(sess, task, filepath.Join(t.TempDir(), "no-such-dir"))
+	if got.status == "completed" {
+		t.Fatalf("missing dir = %+v", got)
+	}
+}
+
+func TestWorkspacePromptDirectsAddDirInsteadOfRewritingDestination(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "hi")
+	layers := d.composeAgentPromptLayers(sess, task, "")
+	if !strings.Contains(layers.Workspace, "add_dir") {
+		t.Fatalf("workspace scope must name add_dir:\n%s", layers.Workspace)
+	}
+	if strings.Contains(layers.Workspace, "cannot inspect the desktop") {
+		t.Fatal("workspace scope still tells the model the desktop is impossible")
+	}
+	if !strings.Contains(coreConstitution(), "- add_dir:") {
+		t.Fatal("tools catalog missing add_dir")
 	}
 }

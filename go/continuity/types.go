@@ -142,15 +142,25 @@ type FileDigest struct {
 	SHA256 string `json:"sha256"`
 }
 
+type FileSpanDigest struct {
+	Path      string `json:"path"`
+	StartLine int    `json:"start_line"`
+	LineCount int    `json:"line_count"`
+	Mode      uint32 `json:"mode"`
+	Bytes     int64  `json:"bytes"`
+	SHA256    string `json:"sha256"`
+}
+
 type WorkspaceAnchor struct {
-	ID                string       `json:"id"`
-	WorkspaceRealpath string       `json:"workspace_realpath"`
-	GitHead           string       `json:"git_head,omitempty"`
-	GitIndexDigest    string       `json:"git_index_digest,omitempty"`
-	DependencyFiles   []FileDigest `json:"dependency_files,omitempty"`
-	MutationFiles     []FileDigest `json:"mutation_files,omitempty"`
-	PatchLineage      []string     `json:"patch_lineage,omitempty"`
-	CreatedAt         time.Time    `json:"created_at"`
+	ID                string           `json:"id"`
+	WorkspaceRealpath string           `json:"workspace_realpath"`
+	GitHead           string           `json:"git_head,omitempty"`
+	GitIndexDigest    string           `json:"git_index_digest,omitempty"`
+	DependencyFiles   []FileDigest     `json:"dependency_files,omitempty"`
+	DependencySpans   []FileSpanDigest `json:"dependency_spans,omitempty"`
+	MutationFiles     []FileDigest     `json:"mutation_files,omitempty"`
+	PatchLineage      []string         `json:"patch_lineage,omitempty"`
+	CreatedAt         time.Time        `json:"created_at"`
 }
 
 func (a WorkspaceAnchor) Validate() error {
@@ -160,6 +170,11 @@ func (a WorkspaceAnchor) Validate() error {
 	for _, file := range append(append([]FileDigest(nil), a.DependencyFiles...), a.MutationFiles...) {
 		if file.Path == "" || file.SHA256 == "" || file.Bytes < 0 {
 			return fmt.Errorf("continuity: invalid workspace file digest")
+		}
+	}
+	for _, span := range a.DependencySpans {
+		if span.Path == "" || span.StartLine < 1 || span.LineCount < 1 || span.SHA256 == "" || span.Bytes < 0 {
+			return fmt.Errorf("continuity: invalid workspace span digest")
 		}
 	}
 	return nil

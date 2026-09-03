@@ -192,7 +192,7 @@ pub fn degraded_chip_width(terminal_width: u16) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::media::{MediaChipLabels, MediaComposer, MediaSourceLabel, IMAGE_ELEMENT_KIND};
+    use crate::media::{IMAGE_ELEMENT_KIND, MediaChipLabels, MediaComposer, MediaSourceLabel};
     use std::path::PathBuf;
     use xai_ratatui_textarea::{ElementKind, TextArea};
 
@@ -208,6 +208,7 @@ mod tests {
                 16,
                 MediaSourceLabel::User(Some("shot.png".into())),
                 MediaChipLabels::default(),
+                crate::theme::Theme::carina(false),
             )
             .unwrap();
         area.insert_str(suffix);
@@ -279,6 +280,7 @@ mod tests {
             Some(crate::context_completion::file_chip(
                 "src/lib.rs",
                 Some(2..4),
+                crate::theme::Theme::carina(false),
             )),
         );
         let map = DocumentLayoutMap::from_textarea(&area);
@@ -297,7 +299,11 @@ mod tests {
         let mut area = TextArea::new();
         area.insert_str("see ");
         let payload = format!("{}\n{}", "alpha ".repeat(80), "omega");
-        let display = crate::clipboard_image::paste_chip_line("paste", "8 lines");
+        let display = crate::clipboard_image::paste_chip_line(
+            "paste",
+            "8 lines",
+            crate::theme::Theme::carina(false),
+        );
         let expected_width = display.width();
         area.insert_element(&payload, PASTE_ELEMENT_KIND, Some(display));
         let map = DocumentLayoutMap::from_textarea(&area);

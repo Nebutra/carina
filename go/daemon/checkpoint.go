@@ -23,8 +23,8 @@ func (d *Daemon) handleCheckpointList(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, err
 	}
-	if _, ok := d.store.Get(p.SessionID); !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, err
 	}
 	type listedCheckpoint struct {
 		task *scheduler.ExecutionRun
@@ -438,6 +438,9 @@ func (d *Daemon) checkpoint(params json.RawMessage) (*scheduler.ExecutionRun, *r
 	}
 	if strings.TrimSpace(p.SessionID) == "" || strings.TrimSpace(p.CheckpointID) == "" {
 		return nil, nil, p, fmt.Errorf("session_id and checkpoint_id are required")
+	}
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, nil, p, err
 	}
 	taskID, _, ok := strings.Cut(p.CheckpointID, ":")
 	if !ok {

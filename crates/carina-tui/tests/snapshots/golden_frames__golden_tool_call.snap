@@ -3,8 +3,7 @@ source: crates/carina-tui/tests/golden_frames.rs
 expression: "render_case(80, 24, \"tool lifecycle\",\nvec![Line::from(\"◐ Reading src/lib.rs\"),\nLine::from(\"✓ Read src/lib.rs · 42 lines\")], false)"
 ---
 size=80x24
- CARINA tool lifecycle
-
+Carina  tool lifecycle
 ────────────────────────────────────────────────────────────────────────────────
  ◐ Reading src/lib.rs
  ✓ Read src/lib.rs · 42 lines
@@ -24,12 +23,14 @@ size=80x24
 
 
 
-────────────────────────────────────────────────────────────────────────────────
-❯ Ask Carina
 
+────────────────────────────────────────────────────────────────────────────────
+❯ Describe the change you want to make.
+────────────────────────────────────────────────────────────────────────────────
 styles:
-(0, 0)..(8, 0) (Rgb(222, 133, 155), Reset, BOLD)
-(0, 2)..(80, 2) (Rgb(52, 65, 68), Reset, NONE)
+(0, 0)..(6, 0) (Reset, Reset, BOLD)
+(6, 0)..(22, 0) (Rgb(150, 160, 156), Reset, NONE)
+(0, 1)..(80, 1) (Rgb(52, 65, 68), Reset, NONE)
 (0, 21)..(80, 21) (Rgb(52, 65, 68), Reset, NONE)
-(0, 22)..(2, 22) (Rgb(142, 219, 210), Reset, NONE)
-(2, 22)..(12, 22) (Rgb(150, 160, 156), Reset, NONE)
+(0, 22)..(39, 22) (Rgb(150, 160, 156), Reset, NONE)
+(0, 23)..(80, 23) (Rgb(52, 65, 68), Reset, NONE)

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -35,21 +34,6 @@ type workspaceDiffResponse struct {
 	Limits     map[string]int      `json:"limits"`
 }
 
-func readOnlyGit(ctx context.Context, root string, args ...string) ([]byte, error) {
-	base := []string{"-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false"}
-	cmd := exec.CommandContext(ctx, "git", append(base, args...)...)
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0")
-	out, err := cmd.Output()
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("git %s: %s", args[0], strings.TrimSpace(string(ee.Stderr)))
-		}
-		return nil, err
-	}
-	return out, nil
-}
-
 func parseGitStatusZ(raw []byte) [][2]string {
 	parts := bytes.Split(raw, []byte{0})
 	out := make([][2]string, 0, len(parts))
@@ -74,9 +58,9 @@ func (d *Daemon) handleWorkspaceDiff(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	sess, err := d.requireNamedSession(p.SessionID, params)
+	if err != nil {
+		return nil, err
 	}
 	decision, err := d.kern.Request(sess.SessionID, "FileRead", sess.WorkspaceRoot, "")
 	if err != nil {
@@ -91,6 +75,9 @@ func (d *Daemon) handleWorkspaceDiff(params json.RawMessage) (any, error) {
 func collectWorkspaceDiff(root string) (workspaceDiffResponse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if err := validateGitWorkspace(ctx, root); err != nil {
+		return workspaceDiffResponse{}, err
+	}
 	raw, err := readOnlyGit(ctx, root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {
 		return workspaceDiffResponse{}, err

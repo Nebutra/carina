@@ -26,6 +26,10 @@ carina runs it and feeds back an observation:
 | `{"tool":"edit","path":"…","old":"…","new":"…"}` | PatchApply capability | exact unique span → same transactional patch as `patch` |
 | `{"tool":"patch","path":"…","content":"…"}` | PatchApply capability | Rust transaction → Zig `carina-patch-native` |
 | `{"tool":"web.fetch","url":"…"}` | NetworkAccess capability | public HTTPS only; host approval; no redirects |
+| `{"tool":"browser.open","mode":"managed","url":"…"}` | BrowserInteract + NetworkAccess capabilities | open an isolated native Chromium profile, or navigate an existing browser/tab; public HTTPS only |
+| `{"tool":"browser.snapshot","browser_id":"…","tab_id":"…"}` | BrowserInteract capability | bounded accessibility/DOM projection with opaque refs scoped to the current tab, document, and generation |
+| `{"tool":"browser.action","browser_id":"…","tab_id":"…","action":{…}}` | BrowserInteract capability (+ FileRead for uploads) | one closed typed action: click/type/select/check/key/scroll/hover/upload/dialog; no raw selectors, coordinates, JS, CDP, console, or storage mutation |
+| `{"tool":"browser.tabs",…}` / `browser.capture` / `browser.close` | BrowserInteract capability | governed tab lifecycle, session-scoped screenshot media artifact, and profile cleanup |
 | `{"tool":"memory","target":"…","action":"…"}` | MemoryWrite capability | governed long-term memory store |
 | `{"tool":"ask_user","prompt":"…","options":[…]}` | — | pauses for a structured operator choice |
 | `{"tool":"code.search/symbols/map/def/refs/impact"}` | FileRead capability | code-intelligence index (+LSP when available) |
@@ -34,6 +38,54 @@ carina runs it and feeds back an observation:
 | `{"tool":"workflow","workflow":"…"}` | PluginLoad capability | named dependency DAG of subagents |
 | `{"tool":"best_of_n","task":"…","n":3}` | opt-in (advertised only when enabled) | N parallel candidate patches, judge + optional verify command; only the winner is applied |
 | `{"tool":"done","summary":"…"}` | — | ends the task |
+
+### Governed browser computer
+
+Managed browser sessions use private 0700 ephemeral profiles under daemon
+state. Chromium starts with a scrubbed environment, sandboxing enabled, and no
+host cookies, extensions, sync, password integration, or local-file access.
+Profiles and upload staging are removed after actions, close, daemon shutdown,
+and restart recovery. A missing supported Chrome, Chromium, or Edge binary is
+returned as a structured unavailable tool result; daemon startup still works.
+
+Navigation, redirects, and subresources pass the public-HTTPS SSRF boundary and
+per-host `NetworkAccess` authorization. Snapshots are bounded and label page
+content untrusted. Opaque element refs are invalidated by document changes.
+Screenshots flow only through session artifacts and `MediaRef`; downloads are
+quarantined and never opened, executed, or written into the workspace.
+
+The runtime derives the final action effect after reinspecting the referenced
+DOM node. External submit, sensitive transmission, destructive/access/
+permission changes, authenticated representation, executable download, and
+unknown effects require a live operator decision immediately before the driver
+action. They cannot be agent-approved, remembered, or bypassed by product
+`always-approve`; `dont-ask` denies them. Uploads additionally authorize and
+stage each explicit source file before the transmission gate.
+
+Operator-browser attachment is separate from managed mode. It is available
+only when deployment configuration supplies an endpoint, requires a
+`full-workspace` session plus live `BrowserAttach` approval, never scans debug
+ports, and never returns the endpoint to the model or audit projection.
+
+### Builtin tool contract registry
+
+Builtin tools are compiled into one versioned daemon registry. The prompt
+catalog, native provider schemas, Plan and parallel masks, lifecycle effect
+classification, dispatch, MCP server subset, and `config.inventory` rows are
+projections of that registry. Startup fails closed on duplicate names, unknown
+effects or capabilities, open object schemas, missing handlers, or zero
+timeouts. Models can call exposed tools but cannot register, alter, or activate
+builtin descriptors.
+
+Registry v1 runs in `descriptor` mode by default. Operators diagnosing a
+registry rollout may set `CARINA_BUILTIN_TOOL_REGISTRY_MODE=shadow` to compare
+the reviewed projection and handler identity while executing the legacy path
+exactly once. `legacy` is the emergency rollback for the first registry-v1
+release only; it is scheduled for removal in the immediately following
+release. The selector is startup-only and deployment-owned: global config or
+the environment may set it, project config cannot, and changing it requires a
+daemon restart. `config.inventory` reports the effective mode, registry
+version, projection digest, and shadow parity.
 
 Destructive commands (`rm -rf`, `curl … | sh`) are **denied** before they run;
 risky ones (installs) are surfaced for approval. Secret files (`.env`, `.ssh`)

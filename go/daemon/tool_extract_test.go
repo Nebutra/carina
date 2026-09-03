@@ -16,7 +16,7 @@ func TestFormatSearchObservationGroupsByFileWithWhy(t *testing.T) {
 		{File: "go/daemon/explore.go", Line: 3, Text: "search the workspace"},
 		{File: "/abs/ws/docs/README.md", Line: 1, Text: "  search   tools  "},
 	}
-	got := formatSearchObservation("search", matches, "/abs/ws")
+	got := formatSearchObservation("search", matches, false, "/abs/ws")
 	if !strings.HasPrefix(got, `search "search": 4 matches in 3 files`) {
 		t.Fatalf("header = %q", firstLine(got))
 	}
@@ -39,7 +39,7 @@ func TestFormatSearchObservationCapsFiles(t *testing.T) {
 	for i := 0; i < maxSearchExtractFiles+5; i++ {
 		matches = append(matches, toolchain.Match{File: fmt.Sprintf("pkg%d/a.go", i), Line: 1, Text: "hit"})
 	}
-	got := formatSearchObservation("hit", matches, "")
+	got := formatSearchObservation("hit", matches, false, "")
 	if !strings.Contains(got, "files omitted") {
 		t.Fatalf("file cap must be visible:\n%s", got)
 	}
@@ -49,8 +49,22 @@ func TestFormatSearchObservationCapsFiles(t *testing.T) {
 }
 
 func TestFormatSearchObservationEmpty(t *testing.T) {
-	if got := formatSearchObservation("x", nil, ""); got != "no matches" {
+	if got := formatSearchObservation("x", nil, false, ""); got != "no matches" {
 		t.Fatalf("empty = %q", got)
+	}
+}
+
+func TestFormatSearchObservationTruncated(t *testing.T) {
+	matches := []toolchain.Match{
+		{File: "a.go", Line: 1, Text: "hit"},
+		{File: "b.go", Line: 2, Text: "hit"},
+	}
+	got := formatSearchObservation("hit", matches, true, "")
+	if !strings.Contains(got, "truncated at") || !strings.Contains(got, "narrow the pattern") {
+		t.Fatalf("truncated header missing:\n%s", got)
+	}
+	if strings.Contains(got, fmt.Sprintf("%d matches", searchMatchCap+1)) {
+		t.Fatal("must not invent matches beyond the bounded set")
 	}
 }
 

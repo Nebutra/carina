@@ -12,7 +12,7 @@ H1 H2 H3 H4 H5 H6
 
 
 styles:
-(0, 0)..(6, 0) (Rgb(128, 43, 67), Reset, NONE)
+(0, 0)..(6, 0) (Rgb(142, 64, 83), Reset, NONE)
 (17, 0)..(20, 0) (Rgb(115, 123, 120), Reset, NONE)
 (22, 0)..(27, 0) (Rgb(83, 94, 90), Reset, NONE)
 (29, 0)..(35, 0) (Rgb(52, 64, 60), Reset, NONE)
@@ -25,9 +25,9 @@ styles:
 (0, 4)..(7, 4) (Rgb(145, 83, 0), Reset, NONE)
 (9, 4)..(16, 4) (Rgb(26, 127, 73), Reset, NONE)
 (18, 4)..(23, 4) (Rgb(190, 45, 41), Reset, NONE)
-(0, 5)..(3, 5) (Rgb(0, 95, 135), Reset, BOLD | UNDERLINED)
-(3, 5)..(6, 5) (Rgb(0, 95, 135), Reset, BOLD)
-(6, 5)..(9, 5) (Reset, Reset, BOLD)
-(9, 5)..(12, 5) (Rgb(52, 64, 60), Reset, BOLD)
-(12, 5)..(15, 5) (Rgb(52, 64, 60), Reset, ITALIC)
-(15, 5)..(18, 5) (Rgb(83, 94, 90), Reset, ITALIC)
+(0, 5)..(3, 5) (Rgb(0, 95, 135), Reset, BOLD)
+(3, 5)..(6, 5) (Reset, Reset, BOLD)
+(6, 5)..(9, 5) (Rgb(52, 64, 60), Reset, BOLD)
+(9, 5)..(12, 5) (Rgb(83, 94, 90), Reset, BOLD)
+(12, 5)..(15, 5) (Rgb(83, 94, 90), Reset, ITALIC)
+(15, 5)..(18, 5) (Rgb(115, 123, 120), Reset, ITALIC)

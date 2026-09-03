@@ -6,14 +6,11 @@ import (
 )
 
 func (d *Daemon) handleSessionArchive(params json.RawMessage) (any, error) {
-	id, err := sessionID(params)
+	current, err := d.requireSession(params)
 	if err != nil {
 		return nil, err
 	}
-	current, ok := d.store.Get(id)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", id)
-	}
+	id := current.SessionID
 	if current.Status == "closed" {
 		return current, nil
 	}
@@ -32,14 +29,11 @@ func (d *Daemon) handleSessionArchive(params json.RawMessage) (any, error) {
 }
 
 func (d *Daemon) handleSessionUnarchive(params json.RawMessage) (any, error) {
-	id, err := sessionID(params)
+	current, err := d.requireSession(params)
 	if err != nil {
 		return nil, err
 	}
-	current, ok := d.store.Get(id)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", id)
-	}
+	id := current.SessionID
 	if current.Status != "closed" {
 		return current, nil
 	}

@@ -71,6 +71,8 @@ These are **not** P0 lies. Do not “fix” them by copying a competitor.
 | Keepalive | bus-only `execution.keepalive` after 1s on Think and tool waits |
 | TASK vs cache | TASK is volatile; REQUESTED skills are volatile (S10) |
 | Scan ignore + bound | `target`/`.git` not descended; `--max-files 200 --max-depth 4` |
+| Grep bound | empty pattern fail-closed; `search` `--max-matches 200` then stop walking |
+| Proactive 奏折 | default **off** (`CARINA_PROACTIVE=1`); build-only; never a transcript turn |
 | Constitution | A–D under 800 tok without F; native envelope **167 B** |
 | Compaction on Think | `compact(nil)` only; model summary **after** the turn |
 | Tool obs | snip 2k; search/list structured extract |
@@ -83,7 +85,7 @@ These are **not** P0 lies. Do not “fix” them by copying a competitor.
 |----|-------|--------------------|---------|
 | H11 | Grok `Think` **reuses** one ACP/`stdio` child for the reasoner (inspect still skipped after first verify) | **landed**: turn 2+ does not `exec` a new `grok` | 14 |
 | H2 | `rpc.Client.Call` holds `mu` for the whole kernel stdio round-trip | parallel **capability** calls (run/patch/spawn) still serial | 1, 11 |
-| H12 | `list`/`search` still **fork** Zig tools; no per-run memo | warm scan **0–20 ms**, grep **40–60 ms**; repeat list pays again | 9, 12 |
+| H12 | `list`/`search` memo last bounded scan/grep for the run; kernel FileRead still first | **landed**: second list does not spawn `carina-scan`; `CARINA_LIST_MEMO=0` rolls back | 9, 12 |
 | H6 | Every gated tool: kernel JSON-RPC + hash-chain event | fail-closed cost; do not remove; batch envelopes | 10 |
 | H8 | `seg.full()` concatenates every turn; Grok cache kind `none` | string rebuild; honest uncached ACP | 2, 10 |
 | H4-spawn | Subagent = new session + `InitSessionFull` + optional worktree | parent `wg.Wait()`; summary-only is not the tax | 4, 14 |
@@ -98,13 +100,13 @@ H1 (inspect every turn), H3 (1400-file list), H5 (summarizer on Think), H7 (4.8k
 |----|--------|--------|
 | P0-H1 | Reuse Grok isolation + skip inspect after first verify | **landed** |
 | P0-H2 | Parallel `read`/`list`/`search`: one workspace FileRead, then concurrent IO | **landed** |
-| P0-H3 | `list` bounded `--max-files 200 --max-depth 4` | **landed** |
+| P0-H3 | `list` bounded `--max-files 200 --max-depth 4`; `search` `--max-matches 200` | **landed** |
 | P0-H4 | First conversation frame before inventory; PTY TTFF bench | **landed**: TTFF **15.2 ms** |
 | P0-H5 | Visible motion on submit | **partial** |
 | P0-H6 | Compaction summarizer off the Think stack | **landed** |
 | P0-H7 | Stream/tool keepalive on waits > 1s | **landed** |
 | **P0-H11** | Persist Grok ACP/`stdio` process for the **run**, not only `grokHome` | **landed**: Turn 2+ does not `exec` a new `grok` |
-| **P0-H12** | Memo last bounded scan / grep `(root, pattern)` for the run; invalidate on patch/edit | Second `list` does not spawn `carina-scan` |
+| **P0-H12** | Memo last bounded scan / grep `(root, pattern)` for the run; invalidate on patch/edit | **landed**: second `list` does not spawn `carina-scan` |
 
 ---
 

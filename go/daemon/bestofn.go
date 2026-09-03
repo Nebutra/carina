@@ -198,7 +198,7 @@ func (d *Daemon) executeBestOfNOutcome(sess *sessionstore.Session, task *schedul
 	}
 	wg.Wait()
 	if ctx.Err() != nil {
-		return toolExecutionOutcome{display: "best_of_n cancelled", status: "cancelled", errorCategory: "operator_cancelled"}
+		return toolCancelled("best_of_n cancelled", "operator_cancelled")
 	}
 
 	// Optional verification: if the caller supplied a command, run it against
@@ -220,7 +220,7 @@ func (d *Daemon) executeBestOfNOutcome(sess *sessionstore.Session, task *schedul
 		}
 		vwg.Wait()
 		if ctx.Err() != nil {
-			return toolExecutionOutcome{display: "best_of_n cancelled", status: "cancelled", errorCategory: "operator_cancelled"}
+			return toolCancelled("best_of_n cancelled", "operator_cancelled")
 		}
 	}
 
@@ -280,7 +280,7 @@ func (d *Daemon) executeBestOfNOutcome(sess *sessionstore.Session, task *schedul
 		d.recordRead(sess.SessionID, f.Path, string(cur))
 	}
 	reason := fmt.Sprintf("best-of-n winner (n=%d, candidate %d, judge: %s)", n, winner.Index, truncate(judgeRationale, 200))
-	outcome := d.proposeAndApplyPatch(sess, task, reason, winner.Files)
+	outcome := d.proposeAndApplyPatch(sess, task, reason, winner.Files, nil)
 	if outcome.status != "completed" {
 		return outcome
 	}

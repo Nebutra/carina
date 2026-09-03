@@ -1,9 +1,9 @@
 use ratatui::text::Line;
 
 use crate::clipboard_image::{
-    paste_chip_line, paste_line_count, should_chip_paste, PASTE_ELEMENT_KIND,
+    PASTE_ELEMENT_KIND, paste_chip_line, paste_line_count, should_chip_paste,
 };
-use crate::i18n::{format as tr_format, text as tr, MessageId, Notice};
+use crate::i18n::{MessageId, Notice, format as tr_format, text as tr};
 
 use super::{App, AsyncMessage};
 
@@ -24,6 +24,7 @@ impl App {
             session_id,
             paste_label,
             reading_label,
+            self.theme,
         );
         self.pending_pastes.insert(generation, pending);
         self.notice = match mode {
@@ -124,6 +125,10 @@ impl App {
                 &[("count", &text.chars().count().to_string())],
             )
         };
-        paste_chip_line(tr(locale, MessageId::ClipboardPasteLabel), &size)
+        paste_chip_line(
+            tr(locale, MessageId::ClipboardPasteLabel),
+            &size,
+            self.theme,
+        )
     }
 }

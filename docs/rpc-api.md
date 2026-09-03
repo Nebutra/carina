@@ -64,7 +64,15 @@ complete, authoritative registry. Groups not summarized here include `agent.*`,
 `session.checkpoint.*`, `workflow.*` (usage guide:
 [`docs/workflows.md`](workflows.md)), `schedule.*`, `channel.sender.*` /
 `channel.event.inject`, `extension.*`, `worktree.*`,
-`usage.*`/`telemetry.*`/`history.*`/`debug.*`, and `work.*`.
+`usage.*`/`telemetry.*`/`history.*`/`debug.*`, `work.*`, and `proposal.*`
+(read-only 奏折 cards; off unless `CARINA_PROACTIVE=1`; CLI `carina inbox`).
+Proposal cards, accepted/ignored status, per-class cooldowns, and mute choices
+are durable across daemon restarts in the versioned `proposals.json` state
+store. Corrupt or future-version state is quarantined. Triggered preparation
+runs outside the main transcript, obtains a kernel `FileRead` decision, and is
+limited to one concurrent read-only scan of 200 files, depth 6, and two seconds.
+Accepting a card only steers the active run through the existing policy-gated
+path; it never executes the suggested action directly.
 
 ## Gateway / Daemon API
 
@@ -80,7 +88,7 @@ complete, authoritative registry. Groups not summarized here include `agent.*`,
 | `gateway.token.issue` | local-only scoped Gateway token issuer, registered only when `gateway_token_signing_key_file` is configured |
 | `daemon.status` | daemon process/runtime status |
 | `daemon.metrics` | runtime metrics |
-| `daemon.doctor` | independent health probes; `recover.recent` is the named recover journal; `resources.copies` splits checkpoint / heap / provider-cache and does not report PSS; `sandbox` reports requested/available/applied and fails closed if a helper is missing; `gateway.workspace_pin` is a local workspace bind, not multi-tenant SaaS |
+| `daemon.doctor` | independent health probes; `recover.recent` is the named recover journal; `resources.copies` splits checkpoint / heap / provider-cache and does not report PSS; `sandbox` reports requested/available/applied and fails closed if a helper is missing; `gateway.workspace_pin` is a local workspace bind, not a tenant. Remote session methods require a token `tenant_id` |
 | `daemon.remote.disable` | remote kill-switch: disable remote-exposed method dispatch |
 | `daemon.reload` | reload daemon configuration |
 | `daemon.set_interactive_approval` | set product HITL mode (`ask` \| `always-approve` \| `dont-ask` \| `accept-edits`) or named presets `read-only` / `agent` / `accept-edits` (labels only; session profile unchanged). TUI: `/approval-mode`, `/always-approve`, `/dont-ask`, `/accept-edits`. `/always-approve` is not a cycle preset |
@@ -138,7 +146,12 @@ Optional WebSocket Gateway:
   binds Gateway HTTP and remote (WebSocket/TCP) session-bearing work to one
   existing directory. Foreign `session_id` / `workspace_root` / `run_id` fail
   closed; unscoped `session.list` is refused. The local Unix-socket owner
-  contract is unchanged. This is a local bind, not ACP and not multi-tenant SaaS.
+  contract is unchanged. This is a local bind, not ACP and not a tenant.
+
+Remote session-bearing methods require a Gateway token with `tenant_id`.
+Mismatch is `unknown session` (no enumeration). Unix-socket callers that omit
+`tenant_id` use the local owner tenant. Two tenants cannot share one
+`workspace_root`.
 
 Scoped Gateway token issuing:
 

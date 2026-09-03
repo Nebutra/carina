@@ -1,4 +1,4 @@
-// Package sdk provides typed JSON-RPC wrappers for Carina Harness 0.8.42.
+// Package sdk provides typed JSON-RPC wrappers for Carina Harness 0.9.0.
 package sdk
 
 import (
@@ -18,7 +18,7 @@ import (
 	"github.com/Nebutra/carina/go/rpc"
 )
 
-const CompatibleRuntimeVersion = "0.8.42"
+const CompatibleRuntimeVersion = "0.9.0"
 const streamQueueLimit = 64
 const artifactUploadChunkSize = 512 << 10
 const artifactUploadMaxBytes = 4 << 20
@@ -31,6 +31,7 @@ type Client struct {
 
 type Session struct {
 	SessionID         string           `json:"session_id"`
+	TenantID          string           `json:"tenant_id,omitempty"`
 	WorkspaceID       string           `json:"workspace_id"`
 	WorkspaceRoot     string           `json:"workspace_root"`
 	Status            string           `json:"status"`
@@ -472,23 +473,47 @@ func DialPath(socketPath string) (*Client, error) {
 func (c *Client) SetTimeout(timeout time.Duration) { c.SetCallTimeout(timeout) }
 
 func (c *Client) CreateSession(workspaceRoot, profile string) (Session, error) {
+	return c.CreateSessionForTenant(workspaceRoot, profile, "")
+}
+
+func (c *Client) CreateSessionForTenant(workspaceRoot, profile, tenantID string) (Session, error) {
 	if profile == "" {
 		profile = "safe-edit"
 	}
+	params := map[string]any{"workspace_root": workspaceRoot, "profile": profile}
+	if strings.TrimSpace(tenantID) != "" {
+		params["tenant_id"] = strings.TrimSpace(tenantID)
+	}
 	var out Session
-	err := c.Call("session.create", map[string]any{"workspace_root": workspaceRoot, "profile": profile}, &out)
+	err := c.Call("session.create", params, &out)
 	return out, err
 }
 
 func (c *Client) GetSession(sessionID string) (Session, error) {
+	return c.GetSessionForTenant(sessionID, "")
+}
+
+func (c *Client) GetSessionForTenant(sessionID, tenantID string) (Session, error) {
+	params := map[string]any{"session_id": sessionID}
+	if strings.TrimSpace(tenantID) != "" {
+		params["tenant_id"] = strings.TrimSpace(tenantID)
+	}
 	var out Session
-	err := c.Call("session.get", map[string]any{"session_id": sessionID}, &out)
+	err := c.Call("session.get", params, &out)
 	return out, err
 }
 
 func (c *Client) ListSessions() ([]Session, error) {
+	return c.ListSessionsForTenant("")
+}
+
+func (c *Client) ListSessionsForTenant(tenantID string) ([]Session, error) {
+	params := map[string]any{}
+	if strings.TrimSpace(tenantID) != "" {
+		params["tenant_id"] = strings.TrimSpace(tenantID)
+	}
 	var out []Session
-	err := c.Call("session.list", map[string]any{}, &out)
+	err := c.Call("session.list", params, &out)
 	return out, err
 }
 

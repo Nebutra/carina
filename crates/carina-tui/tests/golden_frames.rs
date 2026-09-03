@@ -90,24 +90,20 @@ fn render_case(
             let rows = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Length(3),
+                    Constraint::Length(2),
                     Constraint::Min(1),
                     Constraint::Length(3),
                 ])
                 .split(area);
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
-                    Span::styled(
-                        " CARINA ",
-                        Style::default()
-                            .fg(theme.brand)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(title.to_owned(), Style::default().fg(theme.text)),
+                    Span::styled("Carina", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(format!("  {title}"), Style::default().fg(theme.muted)),
                 ]))
                 .block(
                     Block::default()
                         .borders(Borders::BOTTOM)
+                        .border_type(theme.glyphs.outer_border_type())
                         .border_style(Style::default().fg(theme.border)),
                 ),
                 rows[0],
@@ -121,16 +117,13 @@ fn render_case(
             );
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
-                    Span::styled(
-                        carina_tui::glyphs::Glyphs::new(carina_tui::glyphs::GlyphMode::Unicode)
-                            .prompt(),
-                        Style::default().fg(theme.accent),
-                    ),
-                    Span::styled("Ask Carina", Style::default().fg(theme.muted)),
+                    Span::styled(theme.glyphs.prompt(), theme.muted()),
+                    Span::styled("Describe the change you want to make.", theme.muted()),
                 ]))
                 .block(
                     Block::default()
-                        .borders(Borders::TOP)
+                        .borders(Borders::TOP | Borders::BOTTOM)
+                        .border_type(theme.glyphs.outer_border_type())
                         .border_style(Style::default().fg(theme.border)),
                 ),
                 rows[2],
@@ -150,7 +143,8 @@ fn render_case(
                             Block::default()
                                 .title(" Approval ")
                                 .borders(Borders::ALL)
-                                .border_style(Style::default().fg(theme.accent)),
+                                .border_type(theme.glyphs.outer_border_type())
+                                .border_style(Style::default().fg(theme.warning)),
                         ),
                     popup,
                 );
@@ -436,7 +430,7 @@ fn golden_diff() {
             Line::styled(
                 "+ new value",
                 Style::default()
-                    .fg(deterministic_theme(carina_tui::glyphs::GlyphMode::Unicode).success)
+                    .fg(deterministic_theme(carina_tui::glyphs::GlyphMode::Unicode).accent)
             )
         ],
         false

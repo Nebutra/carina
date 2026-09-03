@@ -1,11 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use xai_ratatui_textarea::{ElementId, ElementKind, TextArea};
 
 use crate::rpc::MediaRef;
+use crate::theme::Theme;
 
 pub const IMAGE_ELEMENT_KIND: ElementKind = ElementKind(3);
 pub const MAX_IMAGE_BYTES: u64 = 4 << 20;
@@ -88,6 +89,7 @@ impl MediaComposer {
         bytes: u64,
         source: MediaSourceLabel,
         labels: MediaChipLabels<'_>,
+        theme: Theme,
     ) -> Result<(ElementId, u64), String> {
         self.reconcile(textarea);
         if self.attachments.len() >= MAX_IMAGE_COUNT {
@@ -109,7 +111,7 @@ impl MediaComposer {
         let element_id = textarea.insert_element(
             &format!("[image:{generation}]"),
             IMAGE_ELEMENT_KIND,
-            Some(chip_line(&label, &MediaState::Pending, labels)),
+            Some(chip_line(&label, &MediaState::Pending, labels, theme)),
         );
         textarea.insert_str(" ");
         textarea.end_undo_group();
@@ -137,6 +139,7 @@ impl MediaComposer {
         generation: u64,
         result: Result<MediaRef, String>,
         labels: MediaChipLabels<'_>,
+        theme: Theme,
     ) -> bool {
         self.reconcile(textarea);
         let Some(attachment) = self.attachments.get_mut(&element_id) else {
@@ -151,7 +154,12 @@ impl MediaComposer {
         };
         textarea.set_element_display(
             element_id,
-            Some(chip_line(&attachment.label, &attachment.state, labels)),
+            Some(chip_line(
+                &attachment.label,
+                &attachment.state,
+                labels,
+                theme,
+            )),
         );
         true
     }
@@ -161,6 +169,7 @@ impl MediaComposer {
         textarea: &mut TextArea,
         element_id: ElementId,
         labels: MediaChipLabels<'_>,
+        theme: Theme,
     ) -> Option<(u64, PathBuf, String, bool)> {
         self.reconcile(textarea);
         let attachment = self.attachments.get_mut(&element_id)?;
@@ -172,7 +181,12 @@ impl MediaComposer {
         attachment.state = MediaState::Pending;
         textarea.set_element_display(
             element_id,
-            Some(chip_line(&attachment.label, &attachment.state, labels)),
+            Some(chip_line(
+                &attachment.label,
+                &attachment.state,
+                labels,
+                theme,
+            )),
         );
         Some((
             attachment.generation,
@@ -186,6 +200,7 @@ impl MediaComposer {
         &mut self,
         textarea: &mut TextArea,
         labels: MediaChipLabels<'_>,
+        theme: Theme,
     ) -> Vec<MediaUploadWork> {
         self.reconcile(textarea);
         let mut work = Vec::with_capacity(self.attachments.len());
@@ -195,7 +210,12 @@ impl MediaComposer {
             attachment.state = MediaState::Pending;
             textarea.set_element_display(
                 attachment.element_id,
-                Some(chip_line(&attachment.label, &attachment.state, labels)),
+                Some(chip_line(
+                    &attachment.label,
+                    &attachment.state,
+                    labels,
+                    theme,
+                )),
             );
             work.push(MediaUploadWork {
                 element_id: attachment.element_id,
@@ -208,11 +228,16 @@ impl MediaComposer {
         work
     }
 
-    pub fn relabel(&self, textarea: &mut TextArea, labels: MediaChipLabels<'_>) {
+    pub fn relabel(&self, textarea: &mut TextArea, labels: MediaChipLabels<'_>, theme: Theme) {
         for attachment in self.attachments.values() {
             textarea.set_element_display(
                 attachment.element_id,
-                Some(chip_line(&attachment.label, &attachment.state, labels)),
+                Some(chip_line(
+                    &attachment.label,
+                    &attachment.state,
+                    labels,
+                    theme,
+                )),
             );
         }
     }
@@ -404,21 +429,20 @@ pub fn inspect_image(path: &Path) -> Result<(String, u64), String> {
     Ok((media_type.into(), metadata.len()))
 }
 
-fn chip_line(label: &str, state: &MediaState, labels: MediaChipLabels<'_>) -> Line<'static> {
-    let theme = crate::theme::Theme::detected(None);
+fn chip_line(
+    label: &str,
+    state: &MediaState,
+    labels: MediaChipLabels<'_>,
+    theme: Theme,
+) -> Line<'static> {
     let (marker, color) = match state {
         MediaState::Pending => (labels.uploading, theme.tool_pending),
-        MediaState::Ready(_) => (labels.image, theme.tool_success),
+        MediaState::Ready(_) => (labels.image, theme.muted),
         MediaState::Failed(_) => (labels.failed, theme.tool_error),
     };
     Line::from(vec![
-        Span::styled(
-            format!(" {marker} "),
-            Style::default()
-                .fg(color)
-                .add_modifier(Modifier::BOLD | Modifier::REVERSED),
-        ),
-        Span::styled(format!(" {label} "), Style::default().fg(color)),
+        Span::styled(format!(" {marker} "), Style::default().fg(color)),
+        Span::styled(format!(" {label} "), theme.chip()),
     ])
 }
 
@@ -452,6 +476,7 @@ mod tests {
                 42,
                 MediaSourceLabel::User(None),
                 MediaChipLabels::default(),
+                Theme::carina(false),
             )
             .unwrap();
         textarea.insert_str("please");
@@ -471,6 +496,7 @@ mod tests {
                 10,
                 MediaSourceLabel::User(Some("image.png".into())),
                 MediaChipLabels::default(),
+                Theme::carina(false),
             )
             .unwrap();
         textarea.insert_str(" /model");
@@ -495,6 +521,7 @@ mod tests {
                 42,
                 MediaSourceLabel::User(None),
                 MediaChipLabels::default(),
+                Theme::carina(false),
             )
             .unwrap();
         textarea.delete_backward(2);
@@ -524,6 +551,7 @@ mod tests {
                     7,
                     MediaSourceLabel::Temporary(None),
                     MediaChipLabels::default(),
+                    Theme::carina(false),
                 )
                 .unwrap();
             let (failed_id, failed_generation) = media
@@ -534,6 +562,7 @@ mod tests {
                     6,
                     MediaSourceLabel::Temporary(None),
                     MediaChipLabels::default(),
+                    Theme::carina(false),
                 )
                 .unwrap();
             assert!(media.apply_upload(
@@ -542,6 +571,7 @@ mod tests {
                 failed_generation,
                 Err("upload rejected".into()),
                 MediaChipLabels::default(),
+                Theme::carina(false),
             ));
             media
                 .insert_pending(
@@ -551,6 +581,7 @@ mod tests {
                     4,
                     MediaSourceLabel::User(None),
                     MediaChipLabels::default(),
+                    Theme::carina(false),
                 )
                 .unwrap();
         }
@@ -578,6 +609,7 @@ mod tests {
                 9,
                 MediaSourceLabel::Temporary(None),
                 MediaChipLabels::default(),
+                Theme::carina(false),
             )
             .unwrap();
         media
@@ -588,6 +620,7 @@ mod tests {
                 4,
                 MediaSourceLabel::User(None),
                 MediaChipLabels::default(),
+                Theme::carina(false),
             )
             .unwrap();
 
@@ -611,6 +644,7 @@ mod tests {
                 42,
                 MediaSourceLabel::User(Some("media-sample.png".into())),
                 MediaChipLabels::default(),
+                Theme::carina(false),
             )
             .unwrap();
         textarea.insert_str("x");
@@ -639,6 +673,7 @@ mod tests {
                 42,
                 MediaSourceLabel::User(None),
                 MediaChipLabels::default(),
+                Theme::carina(false),
             )
             .unwrap();
         assert!(media.attachment_for_preview(&textarea).is_some());
@@ -660,6 +695,7 @@ mod tests {
                 42,
                 MediaSourceLabel::User(None),
                 MediaChipLabels::default(),
+                Theme::carina(false),
             )
             .unwrap();
         textarea.insert_str("after");
@@ -687,6 +723,7 @@ mod tests {
                 42,
                 MediaSourceLabel::User(None),
                 MediaChipLabels::default(),
+                Theme::carina(false),
             )
             .unwrap();
         assert!(media.apply_upload(
@@ -695,9 +732,15 @@ mod tests {
             generation,
             Err("offline".into()),
             MediaChipLabels::default(),
+            Theme::carina(false),
         ));
         let (retry_generation, path, media_type, temporary) = media
-            .begin_retry(&mut textarea, element_id, MediaChipLabels::default())
+            .begin_retry(
+                &mut textarea,
+                element_id,
+                MediaChipLabels::default(),
+                Theme::carina(false),
+            )
             .unwrap();
         assert!(retry_generation > generation);
         assert_eq!(path, PathBuf::from("/tmp/retry.png"));
@@ -705,9 +748,16 @@ mod tests {
         assert!(!temporary);
         assert!(media.has_pending());
         assert_eq!(textarea.elements().len(), 1);
-        assert!(media
-            .begin_retry(&mut textarea, element_id, MediaChipLabels::default())
-            .is_none());
+        assert!(
+            media
+                .begin_retry(
+                    &mut textarea,
+                    element_id,
+                    MediaChipLabels::default(),
+                    Theme::carina(false),
+                )
+                .is_none()
+        );
     }
 
     #[test]
@@ -722,6 +772,7 @@ mod tests {
                 42,
                 MediaSourceLabel::User(Some("localized.png".into())),
                 MediaChipLabels::default(),
+                Theme::carina(false),
             )
             .unwrap();
         media.relabel(
@@ -731,6 +782,7 @@ mod tests {
                 image: "图片",
                 failed: "失败",
             },
+            Theme::carina(false),
         );
         let display = textarea.elements()[0].display.as_ref().unwrap();
         let rendered = display
@@ -754,9 +806,14 @@ mod tests {
                 42,
                 MediaSourceLabel::User(None),
                 MediaChipLabels::default(),
+                Theme::carina(false),
             )
             .unwrap();
-        let work = media.rebind_session(&mut textarea, MediaChipLabels::default());
+        let work = media.rebind_session(
+            &mut textarea,
+            MediaChipLabels::default(),
+            Theme::carina(false),
+        );
         assert_eq!(work.len(), 1);
         assert_eq!(work[0].element_id, element_id);
         assert!(work[0].generation > generation);
@@ -767,6 +824,7 @@ mod tests {
             generation,
             Err("stale source-session result".into()),
             MediaChipLabels::default(),
+            Theme::carina(false),
         ));
         assert!(media.has_pending());
     }

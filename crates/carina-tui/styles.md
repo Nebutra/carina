@@ -15,8 +15,10 @@ reason explaining why it is not visual styling.
 The palette owns three neutral levels (`gray_dim`, `gray`, `gray_bright`),
 interaction and status colors, tool/spinner/link styles, selection, relative
 user-message and code backgrounds, diff foreground/background/gutter colors,
-and all six Markdown heading colors and modifiers. `muted()` and `dim()` fall
-back to `Reset + DIM`, which remains readable on either polarity.
+and all six Markdown heading colors and modifiers. `brand` paints the mark
+only: dark uses `terminal-brand-display`, light uses canonical brand-rose.
+`muted()` and `dim()` fall back to `Reset + DIM`, which remains readable on
+either polarity.
 
 Background fills are intentionally rare. Only selection, user-message
 separation, code, and diff regions may use them. Panels and overlays use
@@ -54,9 +56,11 @@ Identity lives in the product header.
 The user mark is the same width-locked prompt glyph as the composer (`❯ ` /
 `> `). The assistant mark is the quiet two-cell bullet. User turns paint the
 sanctioned `user_message_bg` band only behind occupied prompt and body cells.
-The band must not fill leftover cells in the reading column; a short "你好"
-is a short pill, not a table row. Selection may still own the full hit
-rectangle. Basic and no-color modes keep the background Reset. Leftover
+That band is an OSC/probed-canvas veil (dark: 12% white, light: 4% black), not
+a mineral slab. No probe, Basic, and `NO_COLOR` keep the background Reset so a
+short "你好" is the `❯` plus type, not a second room. The band must not fill
+leftover cells in the reading column. Selection may still own the full hit
+rectangle. Leftover
 transcript height below the last turn is rest (`Color::Reset`), not a surface
 to fill. Each conversation frame clears the full terminal area and the
 transcript pane before painting blocks, so collapsing or reflowing a tool
@@ -172,12 +176,14 @@ interaction accent.
 ## Composer chrome
 
 The conversation shell is intentionally quieter than setup. Its header owns one
-content row and one bottom hairline: a two-cell canonical mini mark followed by
-`Carina ▾ · conversation` on the left, with the current mode as the
-highest-priority routine action on the right. The mark, product name, and
-disclosure form one width-locked product trigger that opens an anchored menu for
+content row and one bottom hairline: the wordmark trigger `Carina ▾` followed by
+the conversation title on the left. The mode chip sits on the right as a routine
+action, but default **Build** is muted. **Plan** owns the interaction accent
+only while it is the exception. Do not squeeze the 10×5 braille
+mark into this one-row header. The product name and disclosure form one
+width-locked product trigger that opens an anchored menu for
 New conversation, Conversations, Status, Settings, and Help. Below 24 cells the
-mark yields its three cells while the textual product trigger remains available.
+textual product trigger remains available.
 A paused run's Review/Resume action
 outranks the mode, followed by the model picker. The model action shows the
 model identity only; reasoning effort stays in Status and Settings. While the
@@ -270,7 +276,9 @@ selection background. The other selected list keeps a structural marker and
 bold text, preventing two adjacent selected rows from becoming one visual band.
 File statistics align at the trailing edge, while hunk detail omits duplicate
 `diff --git` path headers and retains old/new line numbers plus bounded word
-emphasis.
+emphasis. When a path or patch id does not fit, keep whole trailing path or
+hyphen segments (`…/patch.rs`, `…-0184`); do not cut mid-token
+(`…time/patch.rs`, `…y-0184`).
 
 Patch review consumes the background-built `PatchReview` projection. Frames do
 not split or highlight raw patch payloads. The projection is bounded to 2 MiB
@@ -289,14 +297,18 @@ ineligible.
 
 The main transcript uses no more than three saturated foreground hues at once:
 
-- `ion-cyan`: links, headings, and added-line emphasis;
+- `ion-cyan`: links, at most one heading level (H1 bold, no underline), and added-line emphasis; H2 is Reset+bold and H3+ stay muted;
 - `copper-amber`: live tool, review, and warning emphasis; settled routine
   tool receipts return to `gray` (muted, no bold) so completed operations
   recede behind the assistant answer;
 - `event-red`: governance, diagnostics, destructive/error state, and removals.
 
 User identity is `gray_bright`, never the interaction accent. Assistant body
-stays `Reset`; the quiet bullet is not ion-cyan. Assistant identity
+stays `Reset`; the quiet bullet is not ion-cyan. List markers and stacked-table
+labels recede to muted; `transcript_markdown_accent` is for fenced-code
+keywords, not the answer bullet. A heading takes one extra blank row above
+the title (a document beat); successive paragraphs keep a single blank.
+Assistant identity
 must never use `spectral-green`; green remains available to non-transcript success
 state. Metadata uses `gray_dim`, the quietest neutral step. Thinking uses the same
 neutral hierarchy with `DIM | ITALIC`; basic/no-color fallback is

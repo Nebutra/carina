@@ -18,6 +18,9 @@ func (d *Daemon) handleSessionRename(params json.RawMessage) (any, error) {
 	if p.SessionID == "" {
 		return nil, fmt.Errorf("session_id is required")
 	}
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, err
+	}
 	if p.Name == "" {
 		return nil, fmt.Errorf("name is required")
 	}

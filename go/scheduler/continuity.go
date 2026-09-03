@@ -55,9 +55,8 @@ func (s *Scheduler) AcquireExecution(taskID string, expectedRevision int64, owne
 		LeaseGeneration: generation, ExpiresAt: expiresAt,
 	}
 	touchRun(&updated)
-	s.runs[taskID] = &updated
-	copy := updated
-	return &copy, nil
+	s.installRunLocked(&updated)
+	return cloneExecutionRun(&updated), nil
 }
 
 // SetStatusFenced publishes state only for the currently authoritative
@@ -83,9 +82,8 @@ func (s *Scheduler) SetStatusFenced(taskID string, generation int64, status stri
 		updated.Continuity.Execution.ExpiresAt = time.Time{}
 	}
 	touchRun(&updated)
-	s.runs[taskID] = &updated
-	copy := updated
-	return &copy, nil
+	s.installRunLocked(&updated)
+	return cloneExecutionRun(&updated), nil
 }
 
 // SetTerminalResultFenced commits terminal status and its user-visible result
@@ -113,9 +111,8 @@ func (s *Scheduler) SetTerminalResultFenced(taskID string, generation int64, sta
 	updated.Continuity.Execution.OwnerID = ""
 	updated.Continuity.Execution.ExpiresAt = time.Time{}
 	touchRun(&updated)
-	s.runs[taskID] = &updated
-	copy := updated
-	return &copy, nil
+	s.installRunLocked(&updated)
+	return cloneExecutionRun(&updated), nil
 }
 
 // Interrupt abandons an old generation and records structured evidence. A
@@ -134,8 +131,7 @@ func (s *Scheduler) Interrupt(taskID string, record continuity.InterruptionRecor
 		return nil, fmt.Errorf("scheduler: unknown task %s", taskID)
 	}
 	if task.Status == "cancelled" || isTerminal(task.Status) {
-		copy := *task
-		return &copy, nil
+		return cloneExecutionRun(task), nil
 	}
 	updated := *task
 	updated.Status = "interrupted"
@@ -147,9 +143,8 @@ func (s *Scheduler) Interrupt(taskID string, record continuity.InterruptionRecor
 	updated.Continuity.Execution.OwnerID = ""
 	updated.Continuity.Execution.ExpiresAt = time.Time{}
 	touchRun(&updated)
-	s.runs[taskID] = &updated
-	copy := updated
-	return &copy, nil
+	s.installRunLocked(&updated)
+	return cloneExecutionRun(&updated), nil
 }
 
 func (s *Scheduler) SetWorkspaceAnchor(taskID string, anchor continuity.WorkspaceAnchor) (*ExecutionRun, error) {
@@ -165,7 +160,6 @@ func (s *Scheduler) SetWorkspaceAnchor(taskID string, anchor continuity.Workspac
 	updated := *task
 	updated.Continuity.WorkspaceAnchor = &anchor
 	touchRun(&updated)
-	s.runs[taskID] = &updated
-	copy := updated
-	return &copy, nil
+	s.installRunLocked(&updated)
+	return cloneExecutionRun(&updated), nil
 }

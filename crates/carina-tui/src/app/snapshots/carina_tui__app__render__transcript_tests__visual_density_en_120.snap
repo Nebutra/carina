@@ -28,8 +28,8 @@ size=120x40
  • Diagnostic  Context compacted
  │ Older routine tool detail was summarized.
 styles:
-(1,0)..(3,0) (Rgb(195, 202, 198), Rgb(38, 43, 44), BOLD)
-(3,0)..(47,0) (Reset, Rgb(38, 43, 44), NONE)
+(1,0)..(3,0) (Rgb(195, 202, 198), Rgb(42, 46, 48), BOLD)
+(3,0)..(47,0) (Reset, Rgb(42, 46, 48), NONE)
 (1,2)..(3,2) (Rgb(90, 101, 99), Reset, NONE)
 (0,5)..(3,5) (Rgb(232, 168, 95), Reset, BOLD)
 (3,5)..(47,5) (Rgb(90, 101, 99), Reset, DIM | ITALIC)

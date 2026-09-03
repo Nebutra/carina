@@ -13,6 +13,7 @@ import (
 
 	"github.com/Nebutra/carina/go/continuity"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
+	"github.com/Nebutra/carina/go/toolchain"
 )
 
 func (d *Daemon) captureWorkspaceAnchor(sess *sessionstore.Session) (*continuity.WorkspaceAnchor, error) {
@@ -24,7 +25,7 @@ func (d *Daemon) captureWorkspaceAnchor(sess *sessionstore.Session) (*continuity
 	if err != nil {
 		return nil, err
 	}
-	dependencies, readHashes, err := d.workspaceReadDependencies(sess)
+	dependencies, readHashes, spanDependencies, err := d.workspaceReadDependencies(sess)
 	if err != nil {
 		return nil, err
 	}
@@ -57,13 +58,24 @@ func (d *Daemon) captureWorkspaceAnchor(sess *sessionstore.Session) (*continuity
 			return nil, fmt.Errorf("workspace dependency drifted since read: %s", file.Path)
 		}
 	}
+	dependencySpans, err := digestWorkspaceSpans(realRoot, spanDependencies)
+	if err != nil {
+		return nil, err
+	}
+	for i, span := range dependencySpans {
+		expected := spanDependencies[i]
+		if span.Mode != expected.Mode || span.Bytes != expected.Bytes || span.SHA256 != expected.SHA256 {
+			return nil, fmt.Errorf("workspace span drifted since read: %s:%d", span.Path, span.StartLine)
+		}
+	}
 	mutationFiles, err := digestWorkspaceFiles(realRoot, mutations)
 	if err != nil {
 		return nil, err
 	}
 	anchor := &continuity.WorkspaceAnchor{
 		WorkspaceRealpath: realRoot, DependencyFiles: dependencyFiles,
-		MutationFiles: mutationFiles, PatchLineage: d.appliedPatchIDs(sess), CreatedAt: time.Now().UTC(),
+		DependencySpans: dependencySpans, MutationFiles: mutationFiles,
+		PatchLineage: d.appliedPatchIDs(sess), CreatedAt: time.Now().UTC(),
 	}
 	identity, _ := json.Marshal(anchor)
 	sum := sha256.Sum256(identity)
@@ -153,15 +165,24 @@ func lexicalWorkspaceEscape(root, path string) bool {
 	return !pathWithin(realRoot, filepath.Clean(followed))
 }
 
-func (d *Daemon) workspaceReadDependencies(sess *sessionstore.Session) ([]string, map[string]string, error) {
+func (d *Daemon) workspaceReadDependencies(sess *sessionstore.Session) ([]string, map[string]string, []continuity.FileSpanDigest, error) {
 	d.readProvMu.Lock()
 	defer d.readProvMu.Unlock()
 	paths := make([]string, 0, len(d.readProv[sess.SessionID]))
 	hashes := make(map[string]string, len(d.readProv[sess.SessionID]))
-	for path, hash := range d.readProv[sess.SessionID] {
-		if rel, ok := workspaceRelPath(sess.WorkspaceRoot, path); ok {
-			paths = append(paths, rel)
-			hashes[rel] = hash
+	spans := []continuity.FileSpanDigest{}
+	for path, records := range d.readProv[sess.SessionID] {
+		rel, inside := workspaceRelPath(sess.WorkspaceRoot, path)
+		if inside {
+			for _, record := range records {
+				switch record.Kind {
+				case readProvenanceWhole:
+					paths = append(paths, rel)
+					hashes[rel] = record.SHA256
+				case readProvenanceSpan:
+					spans = append(spans, continuity.FileSpanDigest{Path: rel, StartLine: record.StartLine, LineCount: record.LineCount, Mode: record.ObservedMode, Bytes: int64(len(record.Content)), SHA256: record.SHA256})
+				}
+			}
 			continue
 		}
 		// Absolute paths that are not inside the workspace are extra-root
@@ -170,9 +191,37 @@ func (d *Daemon) workspaceReadDependencies(sess *sessionstore.Session) ([]string
 		if filepath.IsAbs(filepath.Clean(path)) && !lexicalWorkspaceEscape(sess.WorkspaceRoot, path) {
 			continue
 		}
-		return nil, nil, fmt.Errorf("workspace anchor path is inaccessible or escapes through symlink: %s", path)
+		return nil, nil, nil, fmt.Errorf("workspace anchor path is inaccessible or escapes through symlink: %s", path)
 	}
-	return paths, hashes, nil
+	sort.Slice(spans, func(i, j int) bool {
+		if spans[i].Path == spans[j].Path {
+			return spans[i].StartLine < spans[j].StartLine
+		}
+		return spans[i].Path < spans[j].Path
+	})
+	return paths, hashes, spans, nil
+}
+
+func digestWorkspaceSpans(root string, expected []continuity.FileSpanDigest) ([]continuity.FileSpanDigest, error) {
+	out := make([]continuity.FileSpanDigest, 0, len(expected))
+	for _, span := range expected {
+		clean := filepath.Clean(span.Path)
+		if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("workspace anchor span escapes root: %s", span.Path)
+		}
+		abs := filepath.Join(root, clean)
+		resolved, err := filepath.EvalSymlinks(abs)
+		if err != nil || !pathWithin(root, resolved) {
+			return nil, fmt.Errorf("workspace anchor span is inaccessible or escapes through symlink: %s", clean)
+		}
+		result, version, err := toolchain.ReadLineRangeFile(resolved, span.StartLine, span.LineCount, toolchain.LineRangeLimits{})
+		if err != nil {
+			return nil, fmt.Errorf("read workspace anchor span %s:%d: %w", clean, span.StartLine, err)
+		}
+		sum := sha256.Sum256(result.Content)
+		out = append(out, continuity.FileSpanDigest{Path: clean, StartLine: span.StartLine, LineCount: span.LineCount, Mode: version.Mode, Bytes: int64(len(result.Content)), SHA256: hex.EncodeToString(sum[:])})
+	}
+	return out, nil
 }
 
 func digestWorkspaceFiles(root string, paths []string) ([]continuity.FileDigest, error) {
@@ -226,6 +275,16 @@ func verifyWorkspaceAnchor(anchor *continuity.WorkspaceAnchor) (bool, string) {
 		actual := files[0]
 		if actual.Mode != expected.Mode || actual.Bytes != expected.Bytes || actual.SHA256 != expected.SHA256 {
 			return false, "workspace drift: " + expected.Path
+		}
+	}
+	spans, err := digestWorkspaceSpans(anchor.WorkspaceRealpath, anchor.DependencySpans)
+	if err != nil || len(spans) != len(anchor.DependencySpans) {
+		return false, "workspace span dependency cannot be verified"
+	}
+	for i, actual := range spans {
+		expected := anchor.DependencySpans[i]
+		if actual.Mode != expected.Mode || actual.Bytes != expected.Bytes || actual.SHA256 != expected.SHA256 {
+			return false, fmt.Sprintf("workspace span drift: %s:%d", expected.Path, expected.StartLine)
 		}
 	}
 	return true, "workspace anchor matches"

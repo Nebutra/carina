@@ -105,6 +105,13 @@ func (t *Toolchain) Scan(root string) ([]FileEntry, error) {
 // ScanBounded walks the tree but stops after maxFiles entries or maxDepth
 // path components (0 means unlimited). truncated reports a cap was hit.
 func (t *Toolchain) ScanBounded(root string, maxFiles, maxDepth int) ([]FileEntry, bool, error) {
+	return t.ScanBoundedContext(context.Background(), root, maxFiles, maxDepth)
+}
+
+// ScanBoundedContext is ScanBounded with caller-owned cancellation. Background
+// readers use it so daemon shutdown and their smaller wall-time budgets stop
+// the scanner instead of waiting for the toolchain's 30-second hard ceiling.
+func (t *Toolchain) ScanBoundedContext(ctx context.Context, root string, maxFiles, maxDepth int) ([]FileEntry, bool, error) {
 	args := []string{root}
 	if maxFiles > 0 {
 		args = append(args, "--max-files", strconv.Itoa(maxFiles))
@@ -112,7 +119,7 @@ func (t *Toolchain) ScanBounded(root string, maxFiles, maxDepth int) ([]FileEntr
 	if maxDepth > 0 {
 		args = append(args, "--max-depth", strconv.Itoa(maxDepth))
 	}
-	out, err := t.runJSONLines(30*time.Second, nil, t.tool("carina-scan"), args...)
+	out, err := t.runJSONLinesContext(ctx, 30*time.Second, nil, t.tool("carina-scan"), args...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -138,18 +145,39 @@ func (t *Toolchain) ScanBounded(root string, maxFiles, maxDepth int) ([]FileEntr
 
 // Grep searches via carina-grep (which walks directories natively).
 func (t *Toolchain) Grep(pattern, root string) ([]Match, error) {
-	out, err := t.runJSONLines(30*time.Second, nil, t.tool("carina-grep"), pattern, root)
+	matches, _, err := t.GrepBounded(pattern, root, 0)
+	return matches, err
+}
+
+// GrepBounded stops after maxMatches hits (0 means unlimited). truncated
+// reports the cap was hit; remaining files are not walked.
+func (t *Toolchain) GrepBounded(pattern, root string, maxMatches int) ([]Match, bool, error) {
+	args := []string{pattern, root}
+	if maxMatches > 0 {
+		args = append(args, "--max-matches", strconv.Itoa(maxMatches))
+	}
+	out, err := t.runJSONLines(30*time.Second, nil, t.tool("carina-grep"), args...)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	var matches []Match
+	truncated := false
 	for _, raw := range out {
 		var m Match
 		if err := json.Unmarshal(raw, &m); err == nil && m.File != "" {
 			matches = append(matches, m)
+			continue
+		}
+		var summary struct {
+			Summary struct {
+				Truncated bool `json:"truncated"`
+			} `json:"summary"`
+		}
+		if json.Unmarshal(raw, &summary) == nil && summary.Summary.Truncated {
+			truncated = true
 		}
 	}
-	return matches, nil
+	return matches, truncated, nil
 }
 
 // Run executes a command through carina-run with captured output. extraEnv is
@@ -174,7 +202,13 @@ func (t *Toolchain) RunContext(ctx context.Context, argv []string, cwd string, t
 	}
 	args = append(args, "--")
 	args = append(args, argv...)
-	out, err := t.runJSONLinesContext(ctx, timeout+10*time.Second, extraEnv, t.tool("carina-run"), args...)
+	env := extraEnv
+	if sandbox {
+		env = sandboxProcessEnv(cwd, extraEnv)
+	} else if extraEnv != nil {
+		env = append(os.Environ(), extraEnv...)
+	}
+	out, err := t.runJSONLinesContext(ctx, timeout+10*time.Second, env, t.tool("carina-run"), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +248,7 @@ func (t *Toolchain) runJSONLinesContext(ctx context.Context, timeout time.Durati
 	cmd := exec.CommandContext(ctx, bin, args...)
 	configureCommandProcess(cmd)
 	if env != nil {
-		cmd.Env = append(os.Environ(), env...)
+		cmd.Env = env
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

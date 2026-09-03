@@ -20,9 +20,9 @@ func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 	if strings.TrimSpace(p.SessionID) == "" {
 		return nil, fmt.Errorf("session_id is required")
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	sess, err := d.requireNamedSession(p.SessionID, params)
+	if err != nil {
+		return nil, err
 	}
 	var latest *scheduler.ExecutionRun
 	for _, task := range d.sched.List() {

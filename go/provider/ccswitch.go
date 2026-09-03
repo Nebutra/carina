@@ -407,7 +407,7 @@ func resolveManagedCodexRoute(configs []ccSwitchProxyConfig, records []ccSwitchR
 			currentFound = true
 			if candidate := strings.TrimSpace(record.name); candidate != "" {
 				// Distinguish the managed proxy row from the saved profile that
-				// shares the same CC Switch display name (e.g. both "TDS").
+				// shares the same CC Switch display name (e.g. both "Relay").
 				name = candidate + " · Proxy"
 			}
 			break

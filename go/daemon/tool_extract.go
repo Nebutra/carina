@@ -17,8 +17,11 @@ const (
 	maxListDirExamples    = 2
 )
 
-func formatSearchObservation(pattern string, matches []toolchain.Match, workspaceRoot string) string {
+func formatSearchObservation(pattern string, matches []toolchain.Match, truncated bool, workspaceRoot string) string {
 	if len(matches) == 0 {
+		if truncated {
+			return fmt.Sprintf("search %q: truncated at %d; narrow the pattern", pattern, searchMatchCap)
+		}
 		return "no matches"
 	}
 	type group struct {
@@ -50,7 +53,11 @@ func formatSearchObservation(pattern string, matches []toolchain.Match, workspac
 		return "no matches"
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "search %q: %d matches in %d files\n", pattern, len(matches), len(groups))
+	fmt.Fprintf(&b, "search %q: %d matches in %d files", pattern, len(matches), len(groups))
+	if truncated {
+		fmt.Fprintf(&b, " (truncated at %d; narrow the pattern)", searchMatchCap)
+	}
+	b.WriteByte('\n')
 	shown := 0
 	for i, g := range groups {
 		if i >= maxSearchExtractFiles {

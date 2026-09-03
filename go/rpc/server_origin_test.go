@@ -42,7 +42,7 @@ func TestRemoteOriginRestriction(t *testing.T) {
 func TestRemoteParamsGuardSkipsLocalOrigin(t *testing.T) {
 	s := NewServer()
 	var remoteHits int
-	s.SetRemoteParamsGuard(func(method string, _ json.RawMessage) error {
+	s.SetRemoteParamsGuard(func(method string, _ json.RawMessage, _ GatewayTokenClaims) error {
 		remoteHits++
 		if method == "session.get" {
 			return errors.New("gateway workspace is pinned")

@@ -891,6 +891,21 @@ impl Client {
         )
     }
 
+    pub fn list_proposals(&mut self, session_id: &str) -> Result<ProposalListResult, RpcError> {
+        self.call("proposal.list", &json!({"session_id": session_id}))
+    }
+
+    pub fn accept_proposal(&mut self, proposal_id: &str) -> Result<Value, RpcError> {
+        self.call("proposal.accept", &json!({"proposal_id": proposal_id}))
+    }
+
+    pub fn ignore_proposal(&mut self, proposal_id: &str, mute: bool) -> Result<Value, RpcError> {
+        self.call(
+            "proposal.ignore",
+            &json!({"proposal_id": proposal_id, "mute": mute}),
+        )
+    }
+
     pub fn answer_question(&mut self, question_id: &str, value: &str) -> Result<Value, RpcError> {
         self.call(
             "question.answer",

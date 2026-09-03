@@ -76,6 +76,9 @@ Inspect sessions:
   carina watch <session_id> [--json]               stream live events (--json emits actionable control frames)
   carina steer <run_id> <message>                 redirect the current execution at its next turn boundary
   carina answer <question_id> <value>              answer a structured agent question
+  carina inbox <session_id>                        list read-only proposals (off unless CARINA_PROACTIVE=1)
+  carina inbox accept <proposal_id>                adopt a proposal as a steer
+  carina inbox ignore <proposal_id> [--mute]       dismiss a proposal
   carina items <session_id>                        replay normalized thread/turn/item events
   carina session review <session_id>               show the governance-oriented session projection
   carina artifact stat <session_id> <artifact_id> [--run id] [--call id]
@@ -428,6 +431,8 @@ func run(cmd string, args []string) error {
 			return fmt.Errorf("usage: carina answer <question_id> <value>")
 		}
 		return call(c, "question.answer", map[string]any{"question_id": args[0], "value": args[1]})
+	case "inbox":
+		return cmdInbox(c, args)
 
 	case "search":
 		if len(args) < 2 {
@@ -475,6 +480,35 @@ func run(cmd string, args []string) error {
 	default:
 		fmt.Print(usage)
 		return fmt.Errorf("unknown command %q", cmd)
+	}
+}
+
+func cmdInbox(c *rpcClient, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: carina inbox <session_id> | carina inbox accept <proposal_id> | carina inbox ignore <proposal_id> [--mute]")
+	}
+	switch args[0] {
+	case "accept":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: carina inbox accept <proposal_id>")
+		}
+		return call(c, "proposal.accept", map[string]any{"proposal_id": args[1]})
+	case "ignore":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: carina inbox ignore <proposal_id> [--mute]")
+		}
+		mute := false
+		for _, arg := range args[2:] {
+			if arg == "--mute" {
+				mute = true
+			}
+		}
+		return call(c, "proposal.ignore", map[string]any{"proposal_id": args[1], "mute": mute})
+	default:
+		if len(args) != 1 {
+			return fmt.Errorf("usage: carina inbox <session_id>")
+		}
+		return call(c, "proposal.list", map[string]any{"session_id": args[0]})
 	}
 }
 

@@ -63,7 +63,7 @@ func (d *Daemon) executeWorkflowOutcome(sess *sessionstore.Session, task *schedu
 	outputs, err := runFn(sess, task, spec, act.Task, runID)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			return toolExecutionOutcome{display: fmt.Sprintf("workflow %q cancelled (run %s)", spec.Name, runID), status: "cancelled", errorCategory: "operator_cancelled"}
+			return toolCancelled(fmt.Sprintf("workflow %q cancelled (run %s)", spec.Name, runID), "operator_cancelled")
 		}
 		return toolFailed(fmt.Sprintf("workflow %q error (run %s): %s", spec.Name, runID, err.Error()), "workflow_error")
 	}

@@ -304,6 +304,7 @@ type runCheckpoint struct {
 	MemorySnapshot     string                      `json:"memory_snapshot,omitempty"`
 	AppliedPatches     []string                    `json:"applied_patches,omitempty"`
 	WorkspaceAnchor    *continuity.WorkspaceAnchor `json:"workspace_anchor,omitempty"`
+	ReadProvenance     sessionReadProvenance       `json:"read_provenance,omitempty"`
 }
 
 func (r *runStore) saveCheckpoint(taskID string, cp *runCheckpoint) {

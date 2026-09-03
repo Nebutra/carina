@@ -32,16 +32,9 @@ Harness protocol:
 - Do not read project instruction files or version-control status unless the task names that file.
 - Return exact paths and findings. done.summary is the only text the parent sees.`
 
-var exploreToolNames = []string{
-	"list", "read", "search",
-	"code.search", "code.symbols", "code.map", "code.def", "code.refs", "code.impact",
-}
+var exploreToolNames []string
 
-var exploreRestrictedTools = map[string]bool{
-	"patch": true, "edit": true, "run": true, "memory": true,
-	"spawn": true, "workflow": true, "mcp": true, "best_of_n": true,
-	"web.fetch": true, "web.search": true, "ask_user": true,
-}
+var exploreRestrictedTools map[string]bool
 
 func isExploreSubagent(spec *AgentSpec) bool {
 	return spec != nil && spec.Name == "explore"

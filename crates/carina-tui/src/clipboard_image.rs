@@ -66,13 +66,13 @@ impl PendingPaste {
         session_id: Option<String>,
         paste_label: &str,
         reading_label: &str,
+        theme: crate::theme::Theme,
     ) -> Self {
-        let theme = crate::theme::Theme::detected(None);
         let element_id = textarea.insert_element(
             &format!("[paste:{generation}]"),
             PASTE_ELEMENT_KIND,
             Some(Line::from(vec![
-                Span::styled(format!(" {paste_label} "), theme.action()),
+                Span::styled(format!(" {paste_label} "), theme.chip()),
                 Span::styled(format!(" {reading_label} "), theme.dim()),
             ])),
         );
@@ -131,10 +131,9 @@ pub fn paste_line_count(text: &str) -> usize {
     text.chars().filter(|character| *character == '\n').count() + 1
 }
 
-pub fn paste_chip_line(label: &str, size: &str) -> Line<'static> {
-    let theme = crate::theme::Theme::detected(None);
+pub fn paste_chip_line(label: &str, size: &str, theme: crate::theme::Theme) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!(" {label} "), theme.action()),
+        Span::styled(format!(" {label} "), theme.chip()),
         Span::styled(format!(" {size} "), theme.dim()),
     ])
 }
@@ -373,6 +372,7 @@ mod tests {
             Some("session".into()),
             "paste",
             "reading clipboard",
+            crate::theme::Theme::carina(false),
         );
         textarea.insert_str("after");
 
@@ -384,7 +384,14 @@ mod tests {
     #[test]
     fn pending_paste_display_uses_renderer_owned_locale_copy() {
         let mut textarea = TextArea::new();
-        PendingPaste::insert(&mut textarea, 1, None, "貼上", "正在讀取剪貼簿");
+        PendingPaste::insert(
+            &mut textarea,
+            1,
+            None,
+            "貼上",
+            "正在讀取剪貼簿",
+            crate::theme::Theme::carina(false),
+        );
         let display = textarea.elements()[0].display.as_ref().unwrap();
         let rendered = display
             .spans
@@ -401,7 +408,14 @@ mod tests {
         let mut textarea = TextArea::new();
         textarea.insert_str("left right");
         textarea.set_cursor("left ".len());
-        let pending = PendingPaste::insert(&mut textarea, 1, None, "paste", "reading clipboard");
+        let pending = PendingPaste::insert(
+            &mut textarea,
+            1,
+            None,
+            "paste",
+            "reading clipboard",
+            crate::theme::Theme::carina(false),
+        );
         textarea.set_cursor(0);
         textarea.insert_str("prefix ");
 
@@ -413,8 +427,22 @@ mod tests {
     #[test]
     fn concurrent_pastes_can_settle_out_of_order_without_reordering_text() {
         let mut textarea = TextArea::new();
-        let first = PendingPaste::insert(&mut textarea, 1, None, "paste", "reading clipboard");
-        let second = PendingPaste::insert(&mut textarea, 2, None, "paste", "reading clipboard");
+        let first = PendingPaste::insert(
+            &mut textarea,
+            1,
+            None,
+            "paste",
+            "reading clipboard",
+            crate::theme::Theme::carina(false),
+        );
+        let second = PendingPaste::insert(
+            &mut textarea,
+            2,
+            None,
+            "paste",
+            "reading clipboard",
+            crate::theme::Theme::carina(false),
+        );
         textarea.insert_str("typed");
 
         assert!(second.resolve_text(&mut textarea, "second "));
@@ -425,7 +453,14 @@ mod tests {
     #[test]
     fn deleted_pending_paste_rejects_a_late_result() {
         let mut textarea = TextArea::new();
-        let pending = PendingPaste::insert(&mut textarea, 1, None, "paste", "reading clipboard");
+        let pending = PendingPaste::insert(
+            &mut textarea,
+            1,
+            None,
+            "paste",
+            "reading clipboard",
+            crate::theme::Theme::carina(false),
+        );
         textarea.delete_backward(1);
 
         assert!(!pending.resolve_text(&mut textarea, "late"));
@@ -445,10 +480,21 @@ mod tests {
     fn pending_paste_can_settle_as_a_chip_instead_of_inline_text() {
         let mut textarea = TextArea::new();
         textarea.insert_str("before ");
-        let pending = PendingPaste::insert(&mut textarea, 1, None, "paste", "reading clipboard");
+        let pending = PendingPaste::insert(
+            &mut textarea,
+            1,
+            None,
+            "paste",
+            "reading clipboard",
+            crate::theme::Theme::carina(false),
+        );
         textarea.insert_str("after");
         let payload = "1\n2\n3\n4\n5\n6\n7\n8";
-        assert!(pending.resolve_chip(&mut textarea, payload, paste_chip_line("paste", "8 lines"),));
+        assert!(pending.resolve_chip(
+            &mut textarea,
+            payload,
+            paste_chip_line("paste", "8 lines", crate::theme::Theme::carina(false)),
+        ));
         assert_eq!(textarea.text(), format!("before {payload}after"));
         assert_eq!(textarea.elements()[0].kind, PASTE_ELEMENT_KIND);
         let rendered = textarea.elements()[0]

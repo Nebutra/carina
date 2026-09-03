@@ -53,10 +53,12 @@ func TestPlanModeToolMatrix(t *testing.T) {
 		blocked bool
 	}{
 		{tool: "list"}, {tool: "read"}, {tool: "search"},
+		{tool: "git.status"}, {tool: "git.diff"}, {tool: "git.log"},
 		{tool: "code.search"}, {tool: "code.symbols"}, {tool: "code.map"},
 		{tool: "code.def"}, {tool: "code.refs"}, {tool: "code.impact"},
 		{tool: "todo"}, {tool: "update_plan"}, {tool: "ask_user"},
 		{tool: "done"}, {tool: "mcp_find"}, {tool: "spawn"},
+		{tool: "job.list"}, {tool: "job.wait"}, {tool: "job.cancel"},
 		{tool: "patch", blocked: true}, {tool: "edit", blocked: true}, {tool: "run", blocked: true},
 		{tool: "web.fetch", blocked: true}, {tool: "web.search", blocked: true},
 		{tool: "memory", blocked: true}, {tool: "mcp", blocked: true},

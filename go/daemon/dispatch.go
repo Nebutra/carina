@@ -44,9 +44,9 @@ func (d *Daemon) handleWorkSubmit(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	sess, err := d.requireNamedSession(p.SessionID, params)
+	if err != nil {
+		return nil, err
 	}
 	if sess.Status != "active" {
 		return nil, fmt.Errorf("session %s is %s, not active", p.SessionID, sess.Status)

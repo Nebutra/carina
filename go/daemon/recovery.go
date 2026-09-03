@@ -70,7 +70,11 @@ func (d *Daemon) reconcileInterruptedTask(task *scheduler.ExecutionRun) {
 	if err != nil {
 		return
 	}
-	d.sched.SetResult(task.RunID, "interrupted: "+decision.Reason, task.AppliedPatches)
+	summary := task.Summary
+	if summary == "" {
+		summary = "interrupted: " + decision.Reason
+	}
+	d.sched.SetResult(task.RunID, summary, task.AppliedPatches)
 	d.persistRun(task.RunID)
 	d.record(task.SessionID, "ExecutionInterrupted", task.RunID, "go", map[string]any{
 		"kind": kind, "certainty": record.Certainty, "retryable": allPassed,

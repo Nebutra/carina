@@ -199,7 +199,7 @@ func (d *Daemon) composeAgentPromptLayers(sess *sessionstore.Session, task *sche
 		layers.Mode = strings.TrimSpace(spec.SystemPrompt)
 	}
 	if d.bestOfNEnabled.Load() {
-		layers.Tools = joinPromptPrefix(layers.Tools, bestOfNToolHelp)
+		layers.Tools = joinPromptPrefix(layers.Tools, d.builtinConditionalPrompt("best_of_n"))
 	}
 	layers.Constitution = layers.constitutionText()
 
@@ -217,7 +217,7 @@ func (d *Daemon) composeAgentPromptLayers(sess *sessionstore.Session, task *sche
 		workspace.WriteString(style)
 		workspace.WriteString("\n\n")
 	}
-	fmt.Fprintf(&workspace, "RUNTIME SCOPE (authoritative): workspace_root=%q; os_sandbox=%s. You can read and modify this workspace through governed tools. You cannot inspect the desktop or unrelated directories unless an explicit capability grants access.", sess.WorkspaceRoot, sandboxState)
+	fmt.Fprintf(&workspace, "RUNTIME SCOPE (authoritative): workspace_root=%q; os_sandbox=%s. You can read and modify this workspace through governed tools. Paths outside granted roots stay denied until add_dir grants that existing directory. If the operator names a destination outside the workspace, request add_dir — do not rewrite it into the workspace as the only option.", sess.WorkspaceRoot, sandboxState)
 	if !d.safeMode && shouldLoadProjectInstructions(taskAgent(task)) {
 		if mem := loadMemory(sess.WorkspaceRoot); mem != "" {
 			workspace.WriteString("\n\nPROJECT INSTRUCTIONS (Nebutra/Carina — follow them):\n")

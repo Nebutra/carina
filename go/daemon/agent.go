@@ -33,6 +33,7 @@ const (
 	maxVerifyAttempts = 3
 	listFileCap       = 200
 	listDepthCap      = 4
+	searchMatchCap    = 200
 )
 
 // productIdentity is the stable product self-model for the main agent harness.
@@ -60,26 +61,8 @@ Carina is not: a full IDE, a hosted cloud agent product, a complete VM/container
 When describing ability: prefer outcomes ("I can read and change this repo under policy") over internal tool names. Do not invent features outside this brief. If a capability depends on config (sandbox, MCP, approvals, model), say so only when relevant — do not guess that it is enabled.`
 
 // toolsCatalog is constitution D: one line per builtin. JSON examples belong
-// in tests, not constitution.
-const toolsCatalog = `Available tools:
-- list: workspace file tree
-- read: path or skill://name (prompt-only; never grants tools)
-- search: workspace text
-- web.search / web.fetch: public web after approval
-- run: policy-gated argv (sandbox-exec/bwrap; missing helper fails closed)
-- patch: complete-file transactional write
-- edit: unique exact span already read (never shell)
-- memory: governed long-term memory
-- ask_user: structured choice (2-6 options) or free-text
-- todo / update_plan: session checklist
-- code.search: ranked code search
-- code.symbols: definitions + references
-- code.map: ranked repo map
-- code.def / code.refs: precise definition/references (LSP)
-- code.impact: bounded transitive dependents
-- spawn: subagent (agent+task or tasks[])
-- workflow: named DAG
-- done: finish the task`
+// in tests, not constitution. The descriptor registry owns its contents.
+var toolsCatalog string
 
 // harnessProtocol is constitution C: at most five standing bullets
 // (docs/PROMPT_SPEC.md).
@@ -92,9 +75,7 @@ const harnessProtocol = `Harness protocol:
 
 // toolsHelp is the shared tool sheet for subagents: D then C. Main-agent
 // constitution lists C and D as separate cache sections.
-const toolsHelp = toolsCatalog + `
-
-` + harnessProtocol
+var toolsHelp string
 
 // intentFirst is how to read the ask. Keep this meta — no FAQ of operator
 // phrases, and no host-side utterance classifier in prompt_mode.
@@ -135,8 +116,15 @@ type action struct {
 	Intent          string               `json:"intent,omitempty"`
 	Action          json.RawMessage      `json:"action,omitempty"`
 	Path            string               `json:"path"`
+	StartLine       *int                 `json:"start_line,omitempty"`
+	LineCount       *int                 `json:"line_count,omitempty"`
 	Pattern         string               `json:"pattern"`
 	URL             string               `json:"url"`
+	BrowserID       string               `json:"browser_id,omitempty"`
+	TabID           string               `json:"tab_id,omitempty"`
+	ApprovedOrigins []string             `json:"approved_origins,omitempty"`
+	TabOperation    string               `json:"operation,omitempty"`
+	FullPage        bool                 `json:"full_page,omitempty"`
 	Command         []string             `json:"command"`
 	Content         string               `json:"content"`
 	Old             string               `json:"old,omitempty"`
@@ -155,6 +143,21 @@ type action struct {
 	Agent string      `json:"agent"`
 	Task  string      `json:"task"`
 	Tasks []SpawnTask `json:"tasks"`
+	// Background returns durable job handles after governed child setup.
+	Background bool `json:"background,omitempty"`
+	// durable background job controls
+	JobID     string   `json:"job_id,omitempty"`
+	JobIDs    []string `json:"job_ids,omitempty"`
+	Statuses  []string `json:"statuses,omitempty"`
+	Cursor    string   `json:"cursor,omitempty"`
+	Limit     int      `json:"limit,omitempty"`
+	WaitMode  string   `json:"mode,omitempty"`
+	TimeoutMS int      `json:"timeout_ms,omitempty"`
+	// typed read-only Git information tools
+	GitView     string   `json:"view,omitempty"`
+	GitRevision string   `json:"revision,omitempty"`
+	Paths       []string `json:"paths,omitempty"`
+	MaxCommits  int      `json:"max_commits,omitempty"`
 	// workflow tool
 	Workflow string `json:"workflow"`
 	// best_of_n tool
@@ -296,6 +299,7 @@ func (d *Daemon) resumeTaskContext(ctx context.Context, sess *sessionstore.Sessi
 		d.degrade(sess, task, cp.Transcript, noReasonerAvailable)
 		return
 	}
+	d.restoreReadProvenance(sess.SessionID, cp.ReadProvenance)
 	d.record(sess.SessionID, "ModelRequested", task.RunID, "go",
 		map[string]any{"engine": d.reasoner.Name(), "model": taskModel(task), "reasoning_effort": task.EffectiveReasoningEffort, "agent": taskAgent(task), "prompt": task.UserPrompt, "resumed_from_turn": cp.Turn}, "")
 	d.runLoopContext(ctx, sess, task, cp.Transcript, cp.Turn+1, cp.MemorySnapshot)
@@ -455,7 +459,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			reasonerCtx = withReasoningEffort(reasonerCtx, task.EffectiveReasoningEffort)
 			reasonerCtx = withReasonerStream(reasonerCtx, assistantStream)
 			if useNative {
-				reasonerCtx = withNativeTools(reasonerCtx, carinaToolSpecs())
+				reasonerCtx = withNativeTools(reasonerCtx, d.builtinNativeToolSpecs())
 			}
 			if requery == 0 {
 				result, err = thinkWithRetryModelSegments(reasonerCtx, d.reasoner, task.Model, seg)
@@ -613,7 +617,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		d.sched.AddTokens(task.RunID, turnTokens)
 		if t, ok := d.sched.Get(task.RunID); ok && t.TokenBudget > 0 && t.TokensUsed > t.TokenBudget {
 			assistantStream.reset()
-			if err := d.runs.saveCheckpointChecked(task.RunID, &runCheckpoint{Turn: turn - 1, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess)}); err != nil {
+			if err := d.runs.saveCheckpointChecked(task.RunID, &runCheckpoint{Turn: turn - 1, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess), ReadProvenance: d.snapshotReadProvenance(sess.SessionID)}); err != nil {
 				d.sched.SetStatus(task.RunID, "failed")
 				d.sched.SetResult(task.RunID, "token budget exceeded but the resume checkpoint could not be persisted: "+err.Error(), d.appliedPatchIDs(sess))
 				d.persistRun(task.RunID)
@@ -746,6 +750,9 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			guard.tick() // reads make no edit
 			tr.addTurn(Turn{Thought: act.Thought, Tool: "batch",
 				ActionBrief: briefBatch(act.Actions), Obs: compressedObs})
+			for i := range act.Actions {
+				d.considerProactive(sess, task, &act.Actions[i], toolCompleted("batch"), turn, tr)
+			}
 			if !d.persistTurnCheckpoint(sess, task, tr, turn, memorySnapshot) {
 				return
 			}
@@ -805,6 +812,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			d.degrade(sess, task, tr, "context compression failed: "+err.Error())
 			return
 		}
+		compressedObs.Error = outcome.observationError
 		if (act.Tool == "patch" || act.Tool == "edit") && strings.Contains(obs, "applied") {
 			guard.madeProgress()
 		} else {
@@ -824,6 +832,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			newTurn.Path = act.Path
 		}
 		tr.addTurn(newTurn)
+		d.considerProactive(sess, task, &act, outcome, turn, tr)
 		// Checkpoint after each completed turn so a crash can resume here.
 		if !d.persistTurnCheckpoint(sess, task, tr, turn, memorySnapshot) {
 			return
@@ -855,12 +864,59 @@ func (d *Daemon) listWorkspaceOutcome(sess *sessionstore.Session, task *schedule
 	if dec.Decision != "allowed" {
 		return toolDenied("DENIED: cannot read workspace", "policy_denied")
 	}
-	files, truncated, err := d.tools.ScanBounded(sess.WorkspaceRoot, listFileCap, listDepthCap)
+	sessionID, runID, root := listSearchScope(sess, task)
+	if display, ok := d.lookupListSearchMemo(sessionID, runID, "list", root, ""); ok {
+		d.record(sessionID, "FileRead", runID, "go", map[string]any{"resource": root, "bytes": len(display), "memo": true}, dec.DecisionID)
+		return toolCompleted(display)
+	}
+	d.noteListSearchZig()
+	files, truncated, err := d.tools.ScanBounded(root, listFileCap, listDepthCap)
 	if err != nil {
 		return toolFailed("error: "+err.Error(), "tool_error")
 	}
-	d.record(sess.SessionID, "FileRead", task.RunID, "zig", map[string]any{"resource": sess.WorkspaceRoot, "bytes": len(files), "truncated": truncated}, dec.DecisionID)
-	return toolCompleted(formatListObservation(files, truncated, sess.WorkspaceRoot))
+	display := formatListObservation(files, truncated, root)
+	d.storeListSearchMemo(sessionID, runID, "list", root, "", display)
+	d.record(sessionID, "FileRead", runID, "zig", map[string]any{"resource": root, "bytes": len(files), "truncated": truncated}, dec.DecisionID)
+	return toolCompleted(display)
+}
+
+func (d *Daemon) searchWorkspaceOutcome(sess *sessionstore.Session, task *scheduler.ExecutionRun, pattern string, pre *kernel.Decision) toolExecutionOutcome {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return toolFailed("error: search needs a non-empty pattern; list a directory or use code.search", "invalid_arguments")
+	}
+	dec, err := d.fileReadDecision(sess, task, sess.WorkspaceRoot, pre)
+	if err != nil {
+		return toolFailed("error: "+err.Error(), "governance_error")
+	}
+	if dec.Decision != "allowed" {
+		return toolDenied("DENIED: cannot search workspace", "policy_denied")
+	}
+	sessionID, runID, root := listSearchScope(sess, task)
+	if display, ok := d.lookupListSearchMemo(sessionID, runID, "search", root, pattern); ok {
+		d.record(sessionID, "FileRead", runID, "go", map[string]any{"resource": root, "pattern": pattern, "memo": true}, dec.DecisionID)
+		return toolCompleted(display)
+	}
+	d.noteListSearchZig()
+	matches, truncated, err := d.tools.GrepBounded(pattern, root, searchMatchCap)
+	if err != nil {
+		return toolFailed("error: "+err.Error(), "tool_error")
+	}
+	display := formatSearchObservation(pattern, matches, truncated, root)
+	d.storeListSearchMemo(sessionID, runID, "search", root, pattern, display)
+	d.record(sessionID, "FileRead", runID, "zig", map[string]any{"resource": root, "pattern": pattern, "matches": len(matches), "truncated": truncated}, dec.DecisionID)
+	return toolCompleted(display)
+}
+
+func listSearchScope(sess *sessionstore.Session, task *scheduler.ExecutionRun) (sessionID, runID, root string) {
+	if sess != nil {
+		sessionID = sess.SessionID
+		root = sess.WorkspaceRoot
+	}
+	if task != nil {
+		runID = task.RunID
+	}
+	return sessionID, runID, root
 }
 
 func (d *Daemon) checkpointPendingSteers(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, completedTurn int, memorySnapshot string) (bool, bool) {
@@ -954,7 +1010,7 @@ func (d *Daemon) persistCheckpoint(sess *sessionstore.Session, task *scheduler.E
 		d.degrade(sess, task, tr, failure+": "+err.Error())
 		return false
 	}
-	cp := &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess), WorkspaceAnchor: anchor}
+	cp := &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess), WorkspaceAnchor: anchor, ReadProvenance: d.snapshotReadProvenance(sess.SessionID)}
 	err = d.runs.saveCheckpointChecked(task.RunID, cp)
 	if err == nil {
 		_, _ = d.sched.SetWorkspaceAnchor(task.RunID, *anchor)
@@ -989,8 +1045,8 @@ func (d *Daemon) checkSuccessCriteria(sess *sessionstore.Session, task *schedule
 				failed = append(failed, "file missing: "+c.Path)
 			}
 		case "grep_absent":
-			if matches, err := d.tools.Grep(c.Pattern, sess.WorkspaceRoot); err == nil && len(matches) > 0 {
-				failed = append(failed, fmt.Sprintf("pattern still present (%d matches): %s", len(matches), c.Pattern))
+			if matches, _, err := d.tools.GrepBounded(c.Pattern, sess.WorkspaceRoot, 1); err == nil && len(matches) > 0 {
+				failed = append(failed, fmt.Sprintf("pattern still present: %s", c.Pattern))
 			}
 		default:
 			// unknown check kinds are ignored (forward-compatible)
@@ -1132,7 +1188,7 @@ func (d *Daemon) finishFailedExecution(sess *sessionstore.Session, task *schedul
 
 func briefAction(a *action) string {
 	switch a.Tool {
-	case "read", "patch", "edit":
+	case "read", "patch", "edit", "add_dir":
 		return a.Tool + " " + a.Path
 	case "search":
 		return "search " + a.Pattern
@@ -1140,6 +1196,17 @@ func briefAction(a *action) string {
 		return "web.fetch " + webFetchHost(a.URL)
 	case "web.search":
 		return "web.search " + brief(a.Query, 80)
+	case "browser.open":
+		if a.BrowserID != "" {
+			return "browser.open navigate " + webFetchHost(a.URL)
+		}
+		return "browser.open " + a.WaitMode
+	case "browser.action":
+		return "browser.action " + browserActionKind(a.Action)
+	case "browser.tabs":
+		return "browser.tabs " + a.TabOperation
+	case "browser.snapshot", "browser.capture", "browser.close":
+		return a.Tool
 	case "run":
 		return "run [" + strings.Join(a.Command, " ") + "]"
 	case "ask_user":
@@ -1168,22 +1235,16 @@ func briefAction(a *action) string {
 // isReadOnlyTool reports whether a tool has no product-side effects. This is a
 // policy classification, not a concurrency guarantee.
 func isReadOnlyTool(tool string) bool {
-	switch tool {
-	case "list", "read", "search", "code.search", "code.symbols", "code.map", "code.def", "code.refs", "code.impact", "todo", "update_plan", "mcp_find":
-		return true
-	}
-	return false
+	descriptor, ok := defaultBuiltinTools.lookup(tool)
+	return ok && (descriptor.Effect == builtinToolEffectRead || descriptor.Effect == builtinToolEffectPlan)
 }
 
 // isParallelBatchTool is deliberately narrower than isReadOnlyTool. Semantic
 // code tools share the serialized kernel RPC connection and may lazily build an
 // index, so running them beside a fast reader creates head-of-line blocking.
 func isParallelBatchTool(tool string) bool {
-	switch tool {
-	case "list", "read", "search":
-		return true
-	}
-	return false
+	descriptor, ok := defaultBuiltinTools.lookup(tool)
+	return ok && descriptor.Parallel == builtinToolParallelReadBatch
 }
 
 // nonParallelBatchTools returns tools that cannot safely enter a parallel batch.
@@ -1214,10 +1275,10 @@ func (d *Daemon) executeBatch(sess *sessionstore.Session, task *scheduler.Execut
 	}
 	dec, err := d.kern.Request(sess.SessionID, "FileRead", sess.WorkspaceRoot, task.RunID)
 	if err != nil {
-		return "error: " + err.Error()
+		return toolFailed("error: "+err.Error(), "governance_error").observationError.modelJSON()
 	}
 	if dec.Decision != "allowed" {
-		return "DENIED: cannot read workspace"
+		return toolDenied("DENIED: cannot read workspace", "policy_denied").observationError.modelJSON()
 	}
 	results := make([]string, len(acts))
 	var wg sync.WaitGroup
@@ -1226,7 +1287,12 @@ func (d *Daemon) executeBatch(sess *sessionstore.Session, task *scheduler.Execut
 		go func(i int, sub action) {
 			defer wg.Done()
 			sub.authorizedRead = dec
-			results[i] = d.executeAction(sess, task, &sub)
+			display, outcome := d.executeActionOutcome(sess, task, &sub)
+			if outcome.observationError != nil {
+				results[i] = outcome.observationError.modelJSON()
+			} else {
+				results[i] = display
+			}
 		}(i, acts[i])
 	}
 	wg.Wait()
@@ -1284,7 +1350,7 @@ func (d *Daemon) executeActionOutcome(sess *sessionstore.Session, task *schedule
 	outcome := d.dispatchActionOutcome(sess, task, act)
 	switch d.activeToolTerminal(task.RunID) {
 	case "cancelled":
-		outcome = toolExecutionOutcome{display: "cancelled", status: "cancelled", errorCategory: "cancelled"}
+		outcome = toolCancelled("cancelled", "cancelled")
 	case "timed_out":
 		outcome = toolTimedOut("approval timed out")
 	}
@@ -1297,17 +1363,8 @@ func (d *Daemon) executeActionOutcome(sess *sessionstore.Session, task *schedule
 }
 
 func planModeBlocksTool(tool string) bool {
-	if isReadOnlyTool(tool) {
-		return false
-	}
-	// Keep non-read exceptions limited to Plan bookkeeping and interaction.
-	// Spawn is safe here because the child inherits the Plan mask before it runs.
-	switch tool {
-	case "todo", "update_plan", "ask_user", "done", "mcp_find", "spawn":
-		return false
-	default:
-		return true
-	}
+	descriptor, ok := defaultBuiltinTools.lookup(tool)
+	return !ok || descriptor.PlanMode != builtinToolPlanAllowed
 }
 
 func (d *Daemon) contextForTask(taskID string) context.Context {
@@ -1330,64 +1387,39 @@ func (d *Daemon) dispatchActionOutcome(sess *sessionstore.Session, task *schedul
 			return toolDenied("DENIED: this subagent cannot call tool "+act.Tool+"; return proposed content in the done summary instead", "tool_restricted")
 		}
 	}
+	return d.dispatchBuiltinActionOutcome(sess, task, act)
+}
+
+// legacyDispatchActionOutcome is the one-release emergency rollback executor.
+// Descriptor and shadow modes remain the default and validation authority.
+func (d *Daemon) legacyDispatchActionOutcome(sess *sessionstore.Session, task *scheduler.ExecutionRun, act *action) toolExecutionOutcome {
 	switch act.Tool {
-	case "run", "patch", "edit", "memory", "mcp", "spawn", "workflow", "best_of_n", "web.fetch", "web.search":
-	default:
-		if err := d.ensureToolCallStarted(act.lifecycleCallID); err != nil {
-			return toolFailed("governance error: "+err.Error(), "audit_persistence_error")
-		}
-	}
-	switch act.Tool {
+	case "add_dir":
+		return d.agentAddDirOutcome(sess, task, act.Path)
 	case "list":
 		return d.listWorkspaceOutcome(sess, task, act.authorizedRead)
 	case "read":
-		if _, ok := parseSkillURI(act.Path); ok {
-			return d.readSkillURI(sess, task, act.Path)
-		}
-		abs := resolveIn(sess.WorkspaceRoot, act.Path)
-		dec, err := d.fileReadDecision(sess, task, abs, act.authorizedRead)
-		if err != nil {
-			return toolFailed("error: "+err.Error(), "governance_error")
-		}
-		if dec.Decision != "allowed" {
-			return toolDenied("DENIED: "+dec.Reason, "policy_denied")
-		}
-		content, err := os.ReadFile(abs)
-		if err != nil {
-			return toolFailed("error: "+err.Error(), "io_error")
-		}
-		d.record(sess.SessionID, "FileRead", task.RunID, "go", map[string]any{"path": abs, "bytes": len(content)}, dec.DecisionID)
-		d.recordRead(sess.SessionID, act.Path, string(content))
-		// Image reads become MediaRefs: bytes go to the artifact store, the
-		// transcript gets only a placeholder line, and a vision-capable model
-		// receives the content via collectRequestMedia on the next turn. A
-		// failed ingest (store quota, oversized object) is an error result
-		// rather than binary dumped into the transcript.
-		if _, isImage := sniffImageMediaType(content); isImage {
-			ref, ierr := ingestImageMedia(d.artifacts, artifact.Scope{SessionID: sess.SessionID}, "read "+act.Path, content)
-			if ierr != nil {
-				return toolFailed("error: "+ierr.Error(), "io_error")
-			}
-			return toolCompletedMedia(ref.placeholder(), ref)
-		}
-		return toolCompleted(string(content))
+		return d.readWorkspaceOutcome(sess, task, act)
 	case "search":
-		dec, err := d.fileReadDecision(sess, task, sess.WorkspaceRoot, act.authorizedRead)
-		if err != nil {
-			return toolFailed("error: "+err.Error(), "governance_error")
-		}
-		if dec.Decision != "allowed" {
-			return toolDenied("DENIED: cannot search workspace", "policy_denied")
-		}
-		matches, err := d.tools.Grep(act.Pattern, sess.WorkspaceRoot)
-		if err != nil {
-			return toolFailed("error: "+err.Error(), "tool_error")
-		}
-		d.record(sess.SessionID, "FileRead", task.RunID, "zig", map[string]any{"resource": sess.WorkspaceRoot, "pattern": act.Pattern, "matches": len(matches)}, dec.DecisionID)
-		if len(matches) == 0 {
-			return toolCompleted("no matches")
-		}
-		return toolCompleted(formatSearchObservation(act.Pattern, matches, sess.WorkspaceRoot))
+		return d.searchWorkspaceOutcome(sess, task, act.Pattern, act.authorizedRead)
+	case "git.status":
+		return d.gitStatusOutcome(d.contextForTask(task.RunID), sess, task, act)
+	case "git.diff":
+		return d.gitDiffOutcome(d.contextForTask(task.RunID), sess, task, act)
+	case "git.log":
+		return d.gitLogOutcome(d.contextForTask(task.RunID), sess, task, act)
+	case "browser.open":
+		return d.browserOpenOutcome(d.contextForTask(task.RunID), sess, task, act)
+	case "browser.snapshot":
+		return d.browserSnapshotOutcome(d.contextForTask(task.RunID), sess, task, act)
+	case "browser.action":
+		return d.browserActionOutcome(d.contextForTask(task.RunID), sess, task, act)
+	case "browser.tabs":
+		return d.browserTabsOutcome(d.contextForTask(task.RunID), sess, task, act)
+	case "browser.capture":
+		return d.browserCaptureOutcome(d.contextForTask(task.RunID), sess, task, act)
+	case "browser.close":
+		return d.browserCloseOutcome(d.contextForTask(task.RunID), sess, task, act)
 	case "web.fetch":
 		return d.agentWebFetchOutcome(sess, task, act.URL)
 	case "web.search":
@@ -1406,6 +1438,12 @@ func (d *Daemon) dispatchActionOutcome(sess *sessionstore.Session, task *schedul
 		return d.mcpFindOutcome(sess, task, act)
 	case "spawn":
 		return d.executeSpawnOutcome(sess, task, act)
+	case "job.list":
+		return builtinJobListHandler(d.contextForTask(task.RunID), d, sess, task, act)
+	case "job.wait":
+		return builtinJobWaitHandler(d.contextForTask(task.RunID), d, sess, task, act)
+	case "job.cancel":
+		return builtinJobCancelHandler(d.contextForTask(task.RunID), d, sess, task, act)
 	case "workflow":
 		return d.executeWorkflowOutcome(sess, task, act)
 	case "best_of_n":
@@ -1418,8 +1456,18 @@ func (d *Daemon) dispatchActionOutcome(sess *sessionstore.Session, task *schedul
 		return d.askUserOutcome(sess, task, act.Prompt, act.Options)
 	case "todo", "update_plan":
 		return d.executeTodoOutcome(sess, task, act)
-	case "code.search", "code.symbols", "code.map", "code.def", "code.refs", "code.impact":
-		return classifyLegacyToolResult(d.dispatchAction(sess, task, act))
+	case "code.search":
+		return classifyLegacyToolResult(d.agentCodeSearch(sess, task, act))
+	case "code.symbols":
+		return classifyLegacyToolResult(d.agentCodeSymbols(sess, task, act))
+	case "code.map":
+		return classifyLegacyToolResult(d.agentCodeMap(sess, task, act))
+	case "code.def":
+		return classifyLegacyToolResult(d.agentCodeDef(sess, task, act))
+	case "code.refs":
+		return classifyLegacyToolResult(d.agentCodeRefs(sess, task, act))
+	case "code.impact":
+		return classifyLegacyToolResult(d.agentCodeImpact(sess, task, act))
 	default:
 		return toolFailed("unknown tool: "+act.Tool, "unknown_tool")
 	}
@@ -1428,111 +1476,16 @@ func (d *Daemon) dispatchActionOutcome(sess *sessionstore.Session, task *schedul
 // dispatchAction runs one tool action through the kernel + toolchain and
 // returns the observation to feed back to the reasoner.
 func (d *Daemon) dispatchAction(sess *sessionstore.Session, task *scheduler.ExecutionRun, act *action) string {
-	switch act.Tool {
-	case "list":
-		return d.listWorkspaceOutcome(sess, task, act.authorizedRead).display
-
-	case "read":
-		if _, ok := parseSkillURI(act.Path); ok {
-			return d.readSkillURI(sess, task, act.Path).display
-		}
-		abs := resolveIn(sess.WorkspaceRoot, act.Path)
-		dec, err := d.fileReadDecision(sess, task, abs, act.authorizedRead)
-		if err != nil {
-			return "error: " + err.Error()
-		}
-		if dec.Decision != "allowed" {
-			return "DENIED: " + dec.Reason
-		}
-		content, err := os.ReadFile(abs)
-		if err != nil {
-			return "error: " + err.Error()
-		}
-		d.record(sess.SessionID, "FileRead", task.RunID, "go",
-			map[string]any{"path": abs, "bytes": len(content)}, dec.DecisionID)
-		d.recordRead(sess.SessionID, act.Path, string(content))
-		// Legacy string path (MCP server adapter): image bytes still go to
-		// the artifact store and the caller gets the placeholder — raw
-		// binary never flows out as a tool result string.
-		if _, isImage := sniffImageMediaType(content); isImage {
-			ref, ierr := ingestImageMedia(d.artifacts, artifact.Scope{SessionID: sess.SessionID}, "read "+act.Path, content)
-			if ierr != nil {
-				return "error: " + ierr.Error()
-			}
-			return ref.placeholder()
-		}
-		return string(content)
-
-	case "search":
-		dec, err := d.fileReadDecision(sess, task, sess.WorkspaceRoot, act.authorizedRead)
-		if err != nil || dec.Decision != "allowed" {
-			return "DENIED: cannot search workspace"
-		}
-		matches, err := d.tools.Grep(act.Pattern, sess.WorkspaceRoot)
-		if err != nil {
-			return "error: " + err.Error()
-		}
-		d.record(sess.SessionID, "FileRead", task.RunID, "zig",
-			map[string]any{"resource": sess.WorkspaceRoot, "pattern": act.Pattern, "matches": len(matches)}, dec.DecisionID)
-		if len(matches) == 0 {
-			return "no matches"
-		}
-		return formatSearchObservation(act.Pattern, matches, sess.WorkspaceRoot)
-
-	case "web.fetch":
-		return d.agentWebFetchOutcome(sess, task, act.URL).display
-	case "web.search":
-		return d.agentWebSearchOutcome(sess, task, act.Query).display
-
-	case "run":
-		if len(act.Command) == 0 {
-			return "error: empty command"
-		}
-		return d.agentRun(sess, task, act.Command)
-
-	case "patch":
-		return d.agentPatch(sess, task, act.Path, act.Content)
-	case "edit":
-		return d.agentEditOutcome(sess, task, act.Path, act.Old, act.New).display
-
-	case "spawn":
-		return d.executeSpawn(sess, task, act)
-
-	case "workflow":
-		return d.executeWorkflow(sess, task, act)
-
-	case "mcp":
-		return d.callMCP(sess, task, act)
-
-	case "memory":
-		return d.agentMemory(sess, task, act)
-
-	case "ask_user":
-		return d.askUser(sess, task, act.Prompt, act.Options)
-	case "todo", "update_plan":
-		return d.executeTodoOutcome(sess, task, act).display
-
-	case "code.search":
-		return d.agentCodeSearch(sess, task, act)
-
-	case "code.symbols":
-		return d.agentCodeSymbols(sess, task, act)
-
-	case "code.map":
-		return d.agentCodeMap(sess, task, act)
-
-	case "code.def":
-		return d.agentCodeDef(sess, task, act)
-
-	case "code.refs":
-		return d.agentCodeRefs(sess, task, act)
-
-	case "code.impact":
-		return d.agentCodeImpact(sess, task, act)
-
-	default:
+	descriptor, ok := d.builtinToolRegistry().lookup(act.Tool)
+	if !ok {
 		return "unknown tool: " + act.Tool
 	}
+	if d.builtinRegistryMode() != builtinToolRegistryDescriptor {
+		return d.legacyDispatchActionOutcome(sess, task, act).display
+	}
+	ctx, cancel := context.WithTimeout(d.contextForTask(task.RunID), descriptor.Timeout)
+	defer cancel()
+	return descriptor.Handler(ctx, d, sess, task, act).display
 }
 
 func (d *Daemon) agentMemory(sess *sessionstore.Session, task *scheduler.ExecutionRun, act *action) string {
@@ -1600,7 +1553,7 @@ func (d *Daemon) agentPatchOutcome(sess *sessionstore.Session, task *scheduler.E
 	if err := d.checkWriteProvenance(sess.SessionID, path, resolveIn(sess.WorkspaceRoot, path)); err != nil {
 		return toolDenied("DENIED: "+err.Error(), "write_provenance_denied")
 	}
-	return d.proposeAndApplyPatch(sess, task, "agent edit", []kernel.FileChange{{Path: path, NewContent: content}})
+	return d.proposeAndApplyPatch(sess, task, "agent edit", []kernel.FileChange{{Path: path, NewContent: content}}, nil)
 }
 
 func (d *Daemon) agentEditOutcome(sess *sessionstore.Session, task *scheduler.ExecutionRun, path, old, new string) toolExecutionOutcome {
@@ -1611,18 +1564,19 @@ func (d *Daemon) agentEditOutcome(sess *sessionstore.Session, task *scheduler.Ex
 		return toolFailed("error: edit old must be a non-empty exact span", "invalid_arguments")
 	}
 	abs := resolveIn(sess.WorkspaceRoot, path)
-	if err := d.checkWriteProvenance(sess.SessionID, path, abs); err != nil {
-		return toolDenied("DENIED: "+err.Error(), "write_provenance_denied")
-	}
 	current, err := os.ReadFile(abs)
 	if err != nil {
 		return toolFailed("error: "+err.Error(), "io_error")
 	}
-	next, err := materializeEdit(old, new, current)
+	next, spanAfter, err := d.materializeAuthorizedEdit(sess.SessionID, path, current, old, new)
 	if err != nil {
 		return toolDenied("DENIED: "+err.Error(), "edit_span_rejected")
 	}
-	return d.proposeAndApplyPatch(sess, task, "agent edit", []kernel.FileChange{{Path: path, NewContent: string(next)}})
+	spanProvenance := map[string]readProvenance(nil)
+	if spanAfter != nil {
+		spanProvenance = map[string]readProvenance{path: *spanAfter}
+	}
+	return d.proposeAndApplyPatch(sess, task, "agent edit", []kernel.FileChange{{Path: path, NewContent: string(next)}}, spanProvenance)
 }
 
 // proposeAndApplyPatch is the single shared path that ever calls
@@ -1642,7 +1596,7 @@ func (d *Daemon) agentEditOutcome(sess *sessionstore.Session, task *scheduler.Ex
 // provenance because best-of-n's winner content was authored by a candidate
 // session, not sess, so the orchestrator seeds provenance explicitly (see
 // bestofn.go).
-func (d *Daemon) proposeAndApplyPatch(sess *sessionstore.Session, task *scheduler.ExecutionRun, reason string, files []kernel.FileChange) toolExecutionOutcome {
+func (d *Daemon) proposeAndApplyPatch(sess *sessionstore.Session, task *scheduler.ExecutionRun, reason string, files []kernel.FileChange, spanProvenance map[string]readProvenance) toolExecutionOutcome {
 	if len(files) == 0 {
 		return toolFailed("error: patch needs at least one file", "invalid_arguments")
 	}
@@ -1697,9 +1651,19 @@ func (d *Daemon) proposeAndApplyPatch(sess *sessionstore.Session, task *schedule
 	var b strings.Builder
 	fmt.Fprintf(&b, "patch %s applied to %s (status=%s, rollbackable)", applied.PatchID, label, applied.Status)
 	for _, f := range files {
-		// The edit is now the on-disk truth; record it so a follow-up edit in
-		// the same run isn't flagged as a blind overwrite.
-		d.recordRead(sess.SessionID, f.Path, f.NewContent)
+		if span, ok := spanProvenance[f.Path]; ok {
+			// A span edit proves only its updated observed window. Never upgrade
+			// that authority to a whole-file read after applying the patch.
+			if len(span.Content) == 0 || span.LineCount == 0 {
+				d.clearReadProvenance(sess.SessionID, f.Path)
+			} else {
+				d.replaceWithReadSpan(sess.SessionID, f.Path, span)
+			}
+		} else {
+			// Whole-file patches and best-of-n winners authored the complete
+			// post-image, so follow-up writes may use whole authority.
+			d.recordRead(sess.SessionID, f.Path, f.NewContent)
+		}
 		// Post-edit diagnostics: surface compile/parse errors this edit
 		// introduced, so the agent can self-correct on the next turn instead
 		// of turns later.
@@ -1718,6 +1682,7 @@ func (d *Daemon) proposeAndApplyPatch(sess *sessionstore.Session, task *schedule
 	// Keep the code index in step with the write (best-effort; an index error
 	// never fails the patch).
 	d.invalidateIndex(sess.SessionID, paths)
+	d.invalidateListSearchMemo(sess.SessionID)
 	return toolCompleted(b.String())
 }
 
@@ -1774,7 +1739,11 @@ func (d *Daemon) agentRunOutcome(sess *sessionstore.Session, task *scheduler.Exe
 
 	risk, _ := d.kern.ClassifyCommand(classifyAs)
 	commandID := sessionstore.NewID("cmd")
-	started := map[string]any{"command_id": commandID, "command": command, "cwd": sess.WorkspaceRoot, "risk_level": risk}
+	sandbox := d.commandSandbox(sess)
+	started := map[string]any{"command_id": commandID, "command": command, "cwd": sess.WorkspaceRoot, "risk_level": risk, "sandbox": sandbox}
+	if tenantSessionRequiresSandbox(sess) {
+		started["sandbox_reason"] = "tenant"
+	}
 	if mutatesPackages(classifyAs) {
 		started["package_mutation"] = true
 	}
@@ -1782,7 +1751,7 @@ func (d *Daemon) agentRunOutcome(sess *sessionstore.Session, task *scheduler.Exe
 		return toolFailed("governance error: command start was not persisted", "audit_persistence_error")
 	}
 
-	result, err := d.tools.RunContext(d.contextForTask(task.RunID), canon.Argv, sess.WorkspaceRoot, 2*time.Minute, d.egressEnv(), d.sandbox.Load())
+	result, err := d.tools.RunContext(d.contextForTask(task.RunID), canon.Argv, sess.WorkspaceRoot, 2*time.Minute, d.egressEnv(), sandbox)
 	// A mutating-capable command may have rewritten files the patch hooks
 	// never see (git checkout, sed -i, codegen): drop the built-index flag so
 	// the next code.* call re-syncs against current disk (conservative even
@@ -1791,11 +1760,12 @@ func (d *Daemon) agentRunOutcome(sess *sessionstore.Session, task *scheduler.Exe
 		d.indexBuilt.Delete(sess.SessionID)
 		d.indexSnapshot.Delete(sess.SessionID)
 		d.markIndexStateIncomplete(sess.WorkspaceRoot)
+		d.invalidateListSearchMemo(sess.SessionID)
 	}
 	if err != nil {
 		d.record(sess.SessionID, "CommandExited", task.RunID, "zig", map[string]any{"command_id": commandID, "exit_code": -1, "error": err.Error()}, "")
 		if errors.Is(err, context.Canceled) {
-			return toolExecutionOutcome{display: "command cancelled", status: "cancelled", errorCategory: "operator_cancelled"}
+			return toolCancelled("command cancelled", "operator_cancelled")
 		}
 		return toolFailed("command error: "+err.Error(), "runner_error")
 	}
@@ -1861,7 +1831,7 @@ func (d *Daemon) callMCPOutcome(sess *sessionstore.Session, task *scheduler.Exec
 	out, err := d.mcp.CallPublicContext(d.contextForTask(task.RunID), act.MCPServer, act.MCPTool, act.Args)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			return toolExecutionOutcome{display: "mcp call cancelled", status: "cancelled", errorCategory: "operator_cancelled"}
+			return toolCancelled("mcp call cancelled", "operator_cancelled")
 		}
 		return toolFailed("mcp error: "+err.Error(), "mcp_error")
 	}
@@ -1907,7 +1877,60 @@ func sanitizeModelResponseForAudit(raw string) string {
 func sanitizeSensitiveActionMap(obj map[string]any) bool {
 	memoryRedacted := sanitizeMemoryActionMap(obj)
 	webRedacted := sanitizeWebFetchActionMap(obj)
-	return memoryRedacted || webRedacted
+	browserRedacted := sanitizeBrowserActionMap(obj)
+	return memoryRedacted || webRedacted || browserRedacted
+}
+
+func sanitizeBrowserActionMap(obj map[string]any) bool {
+	redacted := false
+	if tool, _ := obj["tool"].(string); strings.HasPrefix(tool, "browser.") {
+		fields := obj
+		if arguments, ok := obj["arguments"].(map[string]any); ok {
+			fields = arguments
+		}
+		if rawURL, ok := fields["url"]; ok {
+			host := webFetchHost(fmt.Sprint(rawURL))
+			fields["url"] = "[redacted]"
+			if host != "" {
+				fields["host"] = host
+			}
+		}
+		if tool == "browser.action" {
+			if actionMap, ok := fields["action"].(map[string]any); ok {
+				redactBrowserActionFields(actionMap)
+			}
+		}
+		if origins, ok := fields["approved_origins"].([]any); ok {
+			fields["approved_origin_count"] = len(origins)
+			delete(fields, "approved_origins")
+		}
+		redacted = true
+	}
+	if nested, ok := obj["action"].(map[string]any); ok && sanitizeBrowserActionMap(nested) {
+		redacted = true
+	}
+	if actions, ok := obj["actions"].([]any); ok {
+		for _, item := range actions {
+			if nested, ok := item.(map[string]any); ok && sanitizeBrowserActionMap(nested) {
+				redacted = true
+			}
+		}
+	}
+	return redacted
+}
+
+func redactBrowserActionFields(obj map[string]any) {
+	if _, ok := obj["text"]; ok {
+		obj["text"] = "[redacted]"
+	}
+	if values, ok := obj["values"].([]any); ok {
+		obj["value_count"] = len(values)
+		delete(obj, "values")
+	}
+	if files, ok := obj["files"].([]any); ok {
+		obj["file_count"] = len(files)
+		delete(obj, "files")
+	}
 }
 
 func sanitizeWebFetchActionMap(obj map[string]any) bool {

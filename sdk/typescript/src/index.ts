@@ -1,10 +1,10 @@
-/** Carina JSON-RPC SDK for Runtime 0.8.42. */
+/** Carina JSON-RPC SDK for Runtime 0.9.0. */
 import { createConnection, type Socket } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 
-export const compatibleRuntimeVersion = '0.8.42'
+export const compatibleRuntimeVersion = '0.9.0'
 
 export interface MediaRef {
   artifact_id: string
@@ -15,6 +15,7 @@ export interface MediaRef {
 
 export interface Session {
   session_id: string
+  tenant_id?: string
   workspace_id: string
   workspace_root: string
   status: 'active' | 'paused' | 'closed'
@@ -283,11 +284,15 @@ export class CarinaClient {
     })
   }
 
-  createSession(workspaceRoot: string, profile = 'safe-edit'): Promise<Session> {
-    return this.call('session.create', { workspace_root: workspaceRoot, profile })
+  createSession(workspaceRoot: string, profile = 'safe-edit', tenantId?: string): Promise<Session> {
+    return this.call('session.create', { workspace_root: workspaceRoot, profile, ...(tenantId ? { tenant_id: tenantId } : {}) })
   }
-  getSession(sessionId: string): Promise<Session> { return this.call('session.get', { session_id: sessionId }) }
-  listSessions(): Promise<Session[]> { return this.call('session.list') }
+  getSession(sessionId: string, tenantId?: string): Promise<Session> {
+    return this.call('session.get', { session_id: sessionId, ...(tenantId ? { tenant_id: tenantId } : {}) })
+  }
+  listSessions(tenantId?: string): Promise<Session[]> {
+    return this.call('session.list', tenantId ? { tenant_id: tenantId } : {})
+  }
   submitTask(sessionId: string, prompt: string, clientSubmissionId?: string, inputMediaRefs: MediaRef[] = []): Promise<Task> {
     if (inputMediaRefs.length > 4) return Promise.reject(new RangeError('input media refs must contain at most 4 images'))
     return this.call('execution.start', { session_id: sessionId, prompt, ...(clientSubmissionId ? { client_submission_id: clientSubmissionId } : {}), ...(inputMediaRefs.length ? { input_media_refs: inputMediaRefs } : {}) })

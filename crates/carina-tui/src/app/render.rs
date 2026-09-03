@@ -14,7 +14,7 @@ use ratatui::widgets::{
     StatefulWidgetRef, Wrap,
 };
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthStr;
 use xai_ratatui_textarea::wrapping::{RtOptions, word_wrap_line};
 
 use super::{
@@ -2754,17 +2754,36 @@ impl App {
             self.ui_locale(),
         );
         let (_, model, _) = self.product_header_metadata();
-        let mode = if self
+        let plan_mode = self
             .active_session
             .as_ref()
-            .is_some_and(|session| session.plan_mode)
-        {
+            .is_some_and(|session| session.plan_mode);
+        let paused = self
+            .active_session
+            .as_ref()
+            .is_some_and(|session| session.execution_status == "paused");
+        let mode = if plan_mode {
             tr(locale, MessageId::ModePlanLabel)
         } else {
             tr(locale, MessageId::ModeBuildLabel)
         };
         let product_menu_open = matches!(self.overlays.active(), Some(Overlay::ProductMenu(_)));
+        let inbox_label = (self.inbox_pending > 0).then(|| {
+            tr_format(
+                locale,
+                MessageId::InboxReady,
+                &[("count", &self.inbox_pending.to_string())],
+            )
+        });
         let mut actions = Vec::new();
+        if let Some(label) = inbox_label.as_deref() {
+            actions.push(ConversationHeaderAction {
+                label,
+                action: Action::OpenInbox,
+                component: ComponentId(9_108),
+                tone: ConversationHeaderTone::Muted,
+            });
+        }
         if self
             .active_session
             .as_ref()
@@ -2785,10 +2804,12 @@ impl App {
             label: mode,
             action: Action::TogglePlanMode,
             component: ComponentId(9_106),
-            tone: if product_menu_open {
+            tone: if product_menu_open || paused {
                 ConversationHeaderTone::Muted
-            } else {
+            } else if plan_mode {
                 ConversationHeaderTone::Active
+            } else {
+                ConversationHeaderTone::Muted
             },
         });
         actions.push(ConversationHeaderAction {
@@ -2851,7 +2872,7 @@ impl App {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(self.theme.glyphs.outer_border_type())
-            .border_style(self.theme.focus())
+            .border_style(self.theme.overlay_frame())
             .title(format!(
                 " {} ",
                 tr(self.ui_locale(), MessageId::ProductMenu)
@@ -3024,14 +3045,6 @@ impl App {
             let user_band = cell_kind == SemanticCellKind::User && !block.selected;
             let mut label_style = match cell_kind {
                 SemanticCellKind::User => self.theme.transcript_user(),
-                SemanticCellKind::Assistant
-                    if block.assistant_phase
-                        == Some(crate::rpc::AssistantMessagePhase::FinalAnswer) =>
-                {
-                    self.theme
-                        .transcript_assistant()
-                        .add_modifier(Modifier::BOLD)
-                }
                 SemanticCellKind::Assistant => self.theme.transcript_metadata(),
                 SemanticCellKind::Thinking => self.theme.transcript_thinking(),
                 SemanticCellKind::Tool | SemanticCellKind::ToolGroup | SemanticCellKind::Patch
@@ -3086,6 +3099,8 @@ impl App {
                 link: self.theme.transcript_link(),
                 headings: std::array::from_fn(|index| self.theme.heading(index + 1)),
                 live: self.theme.transcript_tool(),
+                markdown_accent: self.theme.transcript_markdown_accent(),
+                muted: self.theme.muted(),
             };
             let render_options = TranscriptRenderOptions {
                 locale,
@@ -3584,7 +3599,7 @@ impl App {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(self.theme.glyphs.outer_border_type())
-            .border_style(self.theme.focus())
+            .border_style(self.theme.overlay_frame())
             .style(Style::default())
             .title(format!(
                 " {} {sep} {} ",
@@ -3736,7 +3751,7 @@ impl App {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(self.theme.glyphs.outer_border_type())
-            .border_style(self.theme.focus())
+            .border_style(Style::default().fg(self.theme.border))
             .title(format!(
                 " {} ",
                 if self.command_registry_stale {
@@ -3800,15 +3815,21 @@ impl App {
                             command.name,
                             width = layout_contract::SLASH_COMMAND_LABEL_WIDTH
                         ),
-                        Style::default().fg(self.theme.accent),
+                        style,
                     ),
-                    Span::raw(if command.source == "carina" {
-                        description
-                    } else {
-                        format!("{description} {} {}", self.theme.glyphs.separator(), source)
-                    }),
-                ]))
-                .style(style),
+                    Span::styled(
+                        if command.source == "carina" {
+                            description
+                        } else {
+                            format!("{description} {} {}", self.theme.glyphs.separator(), source)
+                        },
+                        if index == self.slash_selected || self.interactions.hovered(component) {
+                            style
+                        } else {
+                            Style::default().fg(self.theme.muted)
+                        },
+                    ),
+                ])),
                 row,
             );
             self.interactions.register(HitRegion {
@@ -3850,7 +3871,7 @@ impl App {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(self.theme.glyphs.outer_border_type())
-            .border_style(self.theme.focus())
+            .border_style(Style::default().fg(self.theme.border))
             .title(format!(" {} ", tr(locale, MessageId::WorkspaceFiles)))
             .style(Style::default());
         let inner = block.inner(area);
@@ -3997,7 +4018,7 @@ impl App {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(self.theme.glyphs.outer_border_type())
-            .border_style(self.theme.focus())
+            .border_style(self.theme.overlay_frame())
             .title(format!(" {} ", tr(locale, MessageId::PromptHistory)))
             .style(Style::default());
         let inner = block.inner(area);
@@ -4753,7 +4774,7 @@ impl App {
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .border_type(self.theme.glyphs.outer_border_type())
-                    .border_style(self.theme.focus())
+                    .border_style(self.theme.overlay_frame())
                     .title(format!(" {} ", tr(locale, MessageId::QuestionTitle)))
                     .style(Style::default());
                 let inner = block.inner(popup);
@@ -4820,14 +4841,14 @@ impl App {
                         } else {
                             format!("  {}", option.description)
                         };
+                        let prefix = if index == question.selected {
+                            self.theme.glyphs.selected()
+                        } else {
+                            "  "
+                        };
                         frame.render_widget(
-                            Paragraph::new(format!(
-                                "{} {}{}",
-                                if index == question.selected { ">" } else { " " },
-                                option.label,
-                                description
-                            ))
-                            .style(style),
+                            Paragraph::new(format!("{prefix}{}{description}", option.label))
+                                .style(style),
                             row,
                         );
                         self.interactions.register(HitRegion {
@@ -4884,7 +4905,7 @@ impl App {
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .border_type(self.theme.glyphs.outer_border_type())
-                    .border_style(self.theme.focus())
+                    .border_style(self.theme.overlay_frame())
                     .title(format!(" {} ", tr(locale, MessageId::PlanReview)))
                     .style(Style::default());
                 let inner = block.inner(popup);
@@ -5049,8 +5070,8 @@ impl App {
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .border_type(self.theme.glyphs.outer_border_type())
-                    .border_style(self.theme.focus())
-                    .title(" Doctor ")
+                    .border_style(self.theme.overlay_frame())
+                    .title(format!(" {} ", tr(locale, MessageId::DoctorTitle)))
                     .style(Style::default());
                 let inner = block.inner(popup).inner(Margin::new(2, 1));
                 frame.render_widget(block, popup);
@@ -5124,7 +5145,7 @@ impl App {
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .border_type(self.theme.glyphs.outer_border_type())
-                    .border_style(self.theme.focus())
+                    .border_style(self.theme.overlay_frame())
                     .title(format!(" {help_title} "))
                     .style(Style::default());
                 let inner = block.inner(popup).inner(Margin::new(2, 1));
@@ -5192,7 +5213,7 @@ impl App {
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .border_type(self.theme.glyphs.outer_border_type())
-                    .border_style(self.theme.focus())
+                    .border_style(self.theme.overlay_frame())
                     .title(format!(" {} ", tr(locale, MessageId::Status)))
                     .style(Style::default());
                 let inner = block.inner(popup).inner(Margin::new(2, 1));
@@ -5336,138 +5357,126 @@ impl App {
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .border_type(self.theme.glyphs.outer_border_type())
-                    .border_style(self.theme.focus())
+                    .border_style(self.theme.overlay_frame())
                     .title(format!(" {} ", context_title(locale)))
                     .style(Style::default());
                 let inner = block.inner(popup).inner(Margin::new(2, 1));
                 frame.render_widget(block, popup);
                 let tokens = &context.model_context_tokens;
                 let policy = &context.compaction_policy;
-                let estimate = if tokens.estimated || tokens.estimated_limit {
-                    " est."
-                } else {
-                    ""
-                };
+                let used = crate::render_contract::format_tokens(tokens.tokens);
+                let limit = crate::render_contract::format_tokens(tokens.limit_tokens);
+                let percent =
+                    crate::render_contract::format_percent(f64::from(tokens.used_percent));
+                let mut usage = format!(
+                    "{}  {used} / {limit}  {percent}",
+                    tr(locale, MessageId::ChromeContext)
+                );
+                if tokens.estimated || tokens.estimated_limit {
+                    usage.push_str(" (");
+                    usage.push_str(tr(locale, MessageId::ContextEstimated));
+                    usage.push(')');
+                }
                 let mut body = vec![
                     Line::from(Span::styled(
-                        format!(
-                            "ctx  {} / {}  {}{}",
-                            crate::render_contract::format_tokens(tokens.tokens),
-                            crate::render_contract::format_tokens(tokens.limit_tokens),
-                            crate::render_contract::format_percent(f64::from(tokens.used_percent)),
-                            estimate
-                        ),
+                        usage,
                         context_style_for_percent(
                             tokens.used_percent,
                             &tokens.threshold,
                             self.theme,
                         ),
                     )),
-                    Line::from(format!(
-                        "window {}  {}  reserve {}  {}  trigger {}",
-                        crate::render_contract::format_tokens(policy.window_tokens),
-                        self.theme.glyphs.separator(),
-                        crate::render_contract::format_tokens(policy.reserve_tokens),
-                        self.theme.glyphs.separator(),
-                        crate::render_contract::format_tokens(policy.trigger_tokens),
-                    )),
-                    Line::from(format!(
-                        "policy {}  {}  source {}",
-                        fallback_label(&policy.policy_version),
-                        self.theme.glyphs.separator(),
-                        fallback_label(&policy.metadata_source),
+                    Line::from({
+                        let window = crate::render_contract::format_tokens(policy.window_tokens);
+                        let reserve = crate::render_contract::format_tokens(policy.reserve_tokens);
+                        let trigger = crate::render_contract::format_tokens(policy.trigger_tokens);
+                        tr_format(
+                            locale,
+                            MessageId::ContextWindowLine,
+                            &[
+                                ("window", window.as_str()),
+                                ("reserve", reserve.as_str()),
+                                ("trigger", trigger.as_str()),
+                            ],
+                        )
+                    }),
+                    Line::from(tr_format(
+                        locale,
+                        MessageId::ContextPolicyLine,
+                        &[
+                            ("policy", fallback_label(&policy.policy_version)),
+                            ("source", fallback_label(&policy.metadata_source)),
+                        ],
                     )),
                     Line::from(""),
-                    Line::from(format!(
-                        "checkpoint  {}  {} bytes  {} turns  {} compactions",
-                        if context.checkpoint.available {
-                            "ready"
-                        } else {
-                            "unavailable"
-                        },
-                        context.checkpoint.transcript_bytes,
-                        context.checkpoint.turn_count,
-                        context.checkpoint.compaction_count,
-                    )),
+                    Line::from(if context.checkpoint.available {
+                        let turns = context.checkpoint.turn_count.to_string();
+                        let compactions = context.checkpoint.compaction_count.to_string();
+                        tr_format(
+                            locale,
+                            MessageId::ContextCheckpointReady,
+                            &[
+                                ("turns", turns.as_str()),
+                                ("compactions", compactions.as_str()),
+                            ],
+                        )
+                    } else {
+                        tr(locale, MessageId::ContextCheckpointMissing).to_owned()
+                    }),
                 ];
                 let ledger = &context.ledger;
                 if ledger.available || !ledger.cache.is_empty() {
                     body.push(Line::from(""));
-                    body.push(Line::from(format!(
-                        "ledger  cache {}  {}  {} est. tokens",
-                        fallback_label(&ledger.cache),
-                        fallback_label(&ledger.estimate_method),
-                        crate::render_contract::format_tokens(
-                            ledger.model_visible_tokens_estimated
-                        ),
+                    let visible = crate::render_contract::format_tokens(
+                        ledger.model_visible_tokens_estimated,
+                    );
+                    body.push(Line::from(tr_format(
+                        locale,
+                        MessageId::ContextCacheLine,
+                        &[
+                            ("cache", fallback_label(&ledger.cache)),
+                            ("tokens", visible.as_str()),
+                        ],
                     )));
-                    if !ledger.layers.is_empty() {
-                        let layers = ledger
-                            .layers
-                            .iter()
-                            .map(|layer| {
-                                format!(
-                                    "{} {}B/{}",
-                                    layer.id,
-                                    crate::render_contract::format_tokens(layer.bytes),
-                                    fallback_label(&layer.cache)
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                            .join("  ");
-                        body.push(Line::from(format!("layers  {layers}")));
-                    }
-                    body.push(Line::from(format!(
-                        "turns  elided {}  pinned {}  visible {} bytes",
-                        ledger.elided_turns.len(),
-                        ledger.pinned_turns.len(),
-                        ledger.model_visible_bytes,
-                    )));
-                    if !ledger.model_visible_sha256.is_empty() {
-                        body.push(Line::from(format!(
-                            "visible  {}",
-                            short_hash(&ledger.model_visible_sha256)
-                        )));
-                    }
-                } else if !ledger.reason.is_empty() {
-                    body.push(Line::from(""));
-                    body.push(Line::from(format!("ledger  {}", ledger.reason)));
                 }
                 if let Some(receipt) = &context.recent_receipt {
-                    body.extend([
-                        Line::from(""),
-                        Line::from(format!(
-                            "receipt  {}  pressure {:.0}%  removed {}  verbatim {}",
-                            fallback_label(&receipt.mode),
-                            receipt.pressure_before * 100.0,
-                            receipt.removed_turns,
-                            receipt.kept_turn_indices.len(),
-                        )),
-                        Line::from(format!(
-                            "hash  pre {}  summary {}  kept {}",
-                            short_hash(&receipt.preimage_sha256),
-                            short_hash(&receipt.summary_sha256),
-                            short_hash(&receipt.kept_sha256),
-                        )),
-                        Line::from(format!("key files  {}", receipt.key_files.join(", "))),
-                    ]);
-                    if receipt.summarizer_failures > 0 {
-                        let circuit = if receipt.summarizer_failures >= 3
-                            || ledger.summarizer_circuit == "open"
-                        {
-                            "  circuit open"
-                        } else {
-                            ""
-                        };
-                        body.push(Line::from(format!(
-                            "summarizer  {} fail(s){}",
-                            receipt.summarizer_failures, circuit
+                    let pressure = format!("{:.0}", receipt.pressure_before * 100.0);
+                    let removed = receipt.removed_turns.to_string();
+                    let kept = receipt.kept_turn_indices.len().to_string();
+                    body.push(Line::from(""));
+                    body.push(Line::from(tr_format(
+                        locale,
+                        MessageId::ContextReceiptLine,
+                        &[
+                            ("mode", fallback_label(&receipt.mode)),
+                            ("pressure", pressure.as_str()),
+                            ("removed", removed.as_str()),
+                            ("kept", kept.as_str()),
+                        ],
+                    )));
+                    if !receipt.key_files.is_empty() {
+                        let files = receipt.key_files.join(", ");
+                        body.push(Line::from(tr_format(
+                            locale,
+                            MessageId::ContextKeyFilesLine,
+                            &[("files", files.as_str())],
                         )));
+                    }
+                    if receipt.summarizer_failures > 0 {
+                        let count = receipt.summarizer_failures.to_string();
+                        body.push(Line::from(tr_format(
+                            locale,
+                            MessageId::ContextSummaryFailed,
+                            &[("count", count.as_str())],
+                        )));
+                        if receipt.summarizer_failures >= 3 || ledger.summarizer_circuit == "open" {
+                            body.push(Line::from(tr(locale, MessageId::ContextSummaryPaused)));
+                        }
                     }
                 }
                 body.push(Line::from(""));
                 body.push(Line::from(Span::styled(
-                    "R refresh  Enter/Esc close",
+                    tr(locale, MessageId::StatusHint),
                     Style::default().fg(self.theme.muted),
                 )));
                 frame.render_widget(
@@ -5487,7 +5496,7 @@ impl App {
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .border_type(self.theme.glyphs.outer_border_type())
-                    .border_style(self.theme.focus())
+                    .border_style(self.theme.overlay_frame())
                     .title(format!(" {} ", tr(locale, MessageId::GoalTitle)))
                     .style(Style::default());
                 let inner = block.inner(popup).inner(Margin::new(2, 1));
@@ -5539,7 +5548,7 @@ impl App {
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .border_type(self.theme.glyphs.outer_border_type())
-                    .border_style(self.theme.focus())
+                    .border_style(self.theme.overlay_frame())
                     .title(format!(" {} ", tr(locale, MessageId::BtwTitle)))
                     .style(Style::default());
                 let inner = block.inner(popup).inner(Margin::new(2, 1));
@@ -5577,7 +5586,7 @@ impl App {
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .border_type(self.theme.glyphs.outer_border_type())
-                    .border_style(self.theme.focus())
+                    .border_style(self.theme.overlay_frame())
                     .title(format!(" {} ", tr(locale, MessageId::AgentDashboard)))
                     .style(Style::default());
                 let inner = block.inner(popup).inner(Margin::new(1, 1));
@@ -5800,7 +5809,7 @@ impl App {
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .border_type(self.theme.glyphs.outer_border_type())
-                    .border_style(self.theme.focus())
+                    .border_style(self.theme.overlay_frame())
                     .title(format!(" @{} ", viewer.path))
                     .style(Style::default());
                 let inner = block.inner(popup).inner(Margin::new(1, 0));
@@ -5992,7 +6001,7 @@ impl App {
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .border_type(self.theme.glyphs.outer_border_type())
-                    .border_style(self.theme.focus())
+                    .border_style(self.theme.overlay_frame())
                     .title(format!(" {} ", tr(locale, MessageId::PluginsTitle)))
                     .style(Style::default());
                 let inner = block.inner(popup).inner(Margin::new(1, 1));
@@ -6113,6 +6122,69 @@ impl App {
                     columns[1],
                 );
             }
+            Overlay::Inbox(inbox) => {
+                let popup = centered(
+                    area,
+                    layout_contract::QUESTION_POPUP.0,
+                    layout_contract::QUESTION_POPUP.1,
+                );
+                frame.render_widget(Clear, popup);
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(self.theme.glyphs.outer_border_type())
+                    .border_style(Style::default().fg(self.theme.muted))
+                    .title(format!(" {} ", tr(locale, MessageId::InboxTitle)))
+                    .style(Style::default());
+                let inner = block.inner(popup);
+                frame.render_widget(block, popup);
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(layout_contract::SECTION_HEADER_HEIGHT),
+                        Constraint::Min(layout_contract::QUESTION_BODY_MIN_HEIGHT),
+                        Constraint::Length(layout_contract::CONTROL_HEIGHT),
+                    ])
+                    .split(inner);
+                frame.render_widget(
+                    Paragraph::new(inbox.title.as_str())
+                        .style(self.theme.focus().add_modifier(Modifier::BOLD))
+                        .wrap(Wrap { trim: false }),
+                    chunks[0],
+                );
+                let mut body = vec![
+                    Line::from(Span::styled(
+                        inbox.why.as_str(),
+                        Style::default().fg(self.theme.text),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        inbox.done.as_str(),
+                        Style::default().fg(self.theme.muted),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        inbox.propose.as_str(),
+                        Style::default().fg(self.theme.text),
+                    )),
+                    Line::from(Span::styled(
+                        inbox.risk.as_str(),
+                        Style::default().fg(self.theme.muted),
+                    )),
+                ];
+                if !inbox.error.is_empty() {
+                    body.push(Line::from(""));
+                    body.push(Line::from(Span::styled(
+                        inbox.error.as_str(),
+                        Style::default().fg(self.theme.warning),
+                    )));
+                }
+                frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), chunks[1]);
+                frame.render_widget(
+                    Paragraph::new(tr(locale, MessageId::InboxHint))
+                        .style(Style::default().fg(self.theme.muted)),
+                    chunks[2],
+                );
+            }
             Overlay::Queue(queue) => {
                 let popup = centered(area, 72, 22);
                 frame.render_widget(Clear, popup);
@@ -6142,16 +6214,18 @@ impl App {
                 } else if !queue.error.is_empty() {
                     queue.error.clone()
                 } else {
-                    format!(
-                        "{}  {}  n={}",
-                        queue.run_id,
-                        if queue.soft_interrupt_pending {
-                            "soft-interrupt"
-                        } else {
-                            "idle-control"
-                        },
-                        queue.items.len()
-                    )
+                    let count = queue.items.len().to_string();
+                    let waiting = tr_format(
+                        locale,
+                        MessageId::QueueWaiting,
+                        &[("count", count.as_str())],
+                    );
+                    let state = if queue.soft_interrupt_pending {
+                        tr(locale, MessageId::QueueNextWaits)
+                    } else {
+                        tr(locale, MessageId::QueueReady)
+                    };
+                    format!("{waiting}  {}  {state}", self.theme.glyphs.separator())
                 };
                 frame.render_widget(
                     Paragraph::new(header)
@@ -6169,17 +6243,16 @@ impl App {
                     let mut lines = Vec::new();
                     for (index, item) in queue.items.iter().enumerate() {
                         let marker = if index == queue.selected {
-                            self.theme.glyphs.selected_cell()
+                            self.theme.glyphs.selected()
                         } else {
-                            " "
+                            "  "
                         };
-                        let priority = if item.priority.is_empty() {
-                            "normal"
+                        let preview = item.preview.trim();
+                        let row = if preview.is_empty() {
+                            marker.to_owned()
                         } else {
-                            item.priority.as_str()
+                            format!("{marker}{preview}")
                         };
-                        let row =
-                            format!("{marker} [{priority}] {}  {}", item.steer_id, item.preview);
                         let style = if index == queue.selected {
                             self.theme.selected()
                         } else {
@@ -6214,7 +6287,7 @@ impl App {
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .border_type(self.theme.glyphs.outer_border_type())
-                    .border_style(self.theme.focus())
+                    .border_style(self.theme.overlay_frame())
                     .title(format!(" {} ", tr(locale, MessageId::ChangesWorkbench)))
                     .style(Style::default());
                 let inner = block.inner(popup).inner(Margin::new(1, 1));
@@ -6381,7 +6454,7 @@ impl App {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(self.theme.glyphs.outer_border_type())
-            .border_style(self.theme.focus())
+            .border_style(self.theme.overlay_frame())
             .title(format!(" {} ", tr(locale, MessageId::ToolOutputTitle)));
         let inner = block.inner(area).inner(Margin::new(1, 0));
         frame.render_widget(block, area);
@@ -6628,7 +6701,7 @@ impl App {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(self.theme.glyphs.outer_border_type())
-            .border_style(self.theme.focus())
+            .border_style(self.theme.overlay_frame())
             .title(format!(" {title} "))
             .style(Style::default());
         let inner = block.inner(popup);
@@ -7159,7 +7232,7 @@ impl App {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(self.theme.glyphs.outer_border_type())
-            .border_style(self.theme.focus())
+            .border_style(self.theme.overlay_frame())
             .title(format!(" {} ", tr(locale, MessageId::ChangesWorkbench)));
         let inner = block.inner(popup).inner(Margin::new(1, 0));
         frame.render_widget(block, popup);
@@ -7718,25 +7791,7 @@ impl App {
     }
 
     fn truncate_patch_reference(&self, value: &str, max_width: usize) -> String {
-        if UnicodeWidthStr::width(value) <= max_width {
-            return value.to_owned();
-        }
-        let ellipsis = self.theme.glyphs.ellipsis();
-        if max_width < UnicodeWidthStr::width(ellipsis) {
-            return String::new();
-        }
-        let content_width = max_width.saturating_sub(UnicodeWidthStr::width(ellipsis));
-        let mut suffix = String::new();
-        let mut suffix_width = 0;
-        for character in value.chars().rev() {
-            let width = UnicodeWidthChar::width(character).unwrap_or_default();
-            if suffix_width + width > content_width {
-                break;
-            }
-            suffix.insert(0, character);
-            suffix_width += width;
-        }
-        format!("{ellipsis}{suffix}")
+        crate::render_contract::truncate_reference_identity(value, max_width, self.theme.glyphs)
     }
 
     fn render_patch_review_divider(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -8557,6 +8612,8 @@ struct TranscriptStyles {
     link: Style,
     headings: [Style; 6],
     live: Style,
+    markdown_accent: Style,
+    muted: Style,
 }
 
 fn paint_occupied_user_band(lines: &mut [Line<'static>], band: Style) {
@@ -8943,10 +9000,6 @@ fn fallback_label(value: &str) -> &str {
     }
 }
 
-fn short_hash(value: &str) -> &str {
-    value.get(..12).unwrap_or(value)
-}
-
 #[cfg(test)]
 fn transcript_block_height(
     block: &TranscriptBlock,
@@ -9034,6 +9087,8 @@ fn transcript_lines_with_tool_key_and_density(
         link: link_style,
         headings,
         live: live_style,
+        markdown_accent,
+        muted,
     } = styles;
     let cell_kind = SemanticCellKind::from_block(block);
     if cell_kind == SemanticCellKind::User {
@@ -9090,17 +9145,17 @@ fn transcript_lines_with_tool_key_and_density(
             MarkdownTheme {
                 glyphs,
                 text: text_style,
-                accent: label_style,
+                accent: muted,
                 muted: metadata_style,
                 code: code_style,
                 quote: metadata_style,
                 link: link_style,
                 headings,
-                code_keyword: label_style,
+                code_keyword: markdown_accent,
                 code_string: code_style,
                 code_comment: metadata_style,
                 code_number: code_style,
-                code_type: label_style,
+                code_type: markdown_accent,
                 unboxed_tables: true,
             },
             &prefix,
@@ -11560,6 +11615,94 @@ mod transcript_tests {
     }
 
     #[test]
+    fn conversation_header_mode_is_quiet_unless_plan_is_the_exception() {
+        let (mut app, root, server) = production_render_app();
+        app.theme = crate::theme::Theme::new(
+            crate::theme::Polarity::Dark,
+            crate::theme::ColorLevel::TrueColor,
+        );
+        app.theme.glyphs = Glyphs::new(crate::glyphs::GlyphMode::Unicode);
+        app.active_session = Some(
+            serde_json::from_value(serde_json::json!({
+                "session_id": "sess-mode",
+                "workspace_root": app.options.workspace,
+                "status": "active",
+                "next_model": "test/model",
+                "execution_status": "ready",
+                "plan_mode": false
+            }))
+            .unwrap(),
+        );
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 18)).unwrap();
+        let mode_fg = |app: &App, buffer: &ratatui::buffer::Buffer| {
+            let positions = action_positions(app, buffer.area, Action::TogglePlanMode);
+            assert!(!positions.is_empty(), "mode action missing");
+            buffer[(positions[0].x, positions[0].y)].fg
+        };
+
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        assert_eq!(mode_fg(&app, terminal.backend().buffer()), app.theme.muted);
+        assert_ne!(mode_fg(&app, terminal.backend().buffer()), app.theme.accent);
+
+        app.active_session.as_mut().unwrap().plan_mode = true;
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        assert_eq!(mode_fg(&app, terminal.backend().buffer()), app.theme.accent);
+
+        app.active_session.as_mut().unwrap().execution_status = "paused".into();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        assert_eq!(mode_fg(&app, terminal.backend().buffer()), app.theme.muted);
+        assert!(
+            !action_positions(
+                &app,
+                terminal.backend().buffer().area,
+                Action::ResumePausedExecutionRun,
+            )
+            .is_empty(),
+            "paused run must expose Review/Resume as the loud header fact"
+        );
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn assistant_markdown_list_markers_are_not_the_interaction_accent() {
+        let theme = crate::theme::Theme::new(
+            crate::theme::Polarity::Dark,
+            crate::theme::ColorLevel::TrueColor,
+        );
+        let mut answer = block(BlockKind::Assistant, "- keep the kernel\n- keep the audit");
+        answer.assistant_phase = Some(crate::rpc::AssistantMessagePhase::FinalAnswer);
+        let lines = transcript_lines(
+            &answer,
+            Locale::En,
+            TranscriptStyles {
+                text: Style::default().fg(theme.text),
+                metadata: theme.transcript_metadata(),
+                muted: theme.muted(),
+                markdown_accent: theme.transcript_markdown_accent(),
+                link: theme.transcript_link(),
+                headings: std::array::from_fn(|index| theme.heading(index + 1)),
+                ..TranscriptStyles::default()
+            },
+            80,
+        );
+        let bullet = Glyphs::default().bullet();
+        let bullet_styles = lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .filter(|span| span.content.contains(bullet))
+            .map(|span| span.style.fg)
+            .collect::<Vec<_>>();
+        assert!(!bullet_styles.is_empty(), "{lines:?}");
+        assert!(
+            bullet_styles.iter().all(|fg| *fg != Some(theme.accent)),
+            "list markers must not use the interaction accent: {lines:?}"
+        );
+    }
+
+    #[test]
     fn running_header_owns_route_labels_once_when_next_preferences_differ() {
         let (mut app, root, server) = production_render_app();
         app.inventory.providers = vec![
@@ -11592,9 +11735,9 @@ mod transcript_tests {
         assert_eq!(count_label(&metadata, running), 1, "{metadata}");
         assert_eq!(count_label(&metadata, next), 1, "{metadata}");
 
-        for width in [60, 80, 120] {
+        for (width, height, compact) in [(60, 3, true), (80, 3, true), (120, 6, false)] {
             let mut terminal =
-                ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 3)).unwrap();
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
             terminal
                 .draw(|frame| {
                     ProductHeader {
@@ -11616,23 +11759,40 @@ mod transcript_tests {
                 })
                 .unwrap();
             let rendered = rendered_frame_text(terminal.backend().buffer());
-            let metadata_row = rendered
-                .lines()
-                .find(|line| line.trim_start().starts_with(running))
-                .unwrap_or_default()
-                .trim_start();
+            assert!(rendered.contains("Carina"), "width={width}\n{rendered}");
             assert!(
-                metadata_row.starts_with(&format!("{running} Model A")),
+                rendered.contains("Route truth"),
                 "width={width}\n{rendered}"
             );
-            assert!(
-                count_label(&rendered, running) <= 1,
-                "width={width}\n{rendered}"
-            );
-            assert!(
-                count_label(&rendered, next) <= 1,
-                "width={width}\n{rendered}"
-            );
+            if compact {
+                assert!(
+                    !rendered.contains(&format!("{running} Model A")),
+                    "compact header must not dump running-model telemetry\nwidth={width}\n{rendered}"
+                );
+                assert!(
+                    !rendered.contains(&format!("{next} Model B")),
+                    "compact header must not dump next-model telemetry\nwidth={width}\n{rendered}"
+                );
+                assert_eq!(
+                    count_label(&rendered, running),
+                    0,
+                    "width={width}\n{rendered}"
+                );
+                assert_eq!(count_label(&rendered, next), 0, "width={width}\n{rendered}");
+            } else {
+                assert!(
+                    rendered.contains(&format!("{running} Model A")),
+                    "width={width}\n{rendered}"
+                );
+                assert!(
+                    count_label(&rendered, running) <= 1,
+                    "width={width}\n{rendered}"
+                );
+                assert!(
+                    count_label(&rendered, next) <= 1,
+                    "width={width}\n{rendered}"
+                );
+            }
         }
 
         app.selected_reasoning_effort.clear();
@@ -11656,6 +11816,85 @@ mod transcript_tests {
             .default_reasoning_effort = "high".into();
         let (_, _, reasoning) = app.product_header_metadata();
         assert_eq!(reasoning, "high");
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn question_list_uses_product_selected_glyph() {
+        let (mut app, root, server) = production_render_app();
+        app.theme.glyphs = Glyphs::new(crate::glyphs::GlyphMode::Unicode);
+        app.overlays
+            .replace(Overlay::Question(crate::overlay::QuestionOverlay {
+                question_id: "q1".into(),
+                run_id: "run-1".into(),
+                prompt: "Which path?".into(),
+                options: vec![
+                    crate::rpc::QuestionOption {
+                        label: "Keep the current plan".into(),
+                        value: "keep".into(),
+                        description: String::new(),
+                    },
+                    crate::rpc::QuestionOption {
+                        label: "Revise the approach".into(),
+                        value: "revise".into(),
+                        description: String::new(),
+                    },
+                ],
+                selected: 0,
+                input: String::new(),
+                resolving: false,
+                error: String::new(),
+            }));
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let rendered = rendered_frame_text(terminal.backend().buffer());
+        let selected = Glyphs::new(crate::glyphs::GlyphMode::Unicode).selected();
+        assert!(
+            rendered.contains(&format!("{selected}Keep the current plan")),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Revise the approach"), "{rendered}");
+        assert!(
+            rendered
+                .lines()
+                .filter(|line| line.contains("Revise the approach"))
+                .all(|line| !line.contains("> Revise")),
+            "{rendered}"
+        );
+
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn queue_rows_show_preview_not_protocol_ids() {
+        let (mut app, root, server) = production_render_app();
+        app.theme.glyphs = Glyphs::new(crate::glyphs::GlyphMode::Unicode);
+        app.overlays
+            .replace(Overlay::Queue(crate::overlay::QueueOverlay {
+                run_id: "run-secret".into(),
+                items: vec![crate::rpc::QueueItem {
+                    steer_id: "steer-should-not-paint".into(),
+                    priority: "normal".into(),
+                    preview: "Follow up on the patch".into(),
+                    index: 0,
+                }],
+                selected: 0,
+                soft_interrupt_pending: false,
+                load: crate::overlay::RetainedLoad::default(),
+                error: String::new(),
+            }));
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let rendered = rendered_frame_text(terminal.backend().buffer());
+        assert!(rendered.contains("Follow up on the patch"), "{rendered}");
+        assert!(!rendered.contains("steer-should-not-paint"), "{rendered}");
+        assert!(!rendered.contains("[normal]"), "{rendered}");
+        assert!(!rendered.contains("run-secret"), "{rendered}");
 
         server.join().unwrap();
         std::fs::remove_dir_all(root).unwrap();
@@ -13589,7 +13828,12 @@ mod transcript_tests {
             .iter()
             .position(|locale| *locale == fixture.locale)
             .unwrap_or_default();
-        app.theme = crate::theme::Theme::new(fixture.polarity, fixture.color_level);
+        let canvas = match fixture.polarity {
+            crate::theme::Polarity::Dark => crate::theme::TERMINAL_CANVAS_DARK,
+            crate::theme::Polarity::Light => crate::theme::TERMINAL_CANVAS_LIGHT,
+        };
+        app.theme = crate::theme::Theme::new(fixture.polarity, fixture.color_level)
+            .with_terminal_background(Some(canvas));
         app.theme.glyphs = Glyphs::new(fixture.glyph_mode);
         app.density = fixture.density;
         app.blocks = semantic_gallery_blocks(fixture.locale);
@@ -14405,7 +14649,8 @@ mod transcript_tests {
         app.theme = crate::theme::Theme::new(
             crate::theme::Polarity::Dark,
             crate::theme::ColorLevel::TrueColor,
-        );
+        )
+        .with_terminal_background(Some(crate::theme::TERMINAL_CANVAS_DARK));
         app.theme.glyphs = Glyphs::new(GlyphMode::Unicode);
         let mut user = block(BlockKind::User, "你好");
         user.id = "user:short".into();
@@ -14419,6 +14664,8 @@ mod transcript_tests {
             .unwrap();
         let buffer = terminal.backend().buffer();
         let band = app.theme.user_message_bg;
+        assert_eq!(band, ratatui::style::Color::Rgb(42, 46, 48));
+        assert_ne!(band, ratatui::style::Color::Rgb(38, 43, 44));
         let mut matched = false;
         for y in 0..buffer.area.height {
             let mut row = String::new();
@@ -15250,10 +15497,12 @@ mod transcript_tests {
     #[test]
     fn failed_history_branch_clears_selection_and_restores_draft() {
         let (mut app, root, server) = production_render_app();
-        app.active_session = Some(serde_json::from_value(serde_json::json!({
-            "session_id": "sess-1"
-        }))
-        .unwrap());
+        app.active_session = Some(
+            serde_json::from_value(serde_json::json!({
+                "session_id": "sess-1"
+            }))
+            .unwrap(),
+        );
         app.history_generation = 4;
         app.history_branch_pending = true;
         app.history_selected = Some(0);

@@ -24,9 +24,9 @@ func (d *Daemon) handleWorkflowRun(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	sess, err := d.requireNamedSession(p.SessionID, params)
+	if err != nil {
+		return nil, err
 	}
 	spec := loadWorkflowSpecs(sess.WorkspaceRoot)[p.Workflow]
 	if spec == nil {

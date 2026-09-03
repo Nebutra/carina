@@ -36,7 +36,7 @@ Keep today’s cheap-first order. Outer tiers stay P1.
 Today: 0–4 exist. 5 does not. Rebuild is volatile (with TASK), never prefix.
 F stays in Workspace for build/plan for the run — do not dump AGENTS.md into
 a greeting because compact ran. After compact on build/plan, Grok-style
-verbatim AGENTS **item** is P1-C5, not a greeting splice.
+verbatim AGENTS **item** is appended to volatile `Transcript.Rebuild` (P1-C5).
 
 `go/contextengine` is identity; do not advertise it as a compressor.
 `Transcript.compact` is the product compressor.
@@ -142,7 +142,7 @@ identity) remain landed. **Product P0 is not closed.**
 | P0-C2 | landed | `go/contextengine` is identity |
 | P1-C1 | landed | post-compact cited-file rebuild (volatile) |
 | P1-C2 | landed | provider usage drives pressure when present |
-| P1-C5 | open | AGENTS.md item after compact, build/plan only |
+| P1-C5 | **source** | AGENTS.md item after compact, build/plan only |
 | P1-C3 | deferred | Proactive compact (jcode EWMA) |
 | P1-C6 | deferred | OpenAI prefix cache only if the route documents it |
 | P2-C1 | deferred | Semantic / topic-shift compact |

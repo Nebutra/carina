@@ -1,10 +1,58 @@
 package rpc
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestBindTenantParamsFillsOmittedTenant(t *testing.T) {
+	claims := GatewayTokenClaims{TenantID: "org_a"}
+	got := BindTenantParams(json.RawMessage(`{"session_id":"s1"}`), claims)
+	var body map[string]any
+	if err := json.Unmarshal(got, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["tenant_id"] != "org_a" || body["session_id"] != "s1" {
+		t.Fatalf("bound = %#v", body)
+	}
+	kept := BindTenantParams(json.RawMessage(`{"session_id":"s1","tenant_id":"org_b"}`), claims)
+	if err := json.Unmarshal(kept, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["tenant_id"] != "org_b" {
+		t.Fatalf("explicit tenant must be kept, got %#v", body)
+	}
+	empty := BindTenantParams(nil, claims)
+	if err := json.Unmarshal(empty, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["tenant_id"] != "org_a" {
+		t.Fatalf("nil params = %#v", body)
+	}
+}
+
+func TestGatewayTokenBindingRoundTrip(t *testing.T) {
+	issuer, err := NewGatewayTokenIssuer([]byte("01234567890123456789012345678901"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, claims, err := issuer.IssueWithBinding("embed", RoleOperator, []Scope{ScopeRead}, nil, time.Minute, "ws", "org_a", "sess_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claims.TenantID != "org_a" || claims.SessionID != "sess_1" {
+		t.Fatalf("claims = %+v", claims)
+	}
+	got, err := issuer.Verify(token, "ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TenantID != "org_a" || got.SessionID != "sess_1" {
+		t.Fatalf("verified = %+v", got)
+	}
+}
 
 func TestGatewayTokenIssuer(t *testing.T) {
 	issuer, err := NewGatewayTokenIssuer([]byte("01234567890123456789012345678901"))

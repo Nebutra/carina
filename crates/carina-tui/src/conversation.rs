@@ -1358,7 +1358,7 @@ mod tests {
                 .find(|slot| slot.kind == ChromeSlotKind::Context)
                 .unwrap();
             assert_eq!(context_slot.tone, tone);
-            assert_eq!(context_slot.text, format!("ctx {percent}%"));
+            assert_eq!(context_slot.text, format!("context {percent}%"));
         }
     }
 

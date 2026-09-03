@@ -93,6 +93,92 @@ pub fn truncate_width_with_glyphs(
     output
 }
 
+/// Keep a scannable identity when a path or patch id does not fit.
+///
+/// Prefer whole path or hyphen segments from the tail (`…/patch.rs`,
+/// `…-0184`) over mid-token suffix cuts (`…time/patch.rs`, `…y-0184`).
+pub fn truncate_reference_identity(
+    value: &str,
+    max_width: usize,
+    glyphs: crate::glyphs::Glyphs,
+) -> String {
+    if UnicodeWidthStr::width(value) <= max_width {
+        return value.to_owned();
+    }
+    let ellipsis = glyphs.ellipsis();
+    let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+    if max_width < ellipsis_width {
+        return String::new();
+    }
+    let content_width = max_width - ellipsis_width;
+    if content_width == 0 {
+        return ellipsis.to_owned();
+    }
+    let separator = if value.contains('/') {
+        '/'
+    } else if value.contains('-') {
+        '-'
+    } else {
+        return truncate_suffix_with_ellipsis(value, max_width, ellipsis);
+    };
+    let parts = value
+        .split(separator)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if parts.len() < 2 {
+        return truncate_suffix_with_ellipsis(value, max_width, ellipsis);
+    }
+    let mut kept_parts: Vec<&str> = Vec::new();
+    for part in parts.iter().rev() {
+        let mut candidate_parts = vec![*part];
+        candidate_parts.extend(kept_parts.iter().copied());
+        let candidate = candidate_parts.join(&separator.to_string());
+        if UnicodeWidthStr::width(candidate.as_str()) > content_width {
+            break;
+        }
+        kept_parts.insert(0, *part);
+    }
+    if kept_parts.is_empty() {
+        let last = parts.last().copied().unwrap_or(value);
+        if last.contains('-') && separator != '-' {
+            return truncate_reference_identity(last, max_width, glyphs);
+        }
+        return truncate_suffix_with_ellipsis(last, max_width, ellipsis);
+    }
+    while !kept_parts.is_empty() {
+        let kept = kept_parts.join(&separator.to_string());
+        let with_separator = format!("{ellipsis}{separator}{kept}");
+        if UnicodeWidthStr::width(with_separator.as_str()) <= max_width {
+            return with_separator;
+        }
+        if kept_parts.len() == 1 {
+            break;
+        }
+        kept_parts.remove(0);
+    }
+    let kept = kept_parts.join(&separator.to_string());
+    format!("{ellipsis}{kept}")
+}
+
+fn truncate_suffix_with_ellipsis(value: &str, max_width: usize, ellipsis: &str) -> String {
+    let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+    if max_width < ellipsis_width {
+        return String::new();
+    }
+    let content_width = max_width - ellipsis_width;
+    let mut suffix = String::new();
+    let mut suffix_width = 0;
+    for character in value.chars().rev() {
+        let width = UnicodeWidthChar::width(character).unwrap_or_default();
+        if suffix_width + width > content_width {
+            break;
+        }
+        suffix.insert(0, character);
+        suffix_width += width;
+    }
+    format!("{ellipsis}{suffix}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,5 +220,40 @@ mod tests {
         let ascii = crate::glyphs::Glyphs::new(crate::glyphs::GlyphMode::Ascii);
         assert_eq!(truncate_width_with_glyphs("abcdef", 4, unicode), "abc…");
         assert_eq!(truncate_width_with_glyphs("abcdef", 4, ascii), "abc.");
+    }
+
+    #[test]
+    fn reference_identity_keeps_whole_tail_segments() {
+        let unicode = crate::glyphs::Glyphs::new(crate::glyphs::GlyphMode::Unicode);
+        let path = "crates/carina-kernel/src/runtime/patch.rs";
+        assert_eq!(truncate_reference_identity(path, 12, unicode), "…/patch.rs");
+        assert_eq!(
+            truncate_reference_identity(path, 20, unicode),
+            "…/runtime/patch.rs"
+        );
+        assert_eq!(
+            truncate_reference_identity("patch-authz-boundary-0184", 8, unicode),
+            "…-0184"
+        );
+        assert_eq!(
+            truncate_reference_identity("patch-authz-boundary-0184", 16, unicode),
+            "…-boundary-0184"
+        );
+        assert_eq!(
+            truncate_reference_identity("crates/carina-tui/src/app/review.rs", 14, unicode),
+            "…/review.rs"
+        );
+        assert_eq!(
+            truncate_reference_identity("docs/product/patch-review.md", 14, unicode),
+            "…-review.md"
+        );
+        assert_eq!(truncate_reference_identity(path, 80, unicode), path);
+        for width in 0..24 {
+            assert!(
+                UnicodeWidthStr::width(
+                    truncate_reference_identity("工作区/项目/源代码.rs", width, unicode).as_str()
+                ) <= width
+            );
+        }
     }
 }

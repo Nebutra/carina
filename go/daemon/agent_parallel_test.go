@@ -294,6 +294,40 @@ func TestListWorkspaceIsBounded(t *testing.T) {
 	}
 }
 
+func TestSearchWorkspaceIsBounded(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	if !d.tools.Available() {
+		t.Skip("zig tools not built")
+	}
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil)
+	var body strings.Builder
+	for i := 0; i < 40; i++ {
+		body.WriteString("HIT line\n")
+	}
+	payload := body.String()
+	for i := 0; i < 30; i++ {
+		if err := os.WriteFile(filepath.Join(ws, "f"+strconv.Itoa(i)+".txt"), []byte(payload), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "search")
+	got := d.searchWorkspaceOutcome(sess, task, "HIT", nil)
+	if got.status != "completed" {
+		t.Fatalf("search = %+v", got)
+	}
+	if !strings.Contains(got.display, "truncated") || !strings.Contains(got.display, "narrow the pattern") {
+		t.Fatalf("search must say it truncated, got: %s", got.display)
+	}
+	if strings.Count(got.display, "\n- ") > maxSearchExtractFiles {
+		t.Fatalf("search leaked more than %d file lines:\n%s", maxSearchExtractFiles, got.display)
+	}
+	if len(got.display) > 8*1024 {
+		t.Fatalf("search observation too large: %d bytes", len(got.display))
+	}
+}
+
 func TestExecuteBatchRejectsSemanticToolsBeforeLifecycle(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()

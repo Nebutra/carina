@@ -3,8 +3,9 @@ use std::ops::Range;
 use ratatui::text::{Line, Span};
 use xai_ratatui_textarea::{ElementKind, TextArea};
 
-use crate::file_viewer::{file_chip_backing, split_at_query, FileRangeError};
+use crate::file_viewer::{FileRangeError, file_chip_backing, split_at_query};
 use crate::rpc::WorkspaceFile;
+use crate::theme::Theme;
 
 pub const FILE_ELEMENT_KIND: ElementKind = ElementKind(2);
 const MAX_RESULTS: usize = 100;
@@ -205,7 +206,7 @@ impl ContextCompletion {
         self.selected = 0;
     }
 
-    pub fn accept(&mut self, textarea: &mut TextArea) -> bool {
+    pub fn accept(&mut self, textarea: &mut TextArea, theme: Theme) -> bool {
         let Some(context) = self.context.clone() else {
             return false;
         };
@@ -225,6 +226,7 @@ impl ContextCompletion {
             &format!("@{}", candidate.path),
             &candidate.path,
             None,
+            theme,
         );
         self.clear_open_state();
         true
@@ -237,6 +239,7 @@ impl ContextCompletion {
         path: &str,
         lines: Range<usize>,
         content: &str,
+        theme: Theme,
     ) -> Result<bool, FileRangeError> {
         let backing = file_chip_backing(path, lines.clone(), content)?;
         if token.range.end > textarea.text().len()
@@ -244,7 +247,14 @@ impl ContextCompletion {
         {
             return Ok(false);
         }
-        insert_file_chip(textarea, token.range.clone(), &backing, path, Some(lines));
+        insert_file_chip(
+            textarea,
+            token.range.clone(),
+            &backing,
+            path,
+            Some(lines),
+            theme,
+        );
         self.clear_open_state();
         Ok(true)
     }
@@ -372,20 +382,20 @@ fn insert_file_chip(
     backing: &str,
     path: &str,
     lines: Option<Range<usize>>,
+    theme: Theme,
 ) {
     textarea.begin_undo_group();
     textarea.replace_range_with_element(
         token,
         backing,
         FILE_ELEMENT_KIND,
-        Some(file_chip(path, lines)),
+        Some(file_chip(path, lines, theme)),
     );
     textarea.insert_str(" ");
     textarea.end_undo_group();
 }
 
-pub fn file_chip(path: &str, lines: Option<Range<usize>>) -> Line<'static> {
-    let theme = crate::theme::Theme::detected(None);
+pub fn file_chip(path: &str, lines: Option<Range<usize>>, theme: Theme) -> Line<'static> {
     let suffix = lines.map_or_else(String::new, |range| {
         if range.end == range.start + 1 {
             format!(":{}", range.start)
@@ -394,8 +404,8 @@ pub fn file_chip(path: &str, lines: Option<Range<usize>>) -> Line<'static> {
         }
     });
     Line::from(vec![
-        Span::styled(" @ ", theme.action()),
-        Span::styled(format!(" {path}{suffix} "), theme.focus()),
+        Span::styled(" @ ", theme.dim()),
+        Span::styled(format!(" {path}{suffix} "), theme.chip()),
     ])
 }
 
@@ -446,7 +456,7 @@ mod tests {
         let generation = completion.begin_load("session".into());
         assert!(completion.apply_load(generation, "session", Ok(files())));
         assert_eq!(completion.results()[0].path, "src/app/render.rs");
-        assert!(completion.accept(&mut textarea));
+        assert!(completion.accept(&mut textarea, crate::theme::Theme::carina(false)));
         assert_eq!(textarea.text(), "inspect @src/app/render.rs ");
         assert_eq!(textarea.elements().len(), 1);
         assert_eq!(textarea.elements()[0].kind, FILE_ELEMENT_KIND);
@@ -463,7 +473,7 @@ mod tests {
         assert!(completion.update_context(&textarea));
         let generation = completion.begin_load("session".into());
         assert!(completion.apply_load(generation, "session", Ok(files())));
-        assert!(completion.accept(&mut textarea));
+        assert!(completion.accept(&mut textarea, crate::theme::Theme::carina(false)));
         textarea.delete_backward(2);
         assert_eq!(textarea.text(), "inspect ");
         assert!(textarea.elements().is_empty());
@@ -479,12 +489,21 @@ mod tests {
         assert!(completion.apply_load(generation, "session", Ok(files())));
         assert_eq!(completion.results()[0].path, "src/app/render.rs");
         assert_eq!(completion.typed_line_range().unwrap(), Some(2..4));
-        assert!(!completion.accept(&mut textarea));
+        assert!(!completion.accept(&mut textarea, crate::theme::Theme::carina(false)));
         let token = completion.context.clone().unwrap();
         let content = "alpha\nbeta\ngamma\ndelta";
-        assert!(completion
-            .accept_with_content(&mut textarea, &token, "src/app/render.rs", 2..4, content)
-            .unwrap());
+        assert!(
+            completion
+                .accept_with_content(
+                    &mut textarea,
+                    &token,
+                    "src/app/render.rs",
+                    2..4,
+                    content,
+                    crate::theme::Theme::carina(false),
+                )
+                .unwrap()
+        );
         let prompt = crate::media::MediaComposer::default().prompt_text(&textarea);
         assert!(prompt.contains("2| beta"));
         assert!(prompt.contains("3| gamma"));
@@ -514,7 +533,14 @@ mod tests {
         assert_eq!(completion.results()[0].path, "文档/主.rs");
         let token = completion.context.clone().unwrap();
         let backing = completion
-            .accept_with_content(&mut textarea, &token, "文档/主.rs", 2..4, "一\n二\n三")
+            .accept_with_content(
+                &mut textarea,
+                &token,
+                "文档/主.rs",
+                2..4,
+                "一\n二\n三",
+                crate::theme::Theme::carina(false),
+            )
             .unwrap();
         assert!(backing);
         assert!(textarea.text().contains("2| 二"));

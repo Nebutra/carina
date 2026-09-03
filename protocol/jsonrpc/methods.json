@@ -39,9 +39,9 @@
       { "method": "agent.metadata.set", "scope": "write", "remote": false, "params": { "session_id": "string", "title": "string?", "pull_request": "string?", "branch": "string?", "worktree_id": "string?" }, "result": "AgentViewMetadata" }
     ],
     "session": [
-      { "method": "session.create", "scope": "write", "remote": false, "params": { "workspace_root": "string", "profile": "string?", "approval_mode": "string?" }, "result": "Session" },
-      { "method": "session.get", "scope": "read", "remote": true, "params": { "session_id": "string" }, "result": "Session" },
-      { "method": "session.list", "scope": "read", "remote": true, "params": { "archived": "boolean? (false active/non-closed only; true closed only; omitted all)" }, "result": "Session[]" },
+      { "method": "session.create", "scope": "write", "remote": false, "params": { "workspace_root": "string", "profile": "string?", "approval_mode": "string?", "tenant_id": "string? (omitted = local owner tenant; two tenants cannot share workspace_root)" }, "result": "Session" },
+      { "method": "session.get", "scope": "read", "remote": true, "params": { "session_id": "string", "tenant_id": "string? (Unix omit = local; remote must match Gateway token tenant_id)" }, "result": "Session" },
+      { "method": "session.list", "scope": "read", "remote": true, "params": { "archived": "boolean? (false active/non-closed only; true closed only; omitted all)", "tenant_id": "string? (Unix omit = local owner tenant; remote requires token tenant_id)" }, "result": "Session[]" },
       { "method": "session.rename", "scope": "write", "remote": false, "params": { "session_id": "string", "name": "string 1..80" }, "result": "Session" },
       { "method": "session.archive", "scope": "write", "remote": false, "params": { "session_id": "string" }, "result": "Session(status=closed); rejects every non-terminal task" },
       { "method": "session.unarchive", "scope": "write", "remote": false, "params": { "session_id": "string" }, "result": "Session(status=active)" },
@@ -93,6 +93,11 @@
     "question": [
       { "method": "question.answer", "scope": "write", "remote": false, "params": { "question_id": "string", "value": "string" }, "result": "{ question_id: string, accepted: boolean, value: string }" },
       { "method": "question.pending", "scope": "read", "remote": false, "params": {}, "result": "{ question_ids: string[] }" }
+    ],
+    "proposal": [
+      { "method": "proposal.list", "scope": "read", "remote": false, "params": { "session_id": "string" }, "result": "{ proposals: object[], pending: integer, enabled: boolean }" },
+      { "method": "proposal.accept", "scope": "write", "remote": false, "params": { "proposal_id": "string" }, "result": "{ accepted: boolean, proposal_id: string, steered: boolean, run_id: string }" },
+      { "method": "proposal.ignore", "scope": "write", "remote": false, "params": { "proposal_id": "string", "mute": "boolean?" }, "result": "{ ignored: boolean, proposal_id: string, muted: boolean }" }
     ],
     "history": [
       { "method": "history.recent", "scope": "read", "remote": false, "params": { "limit": "number?", "scope": "session|workspace|global?", "session_id": "string? (required for session/workspace scope)" }, "result": "{ entries: string[], count: number, scope: session|workspace|global }" }

@@ -58,6 +58,26 @@ func TestRunContextFailsClosedWhenSandboxRequestedButUnavailable(t *testing.T) {
 	}
 }
 
+func TestSandboxProcessEnvSetsHomeToWorkspace(t *testing.T) {
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "leak")
+	cwd := t.TempDir()
+	env := sandboxProcessEnv(cwd, []string{"HTTPS_PROXY=http://127.0.0.1:9"})
+	got := map[string]string{}
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		got[k] = v
+	}
+	if got["HOME"] != cwd {
+		t.Fatalf("HOME = %q, want workspace", got["HOME"])
+	}
+	if got["HTTPS_PROXY"] != "http://127.0.0.1:9" {
+		t.Fatalf("proxy extra dropped: %#v", got)
+	}
+	if _, ok := got["AWS_SECRET_ACCESS_KEY"]; ok {
+		t.Fatal("host secrets must not be copied into the sandbox process env")
+	}
+}
+
 type errNotFound struct{}
 
 func (errNotFound) Error() string { return "not found" }

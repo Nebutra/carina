@@ -24,6 +24,8 @@ type GatewayTokenClaims struct {
 	Scopes    []Scope  `json:"scopes"`
 	Routes    []string `json:"routes,omitempty"`
 	Transport string   `json:"transport,omitempty"`
+	TenantID  string   `json:"tenant_id,omitempty"`
+	SessionID string   `json:"session_id,omitempty"`
 	IssuedAt  int64    `json:"iat"`
 	ExpiresAt int64    `json:"exp"`
 	Notes     []string `json:"notes,omitempty"`
@@ -52,6 +54,10 @@ func (i *GatewayTokenIssuer) Issue(subject string, role Role, scopes []Scope, tt
 }
 
 func (i *GatewayTokenIssuer) IssueWithRoutes(subject string, role Role, scopes []Scope, routes []string, ttl time.Duration, transport string) (string, GatewayTokenClaims, error) {
+	return i.IssueWithBinding(subject, role, scopes, routes, ttl, transport, "", "")
+}
+
+func (i *GatewayTokenIssuer) IssueWithBinding(subject string, role Role, scopes []Scope, routes []string, ttl time.Duration, transport, tenantID, sessionID string) (string, GatewayTokenClaims, error) {
 	if ttl <= 0 {
 		return "", GatewayTokenClaims{}, fmt.Errorf("ttl_seconds must be > 0")
 	}
@@ -77,6 +83,8 @@ func (i *GatewayTokenIssuer) IssueWithRoutes(subject string, role Role, scopes [
 		Scopes:    negotiated,
 		Routes:    routes,
 		Transport: strings.TrimSpace(transport),
+		TenantID:  strings.TrimSpace(tenantID),
+		SessionID: strings.TrimSpace(sessionID),
 		IssuedAt:  now.Unix(),
 		ExpiresAt: now.Add(ttl).Unix(),
 		Notes:     notes,
@@ -134,6 +142,35 @@ func (i *GatewayTokenIssuer) Verify(token, transport string) (GatewayTokenClaims
 		return GatewayTokenClaims{}, fmt.Errorf("gateway token transport mismatch")
 	}
 	return claims, nil
+}
+
+// BindTenantParams copies claims.TenantID into params when the client omitted
+// it. Remote handlers then see the token tenant without every caller repeating
+// tenant_id. An explicit params tenant_id is left unchanged (the params guard
+// already fail-closes mismatches).
+func BindTenantParams(params json.RawMessage, claims GatewayTokenClaims) json.RawMessage {
+	tenant := strings.TrimSpace(claims.TenantID)
+	if tenant == "" {
+		return params
+	}
+	var body map[string]any
+	if len(params) > 0 && string(params) != "null" {
+		if err := json.Unmarshal(params, &body); err != nil {
+			return params
+		}
+	}
+	if body == nil {
+		body = map[string]any{}
+	}
+	if existing, _ := body["tenant_id"].(string); strings.TrimSpace(existing) != "" {
+		return params
+	}
+	body["tenant_id"] = tenant
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return params
+	}
+	return raw
 }
 
 // NormalizeGatewayTokenRoutes canonicalizes optional HTTP route grants. Routes

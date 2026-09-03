@@ -153,6 +153,7 @@ def validate_structure() -> None:
     expected = {
         "void": "#0d1214",
         "brand-rose": "#8e4053",
+        "terminal-brand-display": "#a86d79",
         "ion-cyan": "#8edbd2",
         "starlight": "#f3f0e8",
     }
@@ -161,6 +162,8 @@ def validate_structure() -> None:
             raise ValueError(f"design token {name} drifted")
     if semantic["brand-mark"]["$value"] != "{color.primitive.brand-rose}":
         raise ValueError("semantic brand-mark must reference brand-rose")
+    if semantic["terminal-brand-display"]["$value"] != "{color.primitive.terminal-brand-display}":
+        raise ValueError("semantic terminal-brand-display must reference its primitive")
     if not brand_font or brand_font[0] != "Carina Display Alpha":
         raise ValueError("brand font must begin with Carina Display Alpha")
     # Editorial serif: Newsreader for docs/marketing primary titles (not wordmark)
@@ -251,6 +254,17 @@ def validate_structure() -> None:
             raise ValueError(
                 f"TUI theme role {rust_role} must consume {semantic_role} ({expected_value})"
             )
+    if rust_colors.get("brand") != primitives["terminal-brand-display"]["$value"].lower():
+        raise ValueError(
+            "TUI dark brand must consume terminal-brand-display, not canonical brand-rose or an improvised pink"
+        )
+    light_palette = theme.split("fn light()", 1)[1].split("#[cfg(test)]", 1)[0]
+    light_colors: dict[str, str] = {}
+    for match in color_pattern.finditer(light_palette):
+        channels = [int(match.group(channel)) for channel in ("red", "green", "blue")]
+        light_colors[match.group("role")] = "#{:02x}{:02x}{:02x}".format(*channels)
+    if light_colors.get("brand") != primitives["brand-rose"]["$value"].lower():
+        raise ValueError("TUI light brand must consume canonical brand-rose")
 
     if "background: Color::Reset" not in theme or "text: Color::Reset" not in theme:
         raise ValueError("TUI root and primary text must inherit terminal defaults")

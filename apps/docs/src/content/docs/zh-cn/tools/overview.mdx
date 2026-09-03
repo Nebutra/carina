@@ -16,13 +16,50 @@ import Callout from '../../../../components/ui/Callout.astro';
 | 工具族 | 典型动作 | 治理边界 |
 | --- | --- | --- |
 | 文件系统 | list / read / search / edit / patch | 只能访问会话工作区；`edit` 是精确唯一片段 |
+| Git 信息 | `git.status` / `git.diff` / `git.log` | 类型化、有上限、只读，并受 `FileRead` 约束 |
 | 网络 | `web.fetch` | 公开 HTTPS、按主机审批、不跟随重定向 |
+| 浏览器 | `browser.open` / `snapshot` / `action` / `tabs` / `capture` / `close` | 隔离 Chromium、类型化动作、逐来源网络授权与产物隔离 |
 | Shell | `run` | `CommandExec` 风险分级、超时、环境白名单 |
 | Memory | add / replace / remove | `MemoryWrite` 审批与内容扫描 |
 | 代码智能 | symbols / def / refs / impact | `FileRead` + 本地索引 |
 | MCP | `mcp` / `mcp_find` | 外部服务仍需能力授权 |
 | 编排 | spawn / workflow / best_of_n | 子能力衰减与独立审计 |
 | 人工输入 | `ask_user` | 结构化 operator decision |
+
+## 只读 Git 证据
+
+| 工具 | 结果 |
+| --- | --- |
+| `git.status` | 分支、上游、ahead / behind 数量与有上限的 porcelain 变更 |
+| `git.diff` | 显式 `worktree`、`staged` 或 `head` 视图下逐文件、有上限的补丁 |
+| `git.log` | 结构化 HEAD 历史，并限制提交数量与主题长度 |
+
+三个工具都只在会话工作区对应的仓库根目录运行，不接受原始 Git 参数。
+运行时会禁用交互提示、可选锁、pager、hook、fsmonitor、可执行 diff / filter
+helper、credential helper 与 submodule 递归。二进制和未跟踪文件只返回元数据，
+不会读取内容并注入模型上下文。
+
+## 受治理的浏览器操作
+
+| 工具 | 结果 |
+| --- | --- |
+| `browser.open` | 打开隔离的托管浏览器，或把已有 tab 导航到获批的公开 HTTPS 目标 |
+| `browser.snapshot` | 返回有上限的 accessibility / DOM 投影，以及按文档代次生效的不透明 ref |
+| `browser.action` | 执行一次类型化 click、type、select、check、key、scroll、hover、upload 或 dialog 动作 |
+| `browser.tabs` | 列出、打开、激活或关闭 tab，不暴露原始 CDP |
+| `browser.capture` | 把有上限的截图保存为会话级 artifact 和 media ref |
+| `browser.close` | 停止浏览器并删除临时 profile |
+
+托管模式使用私有、临时的 Chromium profile，不继承操作者的 cookie、扩展、
+密码库或本机浏览器状态。每个导航与请求 origin 都只能访问获批的公开 HTTPS；
+页面文字、标题、dialog、download 元数据和截图像素一律是不可信输入。文档变化后
+element ref 会失效，Agent 必须重新 snapshot，不能传原始 selector、坐标或脚本。
+
+上传只接受逐文件通过 `FileRead` 的显式路径，并在真正发送前要求实时审批。
+下载会立即隔离成 artifact，不会自动打开、执行或写入工作区。高影响动作即使在
+`always-approve` 下也会在浏览器副作用前暂停。附着操作者浏览器是独立的部署配置
+模式，始终要求实时 `BrowserAttach` 审批，debugging endpoint 不会暴露给模型。
+操作者配置见[本地安装](/zh-cn/deployment/local/)。
 
 ## Zig 原生工具链
 

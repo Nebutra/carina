@@ -18,6 +18,5 @@ styles:
 (0, 1)..(5, 1) (Reset, Reset, BOLD)
 (7, 1)..(15, 1) (Reset, Reset, BOLD | REVERSED)
 (17, 1)..(21, 1) (Reset, Reset, UNDERLINED)
-(0, 5)..(3, 5) (Reset, Reset, BOLD | UNDERLINED)
-(3, 5)..(12, 5) (Reset, Reset, BOLD)
+(0, 5)..(12, 5) (Reset, Reset, BOLD)
 (12, 5)..(18, 5) (Reset, Reset, ITALIC)

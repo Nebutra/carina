@@ -88,7 +88,8 @@ func (h *gatewayHTTP) handleChatCompletions(w http.ResponseWriter, r *http.Reque
 		h.writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
 		return
 	}
-	if _, ok := h.authorize(w, r, "/v1/chat/completions", rpc.ScopeWrite); !ok {
+	claims, ok := h.authorize(w, r, "/v1/chat/completions", rpc.ScopeWrite)
+	if !ok {
 		return
 	}
 	var req chatCompletionRequest
@@ -102,10 +103,10 @@ func (h *gatewayHTTP) handleChatCompletions(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if req.Stream {
-		h.handleChatCompletionsStream(w, r, req, prompt)
+		h.handleChatCompletionsStream(w, r, req, prompt, claims.TenantID)
 		return
 	}
-	task, sessionID, err := h.submitAgentTask(r, req.Model, prompt, req.Metadata, "")
+	task, sessionID, err := h.submitAgentTask(r, req.Model, prompt, req.Metadata, "", claims.TenantID)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "submit_failed", err.Error())
 		return
@@ -132,13 +133,13 @@ func (h *gatewayHTTP) handleChatCompletions(w http.ResponseWriter, r *http.Reque
 	h.writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *gatewayHTTP) handleChatCompletionsStream(w http.ResponseWriter, r *http.Request, req chatCompletionRequest, prompt string) {
+func (h *gatewayHTTP) handleChatCompletionsStream(w http.ResponseWriter, r *http.Request, req chatCompletionRequest, prompt, tenantID string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		h.writeError(w, http.StatusInternalServerError, "streaming_unavailable", "response writer does not support streaming")
 		return
 	}
-	task, sessionID, err := h.submitAgentTask(r, req.Model, prompt, req.Metadata, "")
+	task, sessionID, err := h.submitAgentTask(r, req.Model, prompt, req.Metadata, "", tenantID)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "submit_failed", err.Error())
 		return
@@ -411,7 +412,8 @@ func (h *gatewayHTTP) handleResponses(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
 		return
 	}
-	if _, ok := h.authorize(w, r, "/v1/responses", rpc.ScopeWrite); !ok {
+	claims, ok := h.authorize(w, r, "/v1/responses", rpc.ScopeWrite)
+	if !ok {
 		return
 	}
 	var req responsesRequest
@@ -424,7 +426,7 @@ func (h *gatewayHTTP) handleResponses(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "invalid_request", "input is required")
 		return
 	}
-	task, sessionID, err := h.submitAgentTask(r, req.Model, prompt, req.Metadata, req.PreviousResponseID)
+	task, sessionID, err := h.submitAgentTask(r, req.Model, prompt, req.Metadata, req.PreviousResponseID, claims.TenantID)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "submit_failed", err.Error())
 		return
@@ -462,7 +464,8 @@ func (h *gatewayHTTP) handleToolsInvoke(w http.ResponseWriter, r *http.Request) 
 		h.writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
 		return
 	}
-	if _, ok := h.authorize(w, r, "/tools/invoke", rpc.ScopeRead); !ok {
+	claims, ok := h.authorize(w, r, "/tools/invoke", rpc.ScopeRead)
+	if !ok {
 		return
 	}
 	var req toolInvokeRequest
@@ -471,10 +474,24 @@ func (h *gatewayHTTP) handleToolsInvoke(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	method := normalizeToolInvokeMethod(req.Tool, req.Action)
+	if req.Args == nil {
+		req.Args = map[string]any{}
+	}
+	if tenant := strings.TrimSpace(claims.TenantID); tenant != "" {
+		if _, exists := req.Args["tenant_id"]; !exists {
+			req.Args["tenant_id"] = tenant
+		}
+	}
 	if sid := stringArg(req.Args, "session_id"); sid != "" {
 		if err := h.d.gatewaySessionAllowed(sid); err != nil {
 			h.writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": err.Error(), "method": method})
 			return
+		}
+		if tenant := stringArg(req.Args, "tenant_id"); tenant != "" {
+			if _, err := h.d.lookupSession(sid, tenant); err != nil {
+				h.writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "unknown session", "method": method})
+				return
+			}
 		}
 	}
 	if root := stringArg(req.Args, "workspace_root"); root != "" {
@@ -562,7 +579,7 @@ func (h *gatewayHTTP) applyOrigin(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-func (h *gatewayHTTP) submitAgentTask(r *http.Request, model, prompt string, metadata map[string]any, previousResponseID string) (*scheduler.ExecutionRun, string, error) {
+func (h *gatewayHTTP) submitAgentTask(r *http.Request, model, prompt string, metadata map[string]any, previousResponseID, tenantID string) (*scheduler.ExecutionRun, string, error) {
 	agent, err := agentFromGatewayModel(model)
 	if err != nil {
 		return nil, "", err
@@ -597,17 +614,25 @@ func (h *gatewayHTTP) submitAgentTask(r *http.Request, model, prompt string, met
 		if err := h.d.gatewayWorkspaceAllowed(root); err != nil {
 			return nil, "", err
 		}
-		sess, err := h.createGatewaySession(root)
+		sess, err := h.createGatewaySession(root, tenantID)
 		if err != nil {
 			return nil, "", err
 		}
 		sessionID = sess.SessionID
+	} else if tenantID != "" {
+		if _, err := h.d.lookupSession(sessionID, tenantID); err != nil {
+			return nil, "", err
+		}
 	}
-	taskAny, err := h.d.handleTaskSubmit(mustRaw(map[string]any{
+	submit := map[string]any{
 		"session_id": sessionID,
 		"prompt":     prompt,
 		"agent":      agent,
-	}))
+	}
+	if strings.TrimSpace(tenantID) != "" {
+		submit["tenant_id"] = strings.TrimSpace(tenantID)
+	}
+	taskAny, err := h.d.handleTaskSubmit(mustRaw(submit))
 	if err != nil {
 		return nil, "", err
 	}
@@ -623,11 +648,15 @@ func (h *gatewayHTTP) submitAgentTask(r *http.Request, model, prompt string, met
 	return task, sessionID, nil
 }
 
-func (h *gatewayHTTP) createGatewaySession(root string) (*sessionstore.Session, error) {
-	sessAny, err := h.d.handleSessionCreate(mustRaw(map[string]any{
+func (h *gatewayHTTP) createGatewaySession(root, tenantID string) (*sessionstore.Session, error) {
+	create := map[string]any{
 		"workspace_root": root,
 		"profile":        "safe-edit",
-	}))
+	}
+	if strings.TrimSpace(tenantID) != "" {
+		create["tenant_id"] = strings.TrimSpace(tenantID)
+	}
+	sessAny, err := h.d.handleSessionCreate(mustRaw(create))
 	if err != nil {
 		return nil, err
 	}
@@ -682,7 +711,7 @@ func (h *gatewayHTTP) invokeReadOnlyTool(method string, args map[string]any) (an
 	case "command.list":
 		return h.d.handleCommandList(mustRaw(args))
 	case "session.list":
-		return h.d.handleSessionList(nil)
+		return h.d.handleSessionList(mustRaw(args))
 	case "session.get":
 		return h.d.handleSessionGet(mustRaw(args))
 	case "workspace.tree":

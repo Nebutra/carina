@@ -28,6 +28,8 @@ pub enum Capability {
     SwarmMessage,
     RemoteDispatch,
     SwarmSpawn,
+    BrowserInteract,
+    BrowserAttach,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,6 +101,8 @@ pub struct Profile {
     pub max_command_risk: u8,
     pub network: NetworkMode,
     pub secret_read: bool,
+    pub browser_interact: bool,
+    pub browser_attach: bool,
 }
 
 impl Profile {
@@ -111,6 +115,8 @@ impl Profile {
             max_command_risk: 0,
             network: NetworkMode::Denied,
             secret_read: false,
+            browser_interact: false,
+            browser_attach: false,
         }
     }
 
@@ -139,6 +145,8 @@ impl Profile {
             max_command_risk: 1,
             network: NetworkMode::RequiresApproval,
             secret_read: false,
+            browser_interact: true,
+            browser_attach: false,
         }
     }
 
@@ -151,6 +159,8 @@ impl Profile {
             max_command_risk: 3,
             network: NetworkMode::RequiresApproval,
             secret_read: true,
+            browser_interact: true,
+            browser_attach: true,
         }
     }
 
@@ -180,6 +190,8 @@ impl Profile {
                 "proxy.golang.org".into(),
             ]),
             secret_read: true, // scoped; the broker still gates per-secret
+            browser_interact: false,
+            browser_attach: false,
         }
     }
 
@@ -192,6 +204,8 @@ impl Profile {
             max_command_risk: 0,
             network: NetworkMode::Denied,
             secret_read: false,
+            browser_interact: false,
+            browser_attach: false,
         }
     }
 
@@ -204,6 +218,8 @@ impl Profile {
             max_command_risk: 4,
             network: NetworkMode::RequiresApproval,
             secret_read: true,
+            browser_interact: true,
+            browser_attach: true,
         }
     }
 
@@ -216,6 +232,8 @@ impl Profile {
             max_command_risk: 1,
             network: NetworkMode::Denied,
             secret_read: false,
+            browser_interact: false,
+            browser_attach: false,
         }
     }
 
@@ -278,6 +296,8 @@ impl Profile {
             max_command_risk: rules.command_exec.max_risk_level.unwrap_or(0),
             network,
             secret_read: !matches!(rules.secret_read.allow.as_deref(), Some("none") | None),
+            browser_interact: matches!(rules.browser_interact.allow.as_deref(), Some("managed")),
+            browser_attach: matches!(rules.browser_attach.allow.as_deref(), Some("approval")),
         })
     }
 
@@ -306,6 +326,8 @@ impl Profile {
                 NetworkMode::Allowlist(h) => format!("allowlist:{}", h.join(",")),
             },
             secret_read: self.secret_read,
+            browser_interact: self.browser_interact,
+            browser_attach: self.browser_attach,
         }
     }
 }
@@ -329,6 +351,8 @@ pub struct ProfileDescription {
     pub command_allowlist: Vec<String>,
     pub network: String,
     pub secret_read: bool,
+    pub browser_interact: bool,
+    pub browser_attach: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -359,6 +383,10 @@ struct RawRules {
     network_access: Rule,
     #[serde(default)]
     secret_read: Rule,
+    #[serde(default)]
+    browser_interact: Rule,
+    #[serde(default)]
+    browser_attach: Rule,
 }
 
 #[derive(Debug, Deserialize)]
@@ -731,7 +759,68 @@ impl PolicyEngine {
                     "dynamic graph growth beyond the run's size threshold requires approval".into(),
                 )
             }
+            Capability::BrowserInteract => {
+                if !profile.browser_interact {
+                    return (Verdict::Denied, "profile denies browser interaction".into());
+                }
+                match browser_effect(&req.resource) {
+                    Some(BrowserEffect::Observe | BrowserEffect::Reversible) => (
+                        Verdict::Allowed,
+                        "managed browser observation or reversible interaction allowed".into(),
+                    ),
+                    Some(_) => (
+                        Verdict::RequiresApproval,
+                        "browser action has an external, sensitive, or hard-to-reverse effect"
+                            .into(),
+                    ),
+                    None => (
+                        Verdict::Denied,
+                        "browser interaction effect is missing or unknown".into(),
+                    ),
+                }
+            }
+            Capability::BrowserAttach => {
+                if profile.browser_attach {
+                    (
+                        Verdict::RequiresApproval,
+                        "attaching an operator browser always requires approval".into(),
+                    )
+                } else {
+                    (Verdict::Denied, "profile denies browser attachment".into())
+                }
+            }
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BrowserEffect {
+    Observe,
+    Reversible,
+    ExternalSubmit,
+    SensitiveTransmission,
+    Destructive,
+    AccessChange,
+    Permission,
+    AuthenticatedRepresentation,
+    ExecutableDownload,
+    Upload,
+}
+
+fn browser_effect(resource: &str) -> Option<BrowserEffect> {
+    let effect = resource.rsplit(':').next()?;
+    match effect {
+        "observe" => Some(BrowserEffect::Observe),
+        "reversible" => Some(BrowserEffect::Reversible),
+        "external_submit" => Some(BrowserEffect::ExternalSubmit),
+        "sensitive_transmission" => Some(BrowserEffect::SensitiveTransmission),
+        "destructive" => Some(BrowserEffect::Destructive),
+        "access_change" => Some(BrowserEffect::AccessChange),
+        "permission" => Some(BrowserEffect::Permission),
+        "authenticated_representation" => Some(BrowserEffect::AuthenticatedRepresentation),
+        "executable_download" => Some(BrowserEffect::ExecutableDownload),
+        "upload" => Some(BrowserEffect::Upload),
+        _ => None,
     }
 }
 
@@ -834,7 +923,12 @@ pub fn apply_approval_mode(mode: ApprovalMode, mut d: Decision) -> Decision {
     match mode {
         ApprovalMode::OnRequest => d,
         ApprovalMode::Never => {
-            if d.decision == Verdict::RequiresApproval {
+            let non_bypassable_browser_gate = d.capability == Capability::BrowserAttach
+                || (d.capability == Capability::BrowserInteract
+                    && browser_effect(&d.resource).is_some_and(|effect| {
+                        !matches!(effect, BrowserEffect::Observe | BrowserEffect::Reversible)
+                    }));
+            if d.decision == Verdict::RequiresApproval && !non_bypassable_browser_gate {
                 d.decision = Verdict::Allowed;
                 d.reason = format!("approval_mode=never auto-allows ({})", d.reason);
             }
@@ -1466,6 +1560,102 @@ hosts = ["internal.example.com"]
         assert!(p
             .command_allowlist
             .contains(&"make deploy-staging".to_string()));
+        assert!(!p.browser_interact);
+        assert!(!p.browser_attach);
+    }
+
+    #[test]
+    fn browser_capabilities_are_default_deny_and_effect_aware() {
+        let root = Path::new("/tmp/ws");
+        let safe = Profile::safe_edit();
+        assert_eq!(
+            PolicyEngine::evaluate(
+                &safe,
+                root,
+                &req(Capability::BrowserInteract, "managed:reversible")
+            )
+            .decision,
+            Verdict::Allowed
+        );
+        assert_eq!(
+            PolicyEngine::evaluate(
+                &safe,
+                root,
+                &req(Capability::BrowserInteract, "managed:external_submit")
+            )
+            .decision,
+            Verdict::RequiresApproval
+        );
+        assert_eq!(
+            PolicyEngine::evaluate(
+                &safe,
+                root,
+                &req(Capability::BrowserInteract, "managed:unknown")
+            )
+            .decision,
+            Verdict::Denied
+        );
+        assert_eq!(
+            PolicyEngine::evaluate(
+                &safe,
+                root,
+                &req(Capability::BrowserAttach, "operator_endpoint")
+            )
+            .decision,
+            Verdict::Denied
+        );
+
+        let full = Profile::full_workspace();
+        assert_eq!(
+            PolicyEngine::evaluate(
+                &full,
+                root,
+                &req(Capability::BrowserAttach, "operator_endpoint")
+            )
+            .decision,
+            Verdict::RequiresApproval
+        );
+    }
+
+    #[test]
+    fn custom_browser_fields_require_explicit_known_values() {
+        let p = Profile::from_toml(
+            "name = \"browser\"\n[rules]\nbrowser_interact = { allow = \"managed\" }\nbrowser_attach = { allow = \"approval\" }\n",
+        )
+        .unwrap();
+        assert!(p.browser_interact);
+        assert!(p.browser_attach);
+
+        let typo = Profile::from_toml(
+            "name = \"typo\"\n[rules]\nbrowser_interact = { allow = \"allow\" }\nbrowser_attach = { allow = \"auto\" }\n",
+        )
+        .unwrap();
+        assert!(!typo.browser_interact);
+        assert!(!typo.browser_attach);
+    }
+
+    #[test]
+    fn never_mode_cannot_bypass_browser_attach_or_high_impact_effects() {
+        let root = Path::new("/tmp/ws");
+        let profile = Profile::full_workspace();
+        for request in [
+            req(Capability::BrowserAttach, "operator_endpoint"),
+            req(
+                Capability::BrowserInteract,
+                "managed:sensitive_transmission",
+            ),
+        ] {
+            let decision = PolicyEngine::evaluate(&profile, root, &request);
+            let decision = apply_approval_mode(ApprovalMode::Never, decision);
+            assert_eq!(decision.decision, Verdict::RequiresApproval);
+        }
+
+        let safe = PolicyEngine::evaluate(
+            &profile,
+            root,
+            &req(Capability::BrowserInteract, "managed:reversible"),
+        );
+        assert_eq!(safe.decision, Verdict::Allowed);
     }
 
     #[test]

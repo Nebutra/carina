@@ -98,6 +98,34 @@ func TestScanBoundedStopsWalking(t *testing.T) {
 	}
 }
 
+func TestScanBoundedContextCancellation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is Unix-only")
+	}
+	dir := t.TempDir()
+	scanner := filepath.Join(dir, "carina-scan")
+	if err := os.WriteFile(scanner, []byte("#!/bin/sh\nsleep 30\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	ws := t.TempDir()
+	go func() {
+		_, _, err := New(dir).ScanBoundedContext(ctx, ws, 10, 1)
+		done <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("ScanBoundedContext error = %v, want context.Canceled", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("ScanBoundedContext did not stop promptly after cancellation")
+	}
+}
+
 func TestScanSkipsIgnoredBuildDirectories(t *testing.T) {
 	tc := New(toolsDir(t))
 	ws := t.TempDir()
@@ -132,6 +160,33 @@ func TestScanSkipsIgnoredBuildDirectories(t *testing.T) {
 	}
 	if !foundMain {
 		t.Fatalf("scan missed source file: %+v", files)
+	}
+}
+
+func TestGrepBoundedStopsMatching(t *testing.T) {
+	tc := New(toolsDir(t))
+	ws := t.TempDir()
+	for i := 0; i < 40; i++ {
+		var b strings.Builder
+		for j := 0; j < 10; j++ {
+			b.WriteString("HIT line\n")
+		}
+		if err := os.WriteFile(filepath.Join(ws, "f"+strconv.Itoa(i)+".txt"), []byte(b.String()), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	matches, truncated, err := tc.GrepBounded("HIT", ws, 25)
+	if err != nil {
+		t.Fatalf("grep: %v", err)
+	}
+	if !truncated {
+		t.Fatal("expected truncated grep")
+	}
+	if len(matches) > 25 {
+		t.Fatalf("bounded grep returned %d matches", len(matches))
+	}
+	if len(matches) == 0 {
+		t.Fatal("bounded grep returned no matches")
 	}
 }
 

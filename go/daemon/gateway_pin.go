@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/Nebutra/carina/go/rpc"
 )
 
 // gatewayWorkspacePin, when set, binds Gateway HTTP and remote (WebSocket/TCP)
@@ -61,12 +63,19 @@ func (d *Daemon) gatewayRunAllowed(runID string) error {
 }
 
 // gatewayRemoteParamsAllowed is the WebSocket/TCP params guard. Unix-socket
-// dispatch never calls it.
-func (d *Daemon) gatewayRemoteParamsAllowed(method string, params json.RawMessage) error {
-	if d == nil || d.gatewayWorkspacePin == "" {
+// dispatch never calls it. Tenant-bound tokens are required for session-bearing
+// methods; workspace pin remains an additional single-directory bind.
+func (d *Daemon) gatewayRemoteParamsAllowed(method string, params json.RawMessage, claims rpc.GatewayTokenClaims) error {
+	if d == nil {
 		return nil
 	}
 	if gatewayPinExemptMethod(method) {
+		return nil
+	}
+	if err := d.gatewayTenantParamsAllowed(method, params, claims); err != nil {
+		return err
+	}
+	if d.gatewayWorkspacePin == "" {
 		return nil
 	}
 	if method == "session.list" {
@@ -105,6 +114,62 @@ func (d *Daemon) gatewayRemoteParamsAllowed(method string, params json.RawMessag
 		return fmt.Errorf("gateway workspace is pinned and this request is not bound to it")
 	}
 	return nil
+}
+
+func (d *Daemon) gatewayTenantParamsAllowed(method string, params json.RawMessage, claims rpc.GatewayTokenClaims) error {
+	if !gatewayTenantMethod(method) {
+		return nil
+	}
+	tenantID := strings.TrimSpace(claims.TenantID)
+	if tenantID == "" {
+		return fmt.Errorf("gateway token is not bound to a tenant")
+	}
+	var p struct {
+		SessionID     string `json:"session_id"`
+		WorkspaceRoot string `json:"workspace_root"`
+		RunID         string `json:"run_id"`
+		TenantID      string `json:"tenant_id"`
+	}
+	if len(params) > 0 && string(params) != "null" {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return fmt.Errorf("invalid params: %w", err)
+		}
+	}
+	if paramTenant := strings.TrimSpace(p.TenantID); paramTenant != "" && paramTenant != tenantID {
+		return fmt.Errorf("unknown session")
+	}
+	if bound := strings.TrimSpace(claims.SessionID); bound != "" && strings.TrimSpace(p.SessionID) != "" && bound != strings.TrimSpace(p.SessionID) {
+		return fmt.Errorf("unknown session")
+	}
+	if method == "session.list" {
+		return nil
+	}
+	if strings.TrimSpace(p.SessionID) != "" {
+		if _, ok := d.store.Visible(p.SessionID, tenantID); !ok {
+			return fmt.Errorf("unknown session")
+		}
+	}
+	if strings.TrimSpace(p.RunID) != "" {
+		task, ok := d.sched.Get(p.RunID)
+		if !ok || task == nil {
+			return fmt.Errorf("unknown session")
+		}
+		if _, vis := d.store.Visible(task.SessionID, tenantID); !vis {
+			return fmt.Errorf("unknown session")
+		}
+	}
+	return nil
+}
+
+func gatewayTenantMethod(method string) bool {
+	switch method {
+	case "session.get", "session.list", "session.replay", "session.items",
+		"session.review", "session.attach", "session.events.stream",
+		"execution.status", "execution.list":
+		return true
+	default:
+		return strings.HasPrefix(method, "session.")
+	}
 }
 
 func gatewayPinExemptMethod(method string) bool {

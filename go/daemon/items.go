@@ -201,8 +201,8 @@ func (d *Daemon) handleSessionItems(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &fields); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
-	if p.SessionID == "" {
-		return nil, fmt.Errorf("session_id required")
+	if _, err := d.requireNamedSession(p.SessionID, params); err != nil {
+		return nil, err
 	}
 	if _, requested := fields["watermark_version"]; requested {
 		if p.WatermarkVersion == nil || *p.WatermarkVersion != 1 {

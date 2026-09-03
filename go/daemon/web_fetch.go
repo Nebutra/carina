@@ -7,12 +7,12 @@ import (
 	"mime"
 	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/Nebutra/carina/go/netguard"
 	"github.com/Nebutra/carina/go/scheduler"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
@@ -122,53 +122,11 @@ func (d *Daemon) webFetchHTTPClient() *http.Client {
 }
 
 func normalizeWebFetchURL(raw string) (*url.URL, error) {
-	raw = strings.TrimSpace(raw)
-	if strings.Contains(raw, "#") {
-		return nil, fmt.Errorf("URL fragments are not allowed")
-	}
-	target, err := url.ParseRequestURI(raw)
-	if err != nil || target == nil || !target.IsAbs() {
-		return nil, fmt.Errorf("absolute HTTPS URL required")
-	}
-	target.Scheme = strings.ToLower(target.Scheme)
-	if target.Scheme != "https" {
-		return nil, fmt.Errorf("only HTTPS URLs are allowed")
-	}
-	if target.User != nil || target.Hostname() == "" || target.Fragment != "" {
-		return nil, fmt.Errorf("URL credentials, empty hosts, and fragments are not allowed")
-	}
-	if port := target.Port(); port != "" && port != "443" {
-		return nil, fmt.Errorf("only the default HTTPS port is allowed")
-	}
-	host := strings.ToLower(strings.TrimSuffix(target.Hostname(), "."))
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
-		return nil, fmt.Errorf("local network targets are not allowed")
-	}
-	if net.ParseIP(host) != nil {
-		return nil, fmt.Errorf("IP address targets are not allowed")
-	}
-	if !validWebFetchDNSName(host) {
-		return nil, fmt.Errorf("a valid public DNS hostname is required")
-	}
-	target.Host = host
-	return target, nil
+	return netguard.NormalizePublicHTTPSURL(raw)
 }
 
 func validWebFetchDNSName(host string) bool {
-	if host == "" || len(host) > 253 || !strings.Contains(host, ".") || strings.HasPrefix(host, ".") || strings.HasSuffix(host, ".") {
-		return false
-	}
-	for _, label := range strings.Split(host, ".") {
-		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return false
-		}
-		for _, ch := range label {
-			if (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') && ch != '-' {
-				return false
-			}
-		}
-	}
-	return true
+	return netguard.ValidDNSName(host)
 }
 
 func webFetchHost(raw string) string {
@@ -191,66 +149,13 @@ func webFetchTextMediaType(value string) bool {
 }
 
 func publicWebFetchDialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(address)
+	conn, err := netguard.DialPublicContext(ctx, network, address)
 	if err != nil {
-		return nil, fmt.Errorf("web fetch address: %w", err)
+		return nil, fmt.Errorf("web fetch: %w", err)
 	}
-	// The trailing dot makes resolution absolute, so an approved hostname can
-	// never be rewritten through a machine-specific DNS search suffix.
-	addresses, err := net.DefaultResolver.LookupIP(ctx, "ip", host+".")
-	if err != nil {
-		return nil, err
-	}
-	dialer := net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
-	for _, ip := range addresses {
-		if !publicWebFetchIP(ip) {
-			continue
-		}
-		conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
-		if dialErr == nil {
-			return conn, nil
-		}
-		err = dialErr
-	}
-	if err != nil {
-		return nil, err
-	}
-	return nil, fmt.Errorf("web fetch host resolves only to local or private addresses")
+	return conn, nil
 }
 
 func publicWebFetchIP(ip net.IP) bool {
-	if ip == nil || !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() ||
-		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
-		return false
-	}
-	addr, ok := netip.AddrFromSlice(ip)
-	if !ok {
-		return false
-	}
-	addr = addr.Unmap()
-	for _, prefix := range webFetchNonPublicPrefixes {
-		if prefix.Contains(addr) {
-			return false
-		}
-	}
-	return true
-}
-
-var webFetchNonPublicPrefixes = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),     // current network
-	netip.MustParsePrefix("100.64.0.0/10"), // shared address space
-	netip.MustParsePrefix("192.0.0.0/24"),  // protocol assignments
-	netip.MustParsePrefix("192.0.2.0/24"),  // documentation
-	netip.MustParsePrefix("192.88.99.0/24"),
-	netip.MustParsePrefix("198.18.0.0/15"), // benchmarking
-	netip.MustParsePrefix("198.51.100.0/24"),
-	netip.MustParsePrefix("203.0.113.0/24"),
-	netip.MustParsePrefix("240.0.0.0/4"),
-	netip.MustParsePrefix("64:ff9b::/96"), // IPv4 translation ranges
-	netip.MustParsePrefix("64:ff9b:1::/48"),
-	netip.MustParsePrefix("100::/64"),  // discard-only
-	netip.MustParsePrefix("2001::/23"), // protocol assignments and documentation
-	netip.MustParsePrefix("2001:db8::/32"),
-	netip.MustParsePrefix("2002::/16"), // 6to4 transition range
-	netip.MustParsePrefix("3fff::/20"), // documentation
+	return netguard.PublicIP(ip)
 }

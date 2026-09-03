@@ -2,8 +2,10 @@ package toolchain
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 )
 
 // lookPath is exec.LookPath, overridable in tests.
@@ -48,6 +50,31 @@ func InspectSandbox(requested bool) SandboxStatus {
 		st.Reason = "OS sandbox was requested but cannot be applied"
 	}
 	return st
+}
+
+// sandboxProcessEnv is the carina-run process environment when --sandbox is
+// on: host secrets stay out, HOME is the workspace, proxy extras still pass.
+func sandboxProcessEnv(cwd string, extra []string) []string {
+	path := os.Getenv("PATH")
+	tmp := os.Getenv("TMPDIR")
+	if tmp == "" {
+		tmp = "/tmp"
+	}
+	env := []string{
+		"PATH=" + path,
+		"HOME=" + cwd,
+		"TMPDIR=" + tmp,
+	}
+	if lang := os.Getenv("LANG"); lang != "" {
+		env = append(env, "LANG="+lang)
+	}
+	for _, kv := range extra {
+		if strings.HasPrefix(kv, "PATH=") || strings.HasPrefix(kv, "HOME=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return env
 }
 
 func sandboxUnavailableError(st SandboxStatus) error {

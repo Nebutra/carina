@@ -40,16 +40,16 @@ func (d *Daemon) emitCompletion(sessionID string, run *scheduler.ExecutionRun) {
 		"duration_ms":     durationMs,
 		"timestamp":       time.Now().UTC().Format(time.RFC3339),
 	})
-	_ = d.telemetry.Metric("carina.execution.completed", carinatelemetry.Attribution{
+	_ = d.telemetry.Metric("carina.execution.completed", d.sessionAttribution(sessionID, carinatelemetry.Attribution{
 		WorkspaceID: t.WorkspaceID,
 		SessionID:   sessionID,
 		RunID:       t.RunID,
-	}, carinatelemetry.Cost{Requests: 1, InputTokens: int64(t.TokensUsed)})
-	_ = d.telemetry.Log("carina.execution.outcome", carinatelemetry.Attribution{
+	}), carinatelemetry.Cost{Requests: 1, InputTokens: int64(t.TokensUsed)})
+	_ = d.telemetry.Log("carina.execution.outcome", d.sessionAttribution(sessionID, carinatelemetry.Attribution{
 		WorkspaceID: t.WorkspaceID,
 		SessionID:   sessionID,
 		RunID:       t.RunID,
-	}, map[string]any{"status": t.Status, "duration_ms": durationMs, "mode": t.Mode})
+	}), map[string]any{"status": t.Status, "duration_ms": durationMs, "mode": t.Mode})
 }
 
 func (d *Daemon) emitTaskCompletion(sessionID string, task *scheduler.Task) {

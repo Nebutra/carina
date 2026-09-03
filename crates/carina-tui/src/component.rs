@@ -80,6 +80,11 @@ pub enum Action {
     OpenStatus,
     OpenHelp,
     OpenQueue,
+    OpenInbox,
+    InboxAccept,
+    InboxIgnore {
+        mute: bool,
+    },
     OpenPlugins,
     OpenAgents,
     OpenChanges,

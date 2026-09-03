@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Nebutra/carina/go/rpc"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
 
@@ -77,21 +78,22 @@ func TestGatewayRemotePinLeavesUnixSessionCreateOpen(t *testing.T) {
 	if !ok || foreignSess == nil {
 		t.Fatalf("session type %T", sessAny)
 	}
+	localClaims := rpc.GatewayTokenClaims{TenantID: sessionstore.LocalTenantID, Role: rpc.RoleOperator, Scopes: []rpc.Scope{rpc.ScopeRead}}
 	if err := d.gatewayRemoteParamsAllowed("session.get", mustRaw(map[string]any{
 		"session_id": foreignSess.SessionID,
-	})); err == nil || !strings.Contains(err.Error(), "pinned") {
+	}), localClaims); err == nil || !strings.Contains(err.Error(), "pinned") {
 		t.Fatalf("remote session.get outside the pin must fail closed, got %v", err)
 	}
-	if err := d.gatewayRemoteParamsAllowed("session.list", nil); err == nil || !strings.Contains(err.Error(), "session.list") {
+	if err := d.gatewayRemoteParamsAllowed("session.list", nil, localClaims); err == nil || !strings.Contains(err.Error(), "session.list") {
 		t.Fatalf("remote session.list must fail closed when pinned, got %v", err)
 	}
-	if err := d.gatewayRemoteParamsAllowed("execution.list", nil); err == nil || !strings.Contains(err.Error(), "not bound") {
+	if err := d.gatewayRemoteParamsAllowed("execution.list", nil, localClaims); err == nil || !strings.Contains(err.Error(), "not bound") {
 		t.Fatalf("unscoped remote execution.list must fail closed, got %v", err)
 	}
-	if err := d.gatewayRemoteParamsAllowed("daemon.doctor", nil); err != nil {
+	if err := d.gatewayRemoteParamsAllowed("daemon.doctor", nil, rpc.GatewayTokenClaims{}); err != nil {
 		t.Fatalf("doctor must stay readable on a pinned gateway: %v", err)
 	}
-	if err := d.gatewayRemoteParamsAllowed("work.poll", mustRaw(map[string]any{"worker_id": "w1"})); err != nil {
+	if err := d.gatewayRemoteParamsAllowed("work.poll", mustRaw(map[string]any{"worker_id": "w1"}), rpc.GatewayTokenClaims{}); err != nil {
 		t.Fatalf("worker protocol must stay exempt: %v", err)
 	}
 
@@ -105,20 +107,24 @@ func TestGatewayRemotePinLeavesUnixSessionCreateOpen(t *testing.T) {
 	pinnedSess := pinnedAny.(*sessionstore.Session)
 	if err := d.gatewayRemoteParamsAllowed("session.get", mustRaw(map[string]any{
 		"session_id": pinnedSess.SessionID,
-	})); err != nil {
+	}), localClaims); err != nil {
 		t.Fatalf("remote session.get inside the pin must pass: %v", err)
 	}
 	if err := d.gatewayRemoteParamsAllowed("agent.list", mustRaw(map[string]any{
 		"workspace_root": pin,
-	})); err != nil {
+	}), localClaims); err != nil {
 		t.Fatalf("bound agent.list must pass: %v", err)
 	}
 }
 
-func TestGatewayRemoteParamsUnpinnedAllowsUnscopedLists(t *testing.T) {
+func TestGatewayRemoteParamsRequireTenantForSessionList(t *testing.T) {
 	d, _ := newLoopDaemon(t)
 	defer d.Close()
-	if err := d.gatewayRemoteParamsAllowed("session.list", json.RawMessage(`{}`)); err != nil {
-		t.Fatalf("unpinned remote session.list must stay open: %v", err)
+	if err := d.gatewayRemoteParamsAllowed("session.list", json.RawMessage(`{}`), rpc.GatewayTokenClaims{}); err == nil || !strings.Contains(err.Error(), "tenant") {
+		t.Fatalf("unscoped remote session.list without tenant must fail closed, got %v", err)
+	}
+	claims := rpc.GatewayTokenClaims{TenantID: "org_a", Role: rpc.RoleOperator, Scopes: []rpc.Scope{rpc.ScopeRead}}
+	if err := d.gatewayRemoteParamsAllowed("session.list", json.RawMessage(`{}`), claims); err != nil {
+		t.Fatalf("tenant-bound remote session.list must pass when unpinned: %v", err)
 	}
 }

@@ -21,14 +21,18 @@ import (
 )
 
 type toolExecutionOutcome struct {
-	display       string
-	status        string
-	errorCategory string
+	display          string
+	status           string
+	errorCategory    string
+	observationError *ToolObservationError
 	// mediaRefs carries content-addressed references to non-text payloads
 	// (images) the tool produced; display holds only their textual
 	// placeholders. The loop copies these onto the turn's Observation so a
 	// vision-capable model can receive the bytes on later turns.
 	mediaRefs []MediaRef
+	// artifactIDs carries non-media outputs such as quarantined downloads.
+	// Raw bytes never enter display, transcript, or audit payloads.
+	artifactIDs []string
 }
 
 func toolCompleted(display string) toolExecutionOutcome {
@@ -39,16 +43,24 @@ func toolCompletedMedia(display string, refs ...MediaRef) toolExecutionOutcome {
 	return toolExecutionOutcome{display: display, status: "completed", mediaRefs: refs}
 }
 
+func toolCompletedArtifacts(display string, ids ...string) toolExecutionOutcome {
+	return toolExecutionOutcome{display: display, status: "completed", artifactIDs: append([]string(nil), ids...)}
+}
+
 func toolFailed(display, category string) toolExecutionOutcome {
-	return toolExecutionOutcome{display: display, status: "failed", errorCategory: category}
+	return toolExecutionOutcome{display: display, status: "failed", errorCategory: category, observationError: newToolObservationError("failed", category, display)}
 }
 
 func toolDenied(display, category string) toolExecutionOutcome {
-	return toolExecutionOutcome{display: display, status: "denied", errorCategory: category}
+	return toolExecutionOutcome{display: display, status: "denied", errorCategory: category, observationError: newToolObservationError("denied", category, display)}
 }
 
 func toolTimedOut(display string) toolExecutionOutcome {
-	return toolExecutionOutcome{display: display, status: "timed_out", errorCategory: "timeout"}
+	return toolExecutionOutcome{display: display, status: "timed_out", errorCategory: "timeout", observationError: newToolObservationError("timed_out", "timeout", display)}
+}
+
+func toolCancelled(display, category string) toolExecutionOutcome {
+	return toolExecutionOutcome{display: display, status: "cancelled", errorCategory: category, observationError: newToolObservationError("cancelled", category, display)}
 }
 
 func classifyLegacyToolResult(display string) toolExecutionOutcome {
@@ -374,6 +386,25 @@ func (d *Daemon) finishToolCall(sess *sessionstore.Session, task *scheduler.Exec
 		env.ArtifactIDs = ids
 		payload["artifact_ids"] = ids
 	}
+	if len(outcome.artifactIDs) > 0 {
+		ids := append([]string(nil), env.ArtifactIDs...)
+		seen := make(map[string]struct{}, len(ids)+len(outcome.artifactIDs))
+		for _, id := range ids {
+			seen[id] = struct{}{}
+		}
+		for _, id := range outcome.artifactIDs {
+			if id == "" {
+				continue
+			}
+			if _, exists := seen[id]; exists {
+				continue
+			}
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+		env.ArtifactIDs = ids
+		payload["artifact_ids"] = ids
+	}
 	if outcome.status == "completed" {
 		payload["output"] = outputMetadata
 	} else {
@@ -453,26 +484,11 @@ func operatorFacingToolError(display string) string {
 }
 
 func toolKind(tool string) string {
-	switch tool {
-	case "read", "list", "search", "code.search", "code.symbols", "code.map", "code.def", "code.refs", "code.impact", "mcp_find":
-		return "read"
-	case "web.fetch", "web.search":
-		return "network"
-	case "patch", "edit", "memory":
-		return "write"
-	case "run":
-		return "command"
-	case "spawn", "workflow", "best_of_n":
-		return "delegation"
-	case "mcp":
-		return "mcp"
-	case "ask_user":
-		return "interaction"
-	case "todo", "update_plan":
-		return "plan"
-	default:
+	descriptor, ok := defaultBuiltinTools.lookup(tool)
+	if !ok {
 		return "unknown"
 	}
+	return string(descriptor.Effect)
 }
 
 func redactedToolArguments(act *action) map[string]any {
@@ -480,13 +496,42 @@ func redactedToolArguments(act *action) map[string]any {
 	switch act.Tool {
 	case "read", "patch", "edit":
 		args["path"] = act.Path
+		if act.Tool == "read" && act.StartLine != nil && act.LineCount != nil {
+			args["start_line"] = *act.StartLine
+			args["line_count"] = *act.LineCount
+		}
 	case "search":
 		args["pattern"] = act.Pattern
+	case "git.status":
+		args["limit"] = act.Limit
+	case "git.diff":
+		args["view"], args["path_count"] = act.GitView, len(act.Paths)
+	case "git.log":
+		args["revision"], args["max_commits"], args["path_count"] = act.GitRevision, act.MaxCommits, len(act.Paths)
 	case "web.fetch":
 		args["host"] = webFetchHost(act.URL)
 	case "web.search":
 		args["host"] = webSearchHost
 		args["query"] = brief(act.Query, 80)
+	case "browser.open":
+		args["browser_id"], args["tab_id"], args["mode"] = act.BrowserID, act.TabID, act.WaitMode
+		args["approved_origin_count"] = len(act.ApprovedOrigins)
+		if host := webFetchHost(act.URL); host != "" {
+			args["host"] = host
+		}
+	case "browser.snapshot", "browser.capture", "browser.close":
+		args["browser_id"], args["tab_id"] = act.BrowserID, act.TabID
+		if act.Tool == "browser.capture" {
+			args["full_page"] = act.FullPage
+		}
+	case "browser.action":
+		args["browser_id"], args["tab_id"] = act.BrowserID, act.TabID
+		args["action_kind"] = browserActionKind(act.Action)
+	case "browser.tabs":
+		args["browser_id"], args["tab_id"], args["operation"] = act.BrowserID, act.TabID, act.TabOperation
+		if host := webFetchHost(act.URL); host != "" {
+			args["host"] = host
+		}
 	case "run":
 		args["argc"] = len(act.Command)
 		if len(act.Command) > 0 {
@@ -494,6 +539,13 @@ func redactedToolArguments(act *action) map[string]any {
 		}
 	case "spawn":
 		args["agent"], args["task_count"] = act.Agent, max(1, len(act.Tasks))
+		args["background"] = act.Background
+	case "job.list":
+		args["status_count"], args["limit"], args["has_cursor"] = len(act.Statuses), act.Limit, act.Cursor != ""
+	case "job.wait":
+		args["job_count"], args["mode"], args["timeout_ms"] = len(act.JobIDs), act.WaitMode, act.TimeoutMS
+	case "job.cancel":
+		args["job_id"] = act.JobID
 	case "workflow":
 		args["workflow"] = act.Workflow
 	case "best_of_n":

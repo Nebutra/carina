@@ -166,11 +166,12 @@ func (d *Daemon) verifyCandidate(ctx context.Context, sess *sessionstore.Session
 		dec = approved
 	}
 
+	sandbox := d.commandSandbox(sess)
 	d.record(sess.SessionID, "CommandStarted", task.RunID, "zig", map[string]any{
-		"best_of_n_verify": true, "candidate_index": candIndex, "command": canon.Command,
+		"best_of_n_verify": true, "candidate_index": candIndex, "command": canon.Command, "sandbox": sandbox,
 	}, dec.DecisionID)
 
-	result, runErr := d.tools.RunContext(ctx, canon.Argv, scratch, 2*time.Minute, d.egressEnv(), d.sandbox.Load())
+	result, runErr := d.tools.RunContext(ctx, canon.Argv, scratch, 2*time.Minute, d.egressEnv(), sandbox)
 	if runErr != nil {
 		d.record(sess.SessionID, "CommandExited", task.RunID, "zig", map[string]any{
 			"best_of_n_verify": true, "candidate_index": candIndex, "exit_code": -1, "error": runErr.Error(),

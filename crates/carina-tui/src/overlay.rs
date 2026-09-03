@@ -3,13 +3,13 @@ use std::collections::{HashSet, VecDeque};
 use crate::component::Action;
 use crate::file_viewer::FileViewer;
 use crate::glyphs::GlyphPreference;
-use crate::theme::ThemePreference;
 use crate::i18n::MessageId;
 use crate::product_projection::ProductProjection;
 use crate::rpc::{
     AgentRecap, ContextSummary, GovernanceId, QuestionOption, SessionGoal, SessionItemEvent,
     WireEvent,
 };
+use crate::theme::ThemePreference;
 
 #[derive(Debug, Clone)]
 pub enum Overlay {
@@ -30,6 +30,7 @@ pub enum Overlay {
     ToolOutput(ToolOutputOverlay),
     Queue(QueueOverlay),
     Plugins(PluginsOverlay),
+    Inbox(InboxOverlay),
 }
 
 impl Overlay {
@@ -62,6 +63,7 @@ impl Overlay {
                     error: String::new(),
                 }))
             }
+            "proposal.created" => InboxOverlay::from_event(event).map(Self::Inbox),
             _ => None,
         }
     }
@@ -142,7 +144,8 @@ impl Overlay {
             | Self::FileViewer(_)
             | Self::ToolOutput(_)
             | Self::Queue(_)
-            | Self::Plugins(_) => None,
+            | Self::Plugins(_)
+            | Self::Inbox(_) => None,
         }
     }
 }
@@ -250,6 +253,40 @@ pub struct QuestionOverlay {
     pub input: String,
     pub resolving: bool,
     pub error: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct InboxOverlay {
+    pub proposal_id: String,
+    pub run_id: String,
+    pub title: String,
+    pub why: String,
+    pub done: String,
+    pub propose: String,
+    pub risk: String,
+    pub resolving: bool,
+    pub error: String,
+}
+
+impl InboxOverlay {
+    fn from_event(event: &WireEvent) -> Option<Self> {
+        let proposal_id = event_payload_string(event, "proposal_id");
+        let title = event_payload_string(event, "title");
+        if proposal_id.is_empty() || title.is_empty() {
+            return None;
+        }
+        Some(Self {
+            proposal_id,
+            run_id: event.run_id.clone(),
+            title,
+            why: event_payload_string(event, "why"),
+            done: event_payload_string(event, "done"),
+            propose: event_payload_string(event, "propose"),
+            risk: event_payload_string(event, "risk"),
+            resolving: false,
+            error: String::new(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -803,6 +840,16 @@ impl OverlayStack {
     }
 }
 
+fn event_payload_string(event: &WireEvent, key: &str) -> String {
+    event
+        .payload
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_owned()
+}
+
 fn item_detail(
     details: &std::collections::BTreeMap<String, serde_json::Value>,
     key: &str,
@@ -1054,6 +1101,23 @@ mod tests {
             prompt: String::new(),
             options: Vec::new(),
         }
+    }
+
+    #[test]
+    fn proposal_created_opens_a_non_governance_inbox() {
+        let mut event = event("proposal.created");
+        event.payload.insert("proposal_id".into(), "prop_1".into());
+        event
+            .payload
+            .insert("title".into(), "Prepare tests for auth".into());
+        event.payload.insert("why".into(), "touched auth".into());
+        let overlay = Overlay::from_event(&event).expect("inbox overlay");
+        assert!(!overlay.is_governance());
+        let Overlay::Inbox(inbox) = overlay else {
+            panic!("proposal.created must open inbox");
+        };
+        assert_eq!(inbox.proposal_id, "prop_1");
+        assert_eq!(inbox.title, "Prepare tests for auth");
     }
 
     #[test]

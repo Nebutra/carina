@@ -12,7 +12,8 @@ import (
 // recordCompactRebuild rehydrates cited files into the volatile transcript
 // after a Step-2 fold, then audits the receipt. Rebuild never mutates the
 // cacheable Workspace/F prefix: greetings and converse still must not dump
-// AGENTS.md just because compact ran.
+// AGENTS.md just because compact ran. Build/plan append a verbatim project-
+// instructions item (P1-C5) into Rebuild only.
 func (d *Daemon) recordCompactRebuild(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, receipt *CompactionReceipt, extra map[string]any) {
 	if d == nil || receipt == nil {
 		return
@@ -50,8 +51,27 @@ func (d *Daemon) rebuildAfterCompact(sess *sessionstore.Session, task *scheduler
 	}
 
 	var b strings.Builder
+	ensureHeader := func() {
+		if b.Len() == 0 {
+			b.WriteString("REBUILT CONTEXT (post-compact; re-read, not new user input):\n")
+		}
+	}
+	if d != nil && sess != nil && !d.safeMode && shouldLoadProjectInstructions(taskAgent(task)) {
+		if mem := strings.TrimSpace(loadMemory(sess.WorkspaceRoot)); mem != "" {
+			ensureHeader()
+			const header = "PROJECT INSTRUCTIONS (rehydrated after compact; not new user input):\n"
+			limit := maxRebuildTotalBytes / 2
+			if n := len(header) + len(mem) + 1; n < limit {
+				limit = n
+			}
+			body := truncateUTF8Bytes(mem, limit-len(header)-1)
+			if strings.TrimSpace(body) != "" {
+				fmt.Fprintf(&b, "%s%s\n", header, body)
+			}
+		}
+	}
 	var kept []string
-	remaining := maxRebuildTotalBytes
+	remaining := maxRebuildTotalBytes - b.Len()
 	for _, rel := range paths {
 		if remaining <= 64 {
 			break
@@ -68,9 +88,7 @@ func (d *Daemon) rebuildAfterCompact(sess *sessionstore.Session, task *scheduler
 		if strings.TrimSpace(body) == "" {
 			continue
 		}
-		if b.Len() == 0 {
-			b.WriteString("REBUILT CONTEXT (post-compact; re-read, not new user input):\n")
-		}
+		ensureHeader()
 		fmt.Fprintf(&b, "--- %s ---\n%s\n", rel, body)
 		remaining = maxRebuildTotalBytes - b.Len()
 		kept = append(kept, rel)

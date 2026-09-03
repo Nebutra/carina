@@ -63,6 +63,7 @@ type Config struct {
 	DisableAlwaysApprove       bool                `json:"disable_always_approve"`
 	EnableDebugRPC             bool                `json:"enable_debug_rpc"`
 	BestOfNEnabled             bool                `json:"best_of_n_enabled"`
+	BuiltinToolRegistryMode    string              `json:"builtin_tool_registry_mode"`
 	SummarizerModel            string              `json:"summarizer_model"`
 	RiskReviewMode             string              `json:"risk_review_mode"`
 	RiskReviewModel            string              `json:"risk_review_model"`
@@ -98,6 +99,7 @@ func Defaults(home string) Config {
 		NebutraSyncMode:           nebutra.SyncModeOff,
 		ContextEngine:             contextengine.ModeAuto,
 		MemoryProvider:            "off",
+		BuiltinToolRegistryMode:   "descriptor",
 		InteractiveApproval:       true,
 		MemoryHMSTimeoutMS:        3000,
 		MemoryHMSMaxEvidence:      8,
@@ -244,6 +246,7 @@ func mergeEnv(cfg *Config) {
 	envBool("CARINA_DISABLE_ALWAYS_APPROVE", &cfg.DisableAlwaysApprove)
 	envBool("CARINA_ENABLE_DEBUG_RPC", &cfg.EnableDebugRPC)
 	envBool("CARINA_BEST_OF_N_ENABLED", &cfg.BestOfNEnabled)
+	envStr("CARINA_BUILTIN_TOOL_REGISTRY_MODE", &cfg.BuiltinToolRegistryMode)
 	envInt("CARINA_MAX_CONCURRENT_TASKS", &cfg.MaxConcurrentTasks)
 	envInt("CARINA_MAX_TASK_TOKENS", &cfg.MaxTaskTokens)
 	envStr("CARINA_MEMORY_PROVIDER", &cfg.MemoryProvider)
@@ -317,6 +320,9 @@ func (c Config) Validate() error {
 	if mode := strings.ToLower(strings.TrimSpace(c.RiskReviewMode)); mode != "" && mode != "off" && mode != "advisory" && mode != "enforce" {
 		return fmt.Errorf("config: risk_review_mode must be one of off, advisory, enforce")
 	}
+	if mode := strings.ToLower(strings.TrimSpace(c.BuiltinToolRegistryMode)); mode != "" && mode != "legacy" && mode != "shadow" && mode != "descriptor" {
+		return fmt.Errorf("config: builtin_tool_registry_mode must be one of legacy, shadow, descriptor")
+	}
 	// Product HITL axis only (ask|always-approve|dont-ask). Session/kernel
 	// axis values (untrusted|on_request|never) belong on session.create, not here.
 	if mode := strings.ToLower(strings.TrimSpace(c.ApprovalMode)); mode != "" {
@@ -361,6 +367,7 @@ var projectRestrictedMemoryKeys = map[string]bool{
 	"memory_hms_api_key_env": true, "memory_hms_timeout_ms": true,
 	"memory_hms_max_evidence": true, "memory_hms_bank_key_env": true,
 	"memory_hms_projection_enabled": true, "memory_hms_projection_poll_ms": true,
+	"builtin_tool_registry_mode": true,
 }
 
 func rejectProjectMemoryProviderConfig(path string) error {

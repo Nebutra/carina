@@ -47,6 +47,19 @@ carina doctor
 - model-router / BYOK 可通过 `CARINA_REASONER_MODEL` 固定模型。
 - 外部兼容后端必须显式设置 `CARINA_REASONER_BACKEND=claude-cli` 或 `CARINA_REASONER_BACKEND=codex-cli`。
 
+## 原生浏览器运行时（可选）
+
+托管浏览器工具会在 macOS 和 Linux 自动发现 Google Chrome、Chromium 或
+Microsoft Edge。只有自动发现不适用时，才用 `CARINA_BROWSER_PATH` 指定绝对的
+可执行文件路径。未安装受支持浏览器时，浏览器工具返回可恢复的 unavailable
+结果，不会阻止 daemon 启动。
+
+`CARINA_BROWSER_ATTACH_ENDPOINT` 是仅供操作者使用的显式附着入口，用于一个
+已配置的 Chromium debugging endpoint。它只能存在于部署配置中，不能进入项目
+配置或模型输入。附着模式不会扫描端口，只允许 `full-workspace` 会话，并且即使
+普通审批模式是 `always-approve`，仍必须等待实时 `BrowserAttach` 审批。正常的
+隔离托管模式应保持该变量未设置。
+
 ## 可选 Gateway
 
 网络 listener 默认关闭。只有准备好签名密钥和显式 bind 时才开启 WebSocket / HTTP Gateway，完整约束见 [Runtime API](/zh-cn/api/overview/)。

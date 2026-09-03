@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,24 @@ import (
 	"github.com/Nebutra/carina/go/runtimecontract"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
+
+type blockingSpawnReasoner struct {
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (r *blockingSpawnReasoner) Name() string { return "blocking-spawn" }
+
+func (r *blockingSpawnReasoner) Think(ctx context.Context, _ string) (string, error) {
+	r.once.Do(func() { close(r.entered) })
+	select {
+	case <-r.release:
+		return `{"tool":"done","summary":"background child completed"}`, nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
 
 func TestAttenuateChildNeverExceedsParent(t *testing.T) {
 	// child requests more than parent -> clamped to parent
@@ -105,6 +124,174 @@ func TestSpawnUsesWorktreeOnlyForWritableProfiles(t *testing.T) {
 	}
 	if !spawnUsesWorktree("safe-edit") || !spawnUsesWorktree("full-workspace") {
 		t.Fatal("writable spawn must request worktree isolation")
+	}
+}
+
+func TestBackgroundSpawnReturnsDurableHandleBeforeCompletion(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	agentsDir := filepath.Join(ws, ".carina", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "scout.md"), []byte("---\nname: scout\nprofile: read-only\nmax_turns: 2\n---\nScout.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reasoner := &blockingSpawnReasoner{entered: make(chan struct{}), release: make(chan struct{})}
+	d.SetReasoner(reasoner)
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "delegate in background")
+
+	_, outcome := d.executeActionOutcome(parent, parentTask, &action{
+		Tool: "spawn", Agent: "scout", Task: "inspect the workspace", Background: true,
+	})
+	if outcome.status != "completed" {
+		t.Fatalf("background spawn outcome = %+v", outcome)
+	}
+	var result struct {
+		Jobs []backgroundSpawnHandle `json:"jobs"`
+	}
+	if err := json.Unmarshal([]byte(outcome.display), &result); err != nil || len(result.Jobs) != 1 {
+		t.Fatalf("background handle = %q err=%v", outcome.display, err)
+	}
+	handle := result.Jobs[0]
+	if handle.JobID == "" || handle.Status != "queued" {
+		t.Fatalf("background handle = %+v", handle)
+	}
+	select {
+	case <-reasoner.entered:
+	case <-time.After(time.Second):
+		t.Fatal("background child did not start")
+	}
+	current, ok := d.sched.Get(handle.JobID)
+	if !ok || current.Status != "running" || current.Mode != "background" ||
+		current.ParentRunID != parentTask.RunID || current.RootRunID != parentTask.RunID {
+		t.Fatalf("live background job = %+v ok=%v", current, ok)
+	}
+	if current.Summary != "" {
+		t.Fatalf("handle returned after result was available: %+v", current)
+	}
+	persisted := false
+	for _, run := range d.runs.load() {
+		if run.RunID == handle.JobID && run.ParentRunID == parentTask.RunID && run.RootRunID == parentTask.RunID && run.Mode == "background" {
+			persisted = true
+		}
+	}
+	if !persisted {
+		t.Fatal("background handle was returned before its lineage was durable")
+	}
+
+	updates, unsubscribe := d.sched.SubscribeRunUpdates(handle.JobID)
+	defer unsubscribe()
+	close(reasoner.release)
+	deadline := time.After(2 * time.Second)
+	for {
+		current, _ = d.sched.Get(handle.JobID)
+		if current.Status == "completed" {
+			break
+		}
+		select {
+		case <-updates:
+		case <-deadline:
+			t.Fatalf("background child did not complete: %+v", current)
+		}
+	}
+	if current.Summary != "background child completed" {
+		t.Fatalf("background summary = %q", current.Summary)
+	}
+}
+
+func TestBackgroundSpawnImmediateCancelUsesOwnedTaskContext(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	agentsDir := filepath.Join(ws, ".carina", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "scout.md"), []byte("---\nname: scout\nprofile: read-only\nmax_turns: 2\n---\nScout.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reasoner := &blockingSpawnReasoner{entered: make(chan struct{}), release: make(chan struct{})}
+	d.SetReasoner(reasoner)
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "delegate in background")
+
+	_, outcome := d.executeActionOutcome(parent, parentTask, &action{
+		Tool: "spawn", Agent: "scout", Task: "wait until cancelled", Background: true,
+	})
+	var result struct {
+		Jobs []backgroundSpawnHandle `json:"jobs"`
+	}
+	if err := json.Unmarshal([]byte(outcome.display), &result); err != nil || len(result.Jobs) != 1 {
+		t.Fatalf("background handle = %q err=%v", outcome.display, err)
+	}
+	jobID := result.Jobs[0].JobID
+	if _, err := d.handleTaskCancel(mustJSON(t, map[string]any{"run_id": jobID})); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		current, _ := d.sched.Get(jobID)
+		if current.Status == "cancelled" {
+			d.taskContextMu.Lock()
+			_, stillOwned := d.taskCancels[jobID]
+			d.taskContextMu.Unlock()
+			if !stillOwned {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	current, _ := d.sched.Get(jobID)
+	if current.Status != "cancelled" {
+		t.Fatalf("immediate cancel status = %+v", current)
+	}
+	t.Fatal("background task context was not released after cancellation")
+}
+
+func TestBackgroundSpawnFanoutReturnsOneHandlePerChild(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	agentsDir := filepath.Join(ws, ".carina", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "scout.md"), []byte("---\nname: scout\nprofile: read-only\nmax_turns: 2\n---\nScout.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reasoner := &blockingSpawnReasoner{entered: make(chan struct{}), release: make(chan struct{})}
+	d.SetReasoner(reasoner)
+	parent, _ := d.store.CreateSessionMode(ws, "full-workspace", "on_request")
+	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
+	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "delegate fanout")
+
+	_, outcome := d.executeActionOutcome(parent, parentTask, &action{
+		Tool: "spawn", Background: true,
+		Tasks: []SpawnTask{{Agent: "scout", Task: "first"}, {Agent: "scout", Task: "second"}},
+	})
+	var result struct {
+		Jobs []backgroundSpawnHandle `json:"jobs"`
+	}
+	if err := json.Unmarshal([]byte(outcome.display), &result); err != nil || len(result.Jobs) != 2 {
+		t.Fatalf("background fanout = %q err=%v", outcome.display, err)
+	}
+	if result.Jobs[0].JobID == result.Jobs[1].JobID {
+		t.Fatalf("fanout reused one handle: %+v", result.Jobs)
+	}
+	for _, handle := range result.Jobs {
+		job, ok := d.sched.Get(handle.JobID)
+		if !ok || job.ParentRunID != parentTask.RunID || job.RootRunID != parentTask.RunID || job.Mode != "background" {
+			t.Fatalf("fanout job = %+v ok=%v", job, ok)
+		}
+	}
+	close(reasoner.release)
+	waited := builtinJobWaitHandler(context.Background(), d, parent, parentTask, &action{
+		JobIDs: []string{result.Jobs[0].JobID, result.Jobs[1].JobID}, WaitMode: "all", TimeoutMS: 1000,
+	})
+	if waited.status != "completed" || !strings.Contains(waited.display, `"condition_met":true`) {
+		t.Fatalf("fanout wait = %+v", waited)
 	}
 }
 

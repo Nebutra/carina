@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Nebutra/carina/go/kernel"
+	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
 
 const memoryControllerVersion = 1
@@ -395,9 +396,9 @@ func (d *Daemon) handleMemoryRollback(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, err
 	}
-	sess, ok := d.store.Get(p.SessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session %s", p.SessionID)
+	sess, err := d.requireNamedSession(p.SessionID, params)
+	if err != nil {
+		return nil, err
 	}
 	row, ok := d.memoryVersions.find(memoryScopeFromSession(sess), p.Target, p.Revision)
 	if !ok {
@@ -417,9 +418,15 @@ func (d *Daemon) handleMemoryHandoff(params json.RawMessage) (any, error) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, err
 	}
-	src, ok := d.store.Get(p.SourceSessionID)
-	if !ok {
+	src, err := d.requireNamedSession(p.SourceSessionID, params)
+	if err != nil {
 		return nil, fmt.Errorf("unknown source session")
+	}
+	if _, err := d.requireNamedSession(p.TargetSessionID, params); err != nil {
+		return nil, fmt.Errorf("unknown target session")
+	}
+	if !sessionstore.SameTenant(src.TenantID, d.sessionTenantID(p.TargetSessionID)) {
+		return nil, fmt.Errorf("unknown target session")
 	}
 	sourceState, err := d.memory.list(memoryScopeFromSession(src), p.Target)
 	if err != nil {

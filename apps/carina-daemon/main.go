@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Nebutra/carina/go/browser"
 	"github.com/Nebutra/carina/go/config"
 	"github.com/Nebutra/carina/go/daemon"
 	"github.com/Nebutra/carina/go/localdaemon"
@@ -24,6 +25,13 @@ import (
 )
 
 func main() {
+	if handled, err := browser.MaybeExecChromeLauncher(); handled {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "carina browser launcher: %v\n", err)
+			os.Exit(127)
+		}
+		return
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		log.Fatalf("carina-daemon: %v", err)
@@ -161,6 +169,9 @@ func main() {
 		DisableAlwaysApprove:       *disableAlwaysApprove,
 		EnableDebugRPC:             *enableDebugRPC,
 		BestOfNEnabled:             *bestOfNEnabled,
+		BuiltinToolRegistryMode:    cfg.BuiltinToolRegistryMode,
+		BrowserChromePath:          os.Getenv("CARINA_BROWSER_PATH"),
+		BrowserAttachEndpoint:      os.Getenv("CARINA_BROWSER_ATTACH_ENDPOINT"),
 		RiskReviewMode:             *riskReviewMode,
 		RiskReviewModel:            *riskReviewModel,
 		NebutraCloudEndpoint:       *nebutraCloud,

@@ -156,7 +156,7 @@ func (d *Daemon) askUserOutcome(sess *sessionstore.Session, task *scheduler.Exec
 		d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "operator", map[string]any{
 			"status": "user_question_resolved", "question_id": questionID, "cancelled": true,
 		}, "")
-		return toolExecutionOutcome{display: "User question cancelled.", status: "cancelled", errorCategory: "operator_cancelled"}
+		return toolCancelled("User question cancelled.", "operator_cancelled")
 	}
 	d.sched.SetStatus(task.RunID, "running")
 	payload := map[string]any{

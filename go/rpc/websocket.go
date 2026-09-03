@@ -104,66 +104,66 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, 
 	}
 	ws := newWebSocketConn(conn, rw.Reader)
 	_ = ws.SetReadDeadline(time.Now().Add(10 * time.Second))
-	scopes, err := s.requireWebSocketHello(ws, opts.TokenVerifier)
+	scopes, claims, err := s.requireWebSocketHello(ws, opts.TokenVerifier)
 	if err != nil {
 		_ = ws.Close()
 		return
 	}
 	_ = ws.SetReadDeadline(time.Time{})
-	s.serveWithScopes(ws, OriginRemote, scopes)
+	s.serveAuthenticated(ws, OriginRemote, scopes, claims)
 }
 
-func (s *Server) requireWebSocketHello(conn net.Conn, verifier GatewayTokenVerifier) ([]Scope, error) {
+func (s *Server) requireWebSocketHello(conn net.Conn, verifier GatewayTokenVerifier) ([]Scope, GatewayTokenClaims, error) {
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	enc := json.NewEncoder(conn)
 	if !scanner.Scan() {
-		return nil, fmt.Errorf("websocket: gateway.hello required")
+		return nil, GatewayTokenClaims{}, fmt.Errorf("websocket: gateway.hello required")
 	}
 	var req Request
 	if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
 		_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeParseError, Message: err.Error()}})
-		return nil, err
+		return nil, GatewayTokenClaims{}, err
 	}
 	if req.Method != "gateway.hello" {
 		_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: "gateway.hello required before method dispatch"}})
-		return nil, fmt.Errorf("websocket: first method was %s", req.Method)
+		return nil, GatewayTokenClaims{}, fmt.Errorf("websocket: first method was %s", req.Method)
 	}
 	if ok, reason := s.remoteAuthorized(req.Method, OriginRemote); !ok {
 		_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeMethodNotFound, Message: reason}})
-		return nil, fmt.Errorf("websocket: %s", reason)
+		return nil, GatewayTokenClaims{}, fmt.Errorf("websocket: %s", reason)
 	}
 	var hello HelloRequest
 	if len(req.Params) > 0 {
 		if err := json.Unmarshal(req.Params, &hello); err != nil {
 			_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeParseError, Message: err.Error()}})
-			return nil, err
+			return nil, GatewayTokenClaims{}, err
 		}
 	}
 	if verifier == nil {
 		err := fmt.Errorf("gateway token verifier unavailable")
 		_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: err.Error()}})
-		return nil, err
+		return nil, GatewayTokenClaims{}, err
 	}
 	if strings.TrimSpace(hello.Token) == "" {
 		err := fmt.Errorf("gateway token required")
 		_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: err.Error()}})
-		return nil, err
+		return nil, GatewayTokenClaims{}, err
 	}
 	claims, err := verifier.Verify(hello.Token, "ws")
 	if err != nil {
 		_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: "gateway token invalid"}})
-		return nil, err
+		return nil, GatewayTokenClaims{}, err
 	}
 	if hello.Role != "" && hello.Role != claims.Role {
 		err := fmt.Errorf("gateway token role mismatch")
 		_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: err.Error()}})
-		return nil, err
+		return nil, GatewayTokenClaims{}, err
 	}
 	scopes, err := IntersectScopes(claims.Scopes, hello.Scopes)
 	if err != nil {
 		_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: CodeInvalidRequest, Message: err.Error()}})
-		return nil, err
+		return nil, GatewayTokenClaims{}, err
 	}
 	hello.Role = claims.Role
 	hello.Scopes = scopes
@@ -181,9 +181,9 @@ func (s *Server) requireWebSocketHello(conn net.Conn, verifier GatewayTokenVerif
 	}
 	_ = enc.Encode(resp)
 	if resp.Error != nil {
-		return nil, resp.Error
+		return nil, GatewayTokenClaims{}, resp.Error
 	}
-	return scopes, nil
+	return scopes, claims, nil
 }
 
 func headerHasToken(h http.Header, key, token string) bool {

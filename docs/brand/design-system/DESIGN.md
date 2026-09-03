@@ -14,7 +14,7 @@ The system is built on three ideas:
 
 The result is dark, exact, and operational. The nebula is translated into a low-chroma mineral field with sparse high-energy color. Color is used as signal taxonomy, not wallpaper.
 
-The accepted identity adds one deliberately separate brand primitive: `brand-rose` (`#8e4053`) for the Carina symbol. It identifies the mark; it does not replace ion cyan as the product interaction color.
+The accepted identity adds one deliberately separate brand primitive: `brand-rose` (`#8e4053`) for the Carina symbol. It identifies the mark; it does not replace ion cyan as the product interaction color. Dark terminals paint the mark with `terminal-brand-display` (`#a86d79`), a documented lift of brand-rose that meets WCAG 4.5:1 on void/`Color::Reset`. Do not substitute an improvised pink.
 
 ## 2. What Changes From Perk
 

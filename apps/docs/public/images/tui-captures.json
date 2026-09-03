@@ -4,7 +4,7 @@
   "inputs": {
     "brandVariables": {
       "path": "docs/brand/design-system/variables.css",
-      "sha256": "22377ba9c6feded9ad93ca561f1a549af897022085a0565e8fbfcc3cd6926752"
+      "sha256": "4d999cf87f968e426f062a8272ddfa8b1492fab8a314152d34f3f684865ea70f"
     },
     "font": {
       "path": "apps/docs/public/fonts/geist-mono-latin-variable.woff2",
@@ -17,17 +17,17 @@
       "output": "apps/docs/public/images/tui-session.webp",
       "terminalCells": "120x30",
       "pixels": "1256x656",
-      "sha256": "cd2ad5d614e3d0bef56aaccd1b2dad135264fc85cc4e04de2c492bf8105591c6",
+      "sha256": "9403a038ce42eec8c2337964d0a66c3a085caa71ea2af7c14a56d15866666568",
       "sources": [
         {
           "path": "crates/carina-tui/src/app/snapshots/carina_tui__app__render__transcript_tests__visual_density_en_120.snap",
           "row": 0,
-          "sha256": "f7c5302396494cbd739b53c99eed320b7be01813993c2fe8b20519baf01996a4"
+          "sha256": "1907442e797177a7c28595cdf68ec978c56c73d6ce90b19c07c92567d423f3c8"
         },
         {
           "path": "crates/carina-tui/src/app/snapshots/carina_tui__app__render__transcript_tests__composer_chrome_en_running_120.snap",
-          "row": 28,
-          "sha256": "0872c6e63d267eac4202bfdff0f5e6bc15a16162effaf6c74fa89b4b86f2ac3d"
+          "row": 27,
+          "sha256": "0f83ae9d1842bf15ac362ed8c732579d9419d8b98e9a8e10b4337212e09881b5"
         }
       ]
     },
@@ -36,12 +36,12 @@
       "output": "apps/docs/public/images/tui-review.webp",
       "terminalCells": "160x40",
       "pixels": "1656x856",
-      "sha256": "56d6e67c8865c2de96b545e008ad2c7fa5b99448d3512923f25eb38de94f1875",
+      "sha256": "7cd557092d18f4a7da3d842ea9b2687cc186efdc1af0e55617b7ce561d6aaae1",
       "sources": [
         {
           "path": "crates/carina-tui/src/app/snapshots/carina_tui__app__render__transcript_tests__fullscreen_patch_review_en_160.snap",
           "row": 0,
-          "sha256": "7b5650660b0254adc97aaa75ce1b9d9f5e921f4934cc563e7099bbe985741403"
+          "sha256": "cdf1bb5dac0ee1dbb270a3d8c5e39771dfa650935cc324048706382672b39bf7"
         }
       ]
     },
@@ -50,12 +50,12 @@
       "output": "apps/docs/public/images/tui-review-zh-cn.webp",
       "terminalCells": "160x40",
       "pixels": "1656x856",
-      "sha256": "8c4ada0b8cba8d243481a4ea896c336f23810501c20f5086234b197e51bde4c4",
+      "sha256": "1427caafeb343cb3f0ba7ce513969497f222e0b1beb44796db37c902344c7380",
       "sources": [
         {
           "path": "crates/carina-tui/src/app/snapshots/carina_tui__app__render__transcript_tests__fullscreen_patch_review_zh_hans_160.snap",
           "row": 0,
-          "sha256": "3b76402dee31c342940bee9fcbe3f664f320e1e5371b0edc647f2719427a082b"
+          "sha256": "c42727f7db4f10b0d00639551390702777a617c19eff6808a869a78addf99194"
         }
       ]
     }

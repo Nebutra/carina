@@ -5,7 +5,7 @@
 
 use std::process::{Command, Stdio};
 
-use crate::i18n::{text, Locale, MessageId};
+use crate::i18n::{Locale, MessageId, text};
 use crate::rpc::ExecutionLifecycle;
 
 pub const DESKTOP_NOTIFY_ENV: &str = "CARINA_DESKTOP_NOTIFY";

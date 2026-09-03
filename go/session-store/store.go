@@ -26,9 +26,14 @@ import (
 // overwritten.
 const SessionVersion = 1
 
+// LocalTenantID is the implicit tenant for Unix-socket / TUI sessions that
+// do not name one. Embed and Gateway paths must set a real tenant instead.
+const LocalTenantID = "local"
+
 type Session struct {
 	Version                 int       `json:"version,omitempty"`
 	SessionID               string    `json:"session_id"`
+	TenantID                string    `json:"tenant_id,omitempty"`
 	Name                    string    `json:"name,omitempty"`
 	WorkspaceID             string    `json:"workspace_id"`
 	WorkspaceRoot           string    `json:"workspace_root"`
@@ -277,7 +282,12 @@ func (s *Store) CreateSession(workspaceRoot, profile string) (*Session, error) {
 
 // CreateSessionMode also sets the per-session approval mode (goal axis).
 func (s *Store) CreateSessionMode(workspaceRoot, profile, approvalMode string) (*Session, error) {
-	return s.createSession(NewID("ws"), workspaceRoot, profile, approvalMode, "", 0)
+	return s.createSession(NewID("ws"), workspaceRoot, profile, approvalMode, "", 0, LocalTenantID)
+}
+
+// CreateSessionModeForTenant is CreateSessionMode with an explicit tenant.
+func (s *Store) CreateSessionModeForTenant(tenantID, workspaceRoot, profile, approvalMode string) (*Session, error) {
+	return s.createSession(NewID("ws"), workspaceRoot, profile, approvalMode, "", 0, tenantID)
 }
 
 // CreateSessionModeForWorkspace creates a session anchored to a stable
@@ -286,14 +296,21 @@ func (s *Store) CreateSessionModeForWorkspace(workspaceID, workspaceRoot, profil
 	if strings.TrimSpace(workspaceID) == "" {
 		return nil, fmt.Errorf("sessionstore: workspace id is required")
 	}
-	return s.createSession(workspaceID, workspaceRoot, profile, approvalMode, "", 0)
+	return s.createSession(workspaceID, workspaceRoot, profile, approvalMode, "", 0, LocalTenantID)
+}
+
+func (s *Store) CreateSessionModeForWorkspaceTenant(workspaceID, workspaceRoot, profile, approvalMode, tenantID string) (*Session, error) {
+	if strings.TrimSpace(workspaceID) == "" {
+		return nil, fmt.Errorf("sessionstore: workspace id is required")
+	}
+	return s.createSession(workspaceID, workspaceRoot, profile, approvalMode, "", 0, tenantID)
 }
 
 // CreateSubSession creates an isolated subagent session linked to a parent,
 // at depth = parent.Depth + 1 (bounded by the caller to prevent runaway
 // nesting).
 func (s *Store) CreateSubSession(workspaceRoot, profile, approvalMode, parentID string, depth int) (*Session, error) {
-	return s.createSession(NewID("ws"), workspaceRoot, profile, approvalMode, parentID, depth)
+	return s.createSession(NewID("ws"), workspaceRoot, profile, approvalMode, parentID, depth, s.tenantOf(parentID))
 }
 
 // CreateSubSessionForWorkspace creates a child session under the stable
@@ -302,7 +319,7 @@ func (s *Store) CreateSubSessionForWorkspace(workspaceID, workspaceRoot, profile
 	if strings.TrimSpace(workspaceID) == "" {
 		return nil, fmt.Errorf("sessionstore: workspace id is required")
 	}
-	return s.createSession(workspaceID, workspaceRoot, profile, approvalMode, parentID, depth)
+	return s.createSession(workspaceID, workspaceRoot, profile, approvalMode, parentID, depth, s.tenantOf(parentID))
 }
 
 // FindForkRequest resolves a durable client fork identity. Reusing an identity
@@ -354,6 +371,7 @@ func (s *Store) CreateForkSession(source *Session, taskID string, turn int, requ
 
 	child := &Session{
 		SessionID:           NewID("sess"),
+		TenantID:            NormalizeTenantID(source.TenantID),
 		WorkspaceID:         source.WorkspaceID,
 		WorkspaceRoot:       source.WorkspaceRoot,
 		Status:              "active",
@@ -378,12 +396,14 @@ func (s *Store) CreateForkSession(source *Session, taskID string, turn int, requ
 	return &copy, true, nil
 }
 
-func (s *Store) createSession(workspaceID, workspaceRoot, profile, approvalMode, parentID string, depth int) (*Session, error) {
+func (s *Store) createSession(workspaceID, workspaceRoot, profile, approvalMode, parentID string, depth int, tenantID string) (*Session, error) {
 	if profile == "" {
 		profile = "safe-edit"
 	}
+	tenantID = NormalizeTenantID(tenantID)
 	sess := &Session{
 		SessionID:         NewID("sess"),
+		TenantID:          tenantID,
 		WorkspaceID:       workspaceID,
 		WorkspaceRoot:     workspaceRoot,
 		Status:            "active",
@@ -394,12 +414,129 @@ func (s *Store) createSession(workspaceID, workspaceRoot, profile, approvalMode,
 		CreatedAt:         time.Now().UTC(),
 	}
 	s.mu.Lock()
+	if err := s.ensureWorkspaceTenantLocked(tenantID, workspaceRoot); err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
 	s.sessions[sess.SessionID] = sess
 	s.mu.Unlock()
 	if err := s.persist(sess); err != nil {
+		s.mu.Lock()
+		delete(s.sessions, sess.SessionID)
+		s.mu.Unlock()
 		return nil, err
 	}
 	return sess, nil
+}
+
+// NormalizeTenantID maps an omitted tenant to the local owner tenant.
+func NormalizeTenantID(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return LocalTenantID
+	}
+	return id
+}
+
+func SameTenant(a, b string) bool {
+	return NormalizeTenantID(a) == NormalizeTenantID(b)
+}
+
+func (s *Store) tenantOf(sessionID string) string {
+	if s == nil || strings.TrimSpace(sessionID) == "" {
+		return LocalTenantID
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if sess, ok := s.sessions[sessionID]; ok && sess != nil {
+		return NormalizeTenantID(sess.TenantID)
+	}
+	return LocalTenantID
+}
+
+func (s *Store) ensureWorkspaceTenantLocked(tenantID, workspaceRoot string) error {
+	root := strings.TrimSpace(workspaceRoot)
+	if root == "" {
+		return nil
+	}
+	for _, existing := range s.sessions {
+		if existing == nil || strings.TrimSpace(existing.WorkspaceRoot) != root {
+			continue
+		}
+		if !SameTenant(existing.TenantID, tenantID) {
+			return fmt.Errorf("sessionstore: workspace belongs to another tenant")
+		}
+	}
+	return nil
+}
+
+// Visible returns a session only when it belongs to tenant. A mismatch is
+// indistinguishable from unknown so callers cannot enumerate foreign tenants.
+func (s *Store) Visible(sessionID, tenantID string) (*Session, bool) {
+	sess, ok := s.Get(sessionID)
+	if !ok || sess == nil || !SameTenant(sess.TenantID, tenantID) {
+		return nil, false
+	}
+	return sess, true
+}
+
+func (s *Store) ListByTenant(tenantID string) []*Session {
+	tenantID = NormalizeTenantID(tenantID)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*Session, 0)
+	for _, sess := range s.sessions {
+		if SameTenant(sess.TenantID, tenantID) {
+			out = append(out, sess)
+		}
+	}
+	return out
+}
+
+func (s *Store) TenantOwnsPath(tenantID, abs string) bool {
+	tenantID = NormalizeTenantID(tenantID)
+	abs = strings.TrimSpace(abs)
+	if abs == "" {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, sess := range s.sessions {
+		if sess == nil || !SameTenant(sess.TenantID, tenantID) {
+			continue
+		}
+		root := strings.TrimSpace(sess.WorkspaceRoot)
+		if root == "" {
+			continue
+		}
+		if abs == root || strings.HasPrefix(abs, strings.TrimRight(root, string(filepath.Separator))+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Store) PathOwnedByOtherTenant(tenantID, abs string) bool {
+	tenantID = NormalizeTenantID(tenantID)
+	abs = strings.TrimSpace(abs)
+	if abs == "" {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, sess := range s.sessions {
+		if sess == nil || SameTenant(sess.TenantID, tenantID) {
+			continue
+		}
+		root := strings.TrimSpace(sess.WorkspaceRoot)
+		if root == "" {
+			continue
+		}
+		if abs == root || strings.HasPrefix(abs, strings.TrimRight(root, string(filepath.Separator))+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) Get(sessionID string) (*Session, bool) {

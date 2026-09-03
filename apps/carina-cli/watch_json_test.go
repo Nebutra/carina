@@ -129,6 +129,20 @@ func TestControlFrameForEventBuildsStructuredUserQuestion(t *testing.T) {
 	}
 }
 
+func TestControlFrameForEventBuildsProposal(t *testing.T) {
+	event := map[string]any{
+		"type": "proposal.created", "session_id": "sess_1", "task_id": "run_1",
+		"proposal_id": "prop_1", "title": "Prepare tests for auth", "why": "touched auth",
+	}
+	frame, ok := controlFrameForEvent(event)
+	if !ok {
+		t.Fatal("expected a frame for proposal.created")
+	}
+	if frame["frame"] != "proposal" || frame["proposal_id"] != "prop_1" {
+		t.Fatalf("unexpected proposal frame: %#v", frame)
+	}
+}
+
 func TestControlFrameForEventRejectsIncompleteUserQuestion(t *testing.T) {
 	if _, ok := controlFrameForEvent(map[string]any{"type": "user.question", "question_id": "question_1"}); ok {
 		t.Fatal("incomplete user.question must not produce an actionable frame")

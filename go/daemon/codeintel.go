@@ -47,6 +47,41 @@ func (d *Daemon) ensureIndex(sess *sessionstore.Session, task *scheduler.Executi
 	return d.ensureIndexFromSnapshot(sess, task, nil)
 }
 
+// warmupSessionIndex starts a project-scoped idle index build after
+// session.create so the first code.* call is not the cold scan. Never walks
+// `/` or `$HOME`. Failures are swallowed; the next code.* call retries.
+func (d *Daemon) warmupSessionIndex(sess *sessionstore.Session) {
+	if d == nil || sess == nil || !indexWarmupAllowed(sess.WorkspaceRoot) {
+		return
+	}
+	d.startBackgroundLoop(func() {
+		if d.stopCh != nil {
+			select {
+			case <-d.stopCh:
+				return
+			default:
+			}
+		}
+		task := &scheduler.ExecutionRun{RunID: "index-warmup", SessionID: sess.SessionID}
+		_ = d.ensureIndex(sess, task)
+	})
+}
+
+func indexWarmupAllowed(root string) bool {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return false
+	}
+	root = filepath.Clean(root)
+	if root == string(filepath.Separator) {
+		return false
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" && filepath.Clean(home) == root {
+		return false
+	}
+	return true
+}
+
 func (d *Daemon) ensureIndexFromSnapshot(sess *sessionstore.Session, task *scheduler.ExecutionRun, snap *sweepSnapshot) error {
 	if _, built := d.indexBuilt.Load(sess.SessionID); built {
 		if sweepEnabled() {

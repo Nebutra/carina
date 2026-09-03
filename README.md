@@ -7,7 +7,7 @@
 **Run coding agents on real repositories with policy, audit, and rollback in the loop.**
 
 [![status](https://img.shields.io/badge/status-alpha-8E4053)](#current-status)
-[![release](https://img.shields.io/badge/release-v0.8.42-176F70)](https://github.com/Nebutra/carina/releases/tag/v0.8.42)
+[![release](https://img.shields.io/badge/release-v0.9.0-176F70)](https://github.com/Nebutra/carina/releases/tag/v0.9.0)
 [![harness](https://img.shields.io/badge/harness-local--first-087C58)](#why-carina)
 [![audit](https://img.shields.io/badge/audit-hash--chained-8C5A15)](#review-and-audit)
 [![license](https://img.shields.io/badge/license-MIT-182023)](LICENSE)
@@ -22,7 +22,7 @@ machine, so file reads, edits, commands, network access, plugins, and secrets go
 through explicit policy before they happen.
 
 Carina is alpha software with a public, fail-closed release pipeline. Version
-`0.8.42` ships signed and Apple-notarized macOS archives, Linux archives and
+`0.9.0` ships signed and Apple-notarized macOS archives, Linux archives and
 packages, a provenance-backed npm launcher with native platform packages, a
 Windows worker, and packaged VS Code/Web Operator clients. Install through the
 shell installer, Homebrew, npm, or the release archives; source builds remain
@@ -43,6 +43,14 @@ Carina gives you:
   rolled back.
 - **Daemon-backed sessions** that can survive CLI exit and support background or
   remote workers.
+- **Durable job controls** with bounded background handles, lineage-scoped wait,
+  cancellation, and summary-only results.
+- **Read-only repository evidence** through typed, bounded Git status, diff, and
+  log tools.
+- **Governed browser automation** through an isolated native Chromium runtime,
+  structured snapshots, typed actions, and quarantined artifacts.
+- **Default-off Proactive proposals** with read-only evidence, canary controls,
+  and measurable foreground overhead.
 - **BYOK model access** with provider catalog discovery and Nebutra OAuth as a
   fallback path when configured.
 - **MCP, plugins, sub-agents, workflows, and egress controls** behind the same
@@ -84,7 +92,7 @@ Implemented in this repository:
 | Integration | MCP client/server with tool search (`mcp_find`), WASM plugin boundary with org/user/project tighten-only enable merge, workers, workflow DAGs (batch and streaming — conditional/dynamic graphs, live inter-step channels, remote worker-pool dispatch, run-wide budgets; see [`docs/workflows.md`](docs/workflows.md)) |
 | Nebutra boundary | Local runtime stays authoritative; identity and multi-endpoint sync are scoped to Nebutra Cloud (`nebutra.com`) |
 
-Published in `v0.8.42`:
+Published in `v0.9.0`:
 
 - signed and Apple-notarized macOS arm64/x64 archives with public notary and
   signing evidence;
@@ -147,7 +155,7 @@ npm install -g @nebutra/carina
 
 Exact archives, checksums, Apple notary evidence, Linux packages, the Windows
 worker, VSIX, and Web Operator bundle are available on the
-[`v0.8.42` release](https://github.com/Nebutra/carina/releases/tag/v0.8.42).
+[`v0.9.0` release](https://github.com/Nebutra/carina/releases/tag/v0.9.0).
 
 ## Built-in Updates
 

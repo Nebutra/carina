@@ -4,8 +4,8 @@ use anyhow::{Context, Result, bail};
 use carina_tui::app::{ScreenMode, read_screen_handoff};
 use carina_tui::density::DensityMode;
 use carina_tui::glyphs::GlyphPreference;
-use carina_tui::theme::ThemePreference;
 use carina_tui::i18n::Locale;
+use carina_tui::theme::ThemePreference;
 use carina_tui::{
     Options, RuntimeDiagnosticOptions, RuntimeDiagnosticOutcome, RuntimeExpectation,
     choose_runtime_mode, run, run_runtime_diagnostic,

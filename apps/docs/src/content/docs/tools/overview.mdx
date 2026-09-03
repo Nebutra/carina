@@ -47,13 +47,55 @@ Tools are the only path from model intent to system effect. Carina normalizes to
 See the full action table in [Agents overview](/agents/overview/). Families:
 
 - Filesystem: list, read, search, edit (exact unique span), patch
+- Git information: `git.status`, `git.diff`, `git.log` (typed, bounded, read-only)
 - Network: `web.fetch` (public HTTPS, host approval)
+- Browser: `browser.open`, `browser.snapshot`, `browser.action`, `browser.tabs`, `browser.capture`, `browser.close`
 - Shell: `run` (risk-classified `CommandExec`)
 - Memory: governed long-term entries
 - Code intelligence: search / symbols / map / def / refs / impact
 - MCP: external servers via governed manager
 - Orchestration: spawn, workflow, best_of_n
 - Human: ask_user
+
+## Read-only Git evidence
+
+| Tool | Result |
+| --- | --- |
+| `git.status` | Branch, upstream, ahead/behind counts, and bounded porcelain changes |
+| `git.diff` | Bounded per-file patches for an explicit `worktree`, `staged`, or `head` view |
+| `git.log` | Structured HEAD history with bounded commit and subject counts |
+
+All three require `FileRead`, run only at the session workspace's repository
+root, and accept typed fields rather than raw Git arguments. Prompts, optional
+locks, pagers, hooks, fsmonitor, executable diff/filter helpers, credentials,
+and submodule recursion are disabled. Binary and untracked content is reported
+as metadata instead of being opened or injected into model context.
+
+## Governed browser computer
+
+| Tool | Result |
+| --- | --- |
+| `browser.open` | Opens an isolated managed browser, or navigates an existing tab to an approved public HTTPS target |
+| `browser.snapshot` | Returns a bounded accessibility/DOM projection with opaque, generation-scoped refs |
+| `browser.action` | Performs one typed click, type, select, check, key, scroll, hover, upload, or dialog action |
+| `browser.tabs` | Lists, opens, activates, or closes tabs without exposing raw CDP |
+| `browser.capture` | Stores a bounded screenshot as a session-scoped artifact and media ref |
+| `browser.close` | Stops the browser and removes its ephemeral profile |
+
+Managed mode uses a private, ephemeral Chromium profile and does not inherit
+the operator's cookies, extensions, password store, or local browser state.
+Every navigation and request origin is constrained to approved public HTTPS;
+page text, titles, dialogs, downloads, and screenshot pixels remain untrusted.
+Element refs become stale after document changes, so actions require a fresh
+snapshot instead of raw selectors or coordinates.
+
+Uploads require `FileRead` for each explicit source and a live approval at the
+transmission boundary. Downloads are quarantined as artifacts and are never
+opened, executed, or written into the workspace. High-impact actions pause
+immediately before the browser effect even under `always-approve`. Attaching an
+operator browser is a separate deployment-configured mode that always requires
+live `BrowserAttach` approval and never exposes its debugging endpoint to the
+model. See [Local install](/deployment/local/) for operator configuration.
 
 ## Zig native toolchain
 

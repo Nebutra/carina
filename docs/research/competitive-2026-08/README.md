@@ -1,9 +1,9 @@
 # Competitive Research 2026-08 — Artifact Index
 
-> 取证日期：2026-08-02  
-> **现状刷新：2026-08-21 @ Carina v0.8.42** — **Harness SSOT：[24-post-0.8.36-harness-re-audit.md](./24-post-0.8.36-harness-re-audit.md)**；审美见 **[18](./18-tui-aesthetic-post-0.8.29.md)** / 长文 **[23](./23-assistant-markdown-document.md)**（A015/A016 已发）；**Prompt/Context SSOT：[27](./27-prompt-context-audit-0.8.41.md)**（`21` 为 0.8.33 历史）；热路径见 **[26](./26-hot-path-post-0.8.38.md)**（`20` 为 0.8.32 历史）；`16`/`22` 为历史  
-> 范围：Carina vs Jcode / Grok Build / Claude Code (notes) / Codex / Oh My Pi (OMP) / DeepSeek Harness（公开文档，本机无 clone）  
-> 用途：竞品逆向 → GAP → PRD ISSUE → 闭环路线图。工具面 T-S1/T-S2/T-S3 已落地。**Prompt 产品 P0 仍开：P12 system/user、P13 identity≠workspace、P14 cache_read。** 奏折 / git 一等 / browser 为 P1；SaaS/ACP/皮肤否决。MiniLM/snapcompact 不作默认。
+> 取证日期：2026-08-02
+> **现状刷新：2026-09-03 @ Carina v0.9.0 + working tree** — **Harness SSOT：[28-harness-re-audit-0.8.42.md](./28-harness-re-audit-0.8.42.md)**（`24`/`22` 为历史）；**工具面 / Meta / 奏折 SSOT：[29](./29-tool-surface-meta-proactive-audit.md)**（`25` 为 0.8.37 历史）；**审美 SSOT：[30](./30-tui-aesthetic-audit.md)**（`18`/`17` 为历史）；长文 **[23](./23-assistant-markdown-document.md)**；**Prompt/Context：[27](./27-prompt-context-audit-0.8.41.md)**；热路径见 **[26](./26-hot-path-post-0.8.38.md)**。
+> 范围：Carina vs Jcode / Grok Build / Claude Code (notes) / Codex / Oh My Pi (OMP) / DeepSeek Harness（公开文档，本机无 clone）
+> 用途：竞品逆向 → GAP → 闭环。用户模板 P0 六项（web.search / MCP / 摘要 / 并行 / todo / schema 分层）**多数已落地**。日用剩余在 **P1：奏折 / git 信息 / 模型侧 job.wait**。SaaS/ACP/皮肤否决。MiniLM/snapcompact 不作默认。
 
 ---
 
@@ -11,16 +11,19 @@
 
 | 文件 | 角色 |
 |------|------|
-| **[25-tool-surface-meta-proactive-audit.md](./25-tool-surface-meta-proactive-audit.md)** | **工具面 / Meta / 奏折 SSOT v0.8.38**：T-S1/T-S2/T-S3/S10 **已落地**；日用 P0 无；奏折/git/browser 仍 P1 |
-| **[24-post-0.8.36-harness-re-audit.md](./24-post-0.8.36-harness-re-audit.md)** | **Harness SSOT v0.8.36 取证**：对话跨 run、表拆箱、rewind fork、S8/S7 随 **0.8.37** 发；S10 随 0.8.38 落地 |
+| **[28-harness-re-audit-0.8.42.md](./28-harness-re-audit-0.8.42.md)** | **Harness SSOT v0.9.0**：用户可感 ~7.5/10；日用剩余 **P0-H12**（working tree 已 memo）；SaaS 不排 P0 |
+| **[29-tool-surface-meta-proactive-audit.md](./29-tool-surface-meta-proactive-audit.md)** | **工具面 / Meta / 奏折 SSOT**：实用 8 / 日用 SOTA 7；P0 六项多数已收；P1 = 奏折 + git-info + job.wait |
+| **[30-tui-aesthetic-audit.md](./30-tui-aesthetic-audit.md)** | **审美 SSOT v0.9.0**：加权 ~6/10 仍 FAIL 愉悦；A115/A106/A107/A109/A116/A114′ 已落地 |
+| **[25-tool-surface-meta-proactive-audit.md](./25-tool-surface-meta-proactive-audit.md)** | 历史：0.8.37 工具面稿；被 **29** supersede |
+| **[24-post-0.8.36-harness-re-audit.md](./24-post-0.8.36-harness-re-audit.md)** | 历史：Harness 0.8.36 |
 | **[23-assistant-markdown-document.md](./23-assistant-markdown-document.md)** | 长文答案排版：A015/A016 随 **0.8.35** 发；A017 标题层级仍开 |
 | **[22-post-0.8.34-harness-re-audit.md](./22-post-0.8.34-harness-re-audit.md)** | **Harness 全维度再审计 v0.8.34**：模块地图 + 六家 job + scorecard + 分类清单；剩余 P0 = S7/S8/S10 |
-| **[27-prompt-context-audit-0.8.41.md](./27-prompt-context-audit-0.8.41.md)** | **Prompt/Context SSOT v0.8.42 FAIL ~5.8/10**：S1–S11 结构已发；产品剩余 **P12/P13/P14**；法：`docs/PROMPT_SPEC.md` + `docs/CONTEXT_ENGINEERING.md` |
+| **[27-prompt-context-audit-0.8.41.md](./27-prompt-context-audit-0.8.41.md)** | Prompt/Context 取证：Anthropic P12–P14 随 **0.9.0** 发；Grok/OpenAI 仍 `none` |
 | **[21-prompt-context-re-audit.md](./21-prompt-context-re-audit.md)** | 历史：Prompt 再审计 v0.8.33 FAIL ~5.5/10 |
 | **[26-hot-path-post-0.8.38.md](./26-hot-path-post-0.8.38.md)** | **热路径再审计 v0.8.38**：PTY TTFF **15.2 ms**；**P0-H11 已落地**（turn 2+ 不 `exec` 新 grok）；剩余 P0 = **P0-H12** list/search memo |
 | **[20-hot-path-latency-audit.md](./20-hot-path-latency-audit.md)** | 历史：v0.8.32 FAIL ~4.5/10；P0 H1–H7 随 **0.8.33** 发；法：`docs/HOT_PATH.md` |
 | **[19-prompt-context-audit.md](./19-prompt-context-audit.md)** | 历史：v0.8.30 FAIL；S1–S6 随 **0.8.31** 发 |
-| **[18-tui-aesthetic-post-0.8.29.md](./18-tui-aesthetic-post-0.8.29.md)** | 审美 SSOT：0.8.29 框 + 0.8.30 对话文档刀 A010–A013；P1 仍开 |
+| **[18-tui-aesthetic-post-0.8.29.md](./18-tui-aesthetic-post-0.8.29.md)** | 历史：0.8.29 框 + A010–A013；被 **30** supersede |
 | [17-tui-aesthetic-audit.md](./17-tui-aesthetic-audit.md) | 历史：竞品 DNA + 被证伪的 chrome-first P0（A001–A007 已发，不够） |
 | **[16-post-0.8.27-refresh.md](./16-post-0.8.27-refresh.md)** | 历史：0.8.27 诚实性切片。日用 P0 以 **24** 为准 |
 | [15-post-0.8.26-refresh.md](./15-post-0.8.26-refresh.md) | 历史：0.8.26 收口 |
@@ -85,7 +88,7 @@
 
 ## Trellis 对齐（2026-08-03）
 
-**ISSUE-001…018 全部 `completed`**，归档于 `.trellis/tasks/archive/2026-08/`。  
+**ISSUE-001…018 全部 `completed`**，归档于 `.trellis/tasks/archive/2026-08/`。
 全量索引：[`06-trellis-issue-index.md`](./06-trellis-issue-index.md)
 
 | 波次 | 内容 |
@@ -100,23 +103,23 @@
 
 ## 质量铁律（全目录）
 
-1. 关键主张附 **path → 做什么**  
-2. 机制写 **WHAT / WHY / TRADE-OFF**  
-3. 区分能力跃迁 vs 过度工程  
-4. 审美细节可编码（色/密度/glyph/键位）  
-5. 不确定标 **假设/推断 + 置信度**  
-6. 正文中文；专有名词与路径保持 English  
-7. 不发明路径；不以 stale gap 表为现状  
+1. 关键主张附 **path → 做什么**
+2. 机制写 **WHAT / WHY / TRADE-OFF**
+3. 区分能力跃迁 vs 过度工程
+4. 审美细节可编码（色/密度/glyph/键位）
+5. 不确定标 **假设/推断 + 置信度**
+6. 正文中文；专有名词与路径保持 English
+7. 不发明路径；不以 stale gap 表为现状
 
 ---
 
 ## 建议阅读顺序
 
-1. **`07-post-0.8-gap-refresh.md`**（当前 Carina 分数与 SHIPPED 表）  
-2. `00-MASTER-REPORT.md` §0（战略三角 / non-goals 仍有效）  
-3. `02-comparison-matrix.md`（含 0.8 Carina 列）  
-4. 残余切片 `08` / `09` 若开工 ScreenMode/steer  polish  
-5. DNA `01-*` 仅在重审竞品时下钻  
+1. **`07-post-0.8-gap-refresh.md`**（当前 Carina 分数与 SHIPPED 表）
+2. `00-MASTER-REPORT.md` §0（战略三角 / non-goals 仍有效）
+3. `02-comparison-matrix.md`（含 0.8 Carina 列）
+4. 残余切片 `08` / `09` 若开工 ScreenMode/steer  polish
+5. DNA `01-*` 仅在重审竞品时下钻
 
 ---
 

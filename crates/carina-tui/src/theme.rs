@@ -183,7 +183,7 @@ impl Theme {
         background: Option<[u8; 3]>,
         level: ColorLevel,
     ) -> Self {
-        Self::new(preference.polarity(background), level)
+        Self::new(preference.polarity(background), level).with_terminal_background(background)
     }
 
     pub fn new(polarity: Polarity, level: ColorLevel) -> Self {
@@ -210,7 +210,7 @@ impl Theme {
             success: rgb(p.success),
             warning: rgb(p.warning),
             danger: rgb(p.danger),
-            user_message_bg: rgb(p.user_message_bg),
+            user_message_bg: Color::Reset,
             selection_bg: rgb(p.selection_bg),
             code_fg: rgb(p.code_fg),
             code_bg: rgb(p.code_bg),
@@ -227,16 +227,31 @@ impl Theme {
             spinner: rgb(p.accent),
             link: rgb(p.link),
             markdown_heading: [
-                (rgb(p.accent), Modifier::BOLD | Modifier::UNDERLINED),
                 (rgb(p.accent), Modifier::BOLD),
                 (Color::Reset, Modifier::BOLD),
                 (rgb(p.gray_bright), Modifier::BOLD),
-                (rgb(p.gray_bright), Modifier::ITALIC),
+                (rgb(p.gray), Modifier::BOLD),
                 (rgb(p.gray), Modifier::ITALIC),
+                (rgb(p.gray_dim), Modifier::ITALIC),
             ],
         };
         theme.quantize_all();
         theme
+    }
+
+    /// Occupied-cell user band. OSC/probed canvas becomes a 12%/4% veil
+    /// (Codex `user_message_bg_rgb`). No canvas, Basic, and `NO_COLOR` stay
+    /// `Reset` so the band cannot become a second room on a transparent page.
+    pub fn with_terminal_background(mut self, background: Option<[u8; 3]>) -> Self {
+        if self.level <= ColorLevel::Basic {
+            self.user_message_bg = Color::Reset;
+            return self;
+        }
+        self.user_message_bg = match background {
+            Some(canvas) => quantize(rgb(user_band_rgb(canvas)), self.level),
+            None => Color::Reset,
+        };
+        self
     }
 
     fn quantize_all(&mut self) {
@@ -327,6 +342,11 @@ impl Theme {
             .fg(self.accent)
             .add_modifier(Modifier::BOLD)
     }
+    /// Rest frame for rounded overlays. Ion-cyan is for the selected row, a
+    /// focused field, or the composer, not a cyan room around a decision list.
+    pub fn overlay_frame(self) -> Style {
+        Style::default().fg(self.border)
+    }
     pub fn selected(self) -> Style {
         if self.no_color || self.level == ColorLevel::Basic {
             Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)
@@ -351,6 +371,10 @@ impl Theme {
             .fg(self.accent)
             .add_modifier(Modifier::BOLD | Modifier::REVERSED)
     }
+    /// Composer citation chip. Quiet pill, never reversed cyan.
+    pub fn chip(self) -> Style {
+        self.muted()
+    }
     pub fn keycap(self) -> Style {
         if self.no_color {
             Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)
@@ -370,7 +394,9 @@ impl Theme {
             bg => Style::default().bg(bg),
         }
     }
-    pub fn transcript_assistant(self) -> Style {
+    /// Markdown emphasis inside an assistant answer (footnotes, stacked-table
+    /// labels). Not the answer bullet: that mark is `transcript_metadata`.
+    pub fn transcript_markdown_accent(self) -> Style {
         Style::default()
             .fg(self.accent)
             .add_modifier(Modifier::BOLD)
@@ -446,6 +472,30 @@ pub fn classify_polarity([r, g, b]: [u8; 3]) -> Polarity {
 
 fn rgb([r, g, b]: [u8; 3]) -> Color {
     Color::Rgb(r, g, b)
+}
+
+/// Brand void `#0d1214`. Goldens that need a visible occupied band inject this
+/// as the probed canvas so leftover cells stay `Reset`.
+pub const TERMINAL_CANVAS_DARK: [u8; 3] = [13, 18, 20];
+/// Brand starlight `#f3f0e8`.
+pub const TERMINAL_CANVAS_LIGHT: [u8; 3] = [243, 240, 232];
+
+pub fn user_band_rgb(terminal_bg: [u8; 3]) -> [u8; 3] {
+    let (veil, alpha) = if classify_polarity(terminal_bg) == Polarity::Light {
+        ([0, 0, 0], 0.04)
+    } else {
+        ([255, 255, 255], 0.12)
+    };
+    mix_rgb(veil, terminal_bg, alpha)
+}
+
+fn mix_rgb(top: [u8; 3], bottom: [u8; 3], alpha: f32) -> [u8; 3] {
+    let mix = |a: u8, b: u8| (f32::from(a) * alpha + f32::from(b) * (1.0 - alpha)) as u8;
+    [
+        mix(top[0], bottom[0]),
+        mix(top[1], bottom[1]),
+        mix(top[2], bottom[2]),
+    ]
 }
 
 pub fn quantize(color: Color, level: ColorLevel) -> Color {
@@ -546,7 +596,6 @@ struct Palette {
     success: [u8; 3],
     warning: [u8; 3],
     danger: [u8; 3],
-    user_message_bg: [u8; 3],
     selection_bg: [u8; 3],
     code_fg: [u8; 3],
     code_bg: [u8; 3],
@@ -567,12 +616,11 @@ impl Palette {
             gray_dim: [90, 101, 99],
             gray: [150, 160, 156],
             gray_bright: [195, 202, 198],
-            brand: [222, 133, 155],
+            brand: [168, 109, 121],
             accent: [142, 219, 210],
             success: [104, 210, 163],
             warning: [232, 168, 95],
             danger: [255, 124, 120],
-            user_message_bg: [38, 43, 44],
             selection_bg: [36, 61, 62],
             code_fg: [220, 225, 222],
             code_bg: [27, 32, 34],
@@ -593,12 +641,11 @@ impl Palette {
             gray_dim: [115, 123, 120],
             gray: [83, 94, 90],
             gray_bright: [52, 64, 60],
-            brand: [128, 43, 67],
+            brand: [142, 64, 83],
             accent: [0, 95, 135],
             success: [26, 127, 73],
             warning: [145, 83, 0],
             danger: [190, 45, 41],
-            user_message_bg: [244, 244, 242],
             selection_bg: [215, 234, 232],
             code_fg: [36, 45, 42],
             code_bg: [242, 244, 242],
@@ -724,40 +771,104 @@ mod tests {
     }
 
     #[test]
+    fn conversation_headings_use_at_most_one_accent_level() {
+        for polarity in [Polarity::Dark, Polarity::Light] {
+            let t = Theme::new(polarity, ColorLevel::TrueColor);
+            assert_eq!(t.heading(1).fg, Some(t.accent));
+            assert!(t.heading(1).add_modifier.contains(Modifier::BOLD));
+            assert!(!t.heading(1).add_modifier.contains(Modifier::UNDERLINED));
+            assert_eq!(t.heading(2).fg, Some(Color::Reset));
+            assert!(t.heading(2).add_modifier.contains(Modifier::BOLD));
+            for level in 3..=6 {
+                assert_ne!(
+                    t.heading(level).fg,
+                    Some(t.accent),
+                    "H{level} must not reuse the interaction accent"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn transcript_styles_keep_roles_and_fallbacks_semantic() {
         for polarity in [Polarity::Dark, Polarity::Light] {
             let theme = Theme::new(polarity, ColorLevel::TrueColor);
             assert_eq!(theme.transcript_user().fg, Some(theme.gray_bright));
-            assert_eq!(theme.transcript_user_band().bg, Some(theme.user_message_bg));
-            assert_eq!(theme.transcript_assistant().fg, Some(theme.accent));
-            assert_ne!(theme.transcript_assistant().fg, Some(theme.success));
+            assert_eq!(theme.transcript_user_band().bg, None);
+            assert_eq!(theme.user_message_bg, Color::Reset);
+            assert_eq!(theme.transcript_markdown_accent().fg, Some(theme.accent));
+            assert_ne!(theme.transcript_markdown_accent().fg, Some(theme.success));
             assert_eq!(theme.transcript_metadata().fg, Some(theme.gray_dim));
             assert_eq!(theme.transcript_tool().fg, Some(theme.warning));
             assert_eq!(theme.transcript_tool_settled().fg, Some(theme.gray));
-            assert!(!theme
-                .transcript_tool_settled()
-                .add_modifier
-                .contains(Modifier::BOLD));
-            assert!(theme
-                .transcript_thinking()
-                .add_modifier
-                .contains(Modifier::DIM | Modifier::ITALIC));
+            assert!(
+                !theme
+                    .transcript_tool_settled()
+                    .add_modifier
+                    .contains(Modifier::BOLD)
+            );
+            assert!(
+                theme
+                    .transcript_thinking()
+                    .add_modifier
+                    .contains(Modifier::DIM | Modifier::ITALIC)
+            );
         }
         let basic = Theme::new(Polarity::Dark, ColorLevel::Basic);
         assert_eq!(basic.transcript_user_band().bg, None);
 
         let fallback = Theme::new(Polarity::Dark, ColorLevel::None).transcript_thinking();
         assert_eq!(fallback.fg, None);
-        assert!(fallback
-            .add_modifier
-            .contains(Modifier::DIM | Modifier::ITALIC));
+        assert!(
+            fallback
+                .add_modifier
+                .contains(Modifier::DIM | Modifier::ITALIC)
+        );
+    }
+
+    #[test]
+    fn overlay_frame_is_rest_chrome_not_a_cyan_room() {
+        let theme = Theme::new(Polarity::Dark, ColorLevel::TrueColor);
+        assert_eq!(theme.overlay_frame().fg, Some(theme.border));
+        assert_ne!(theme.overlay_frame().fg, Some(theme.accent));
+        assert!(!theme.overlay_frame().add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn user_band_is_a_veil_over_the_probed_canvas_not_a_mineral_slab() {
+        let dark = Theme::new(Polarity::Dark, ColorLevel::TrueColor)
+            .with_terminal_background(Some(TERMINAL_CANVAS_DARK));
+        assert_eq!(
+            channels(dark.user_message_bg),
+            user_band_rgb(TERMINAL_CANVAS_DARK)
+        );
+        assert_eq!(channels(dark.user_message_bg), [42, 46, 48]);
+        assert_ne!(channels(dark.user_message_bg), [38, 43, 44]);
+        let light = Theme::new(Polarity::Light, ColorLevel::TrueColor)
+            .with_terminal_background(Some(TERMINAL_CANVAS_LIGHT));
+        assert_eq!(
+            channels(light.user_message_bg),
+            user_band_rgb(TERMINAL_CANVAS_LIGHT)
+        );
+        let basic = Theme::new(Polarity::Dark, ColorLevel::Basic)
+            .with_terminal_background(Some(TERMINAL_CANVAS_DARK));
+        assert_eq!(basic.user_message_bg, Color::Reset);
+        let probed = Theme::from_preference(
+            ThemePreference::Dark,
+            Some(TERMINAL_CANVAS_DARK),
+            ColorLevel::TrueColor,
+        );
+        assert_eq!(
+            channels(probed.user_message_bg),
+            user_band_rgb(TERMINAL_CANVAS_DARK)
+        );
     }
 
     #[test]
     fn transcript_uses_no_more_than_three_saturated_foregrounds() {
         let theme = Theme::new(Polarity::Dark, ColorLevel::TrueColor);
         let mut saturated = [
-            theme.transcript_assistant(),
+            theme.transcript_markdown_accent(),
             theme.transcript_tool(),
             theme.transcript_danger(),
             theme.transcript_added(),
@@ -793,6 +904,19 @@ mod tests {
                     "{polarity:?} {name} contrast {}",
                     contrast(channels(color), background)
                 );
+            }
+            let brand = channels(theme.brand);
+            assert_ne!(brand, [222, 133, 155], "do not improvise candy pink");
+            match polarity {
+                Polarity::Dark => {
+                    assert_eq!(brand, [168, 109, 121]);
+                    assert!(
+                        contrast(brand, [0, 0, 0]) >= 4.5,
+                        "dark mark must read on typical Reset black {}",
+                        contrast(brand, [0, 0, 0])
+                    );
+                }
+                Polarity::Light => assert_eq!(brand, [142, 64, 83]),
             }
             let levels = [theme.gray_dim, theme.gray, theme.gray_bright]
                 .map(channels)

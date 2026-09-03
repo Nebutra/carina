@@ -35,6 +35,23 @@ func controlFrameForEvent(event map[string]any) (frame map[string]any, ok bool) 
 			}
 		}
 		return out, true
+	case "proposal.created":
+		proposalID, _ := event["proposal_id"].(string)
+		title, _ := event["title"].(string)
+		if proposalID == "" || title == "" {
+			return nil, false
+		}
+		out := map[string]any{
+			"frame":       "proposal",
+			"proposal_id": proposalID,
+			"title":       title,
+		}
+		for _, key := range []string{"session_id", "run_id", "task_id", "why", "done", "propose", "risk", "class"} {
+			if v, present := event[key]; present {
+				out[key] = v
+			}
+		}
+		return out, true
 	case "user.question":
 		questionID, _ := event["question_id"].(string)
 		prompt, _ := event["prompt"].(string)
