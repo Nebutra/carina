@@ -106,3 +106,82 @@ func TestSixtyTurnCompactionPreservesTaskSteeringFailuresAndChangedPaths(t *test
 		t.Fatalf("checkpoint restart lost durable facts: %s", restoredVisible)
 	}
 }
+
+func TestRequestedReadEvidenceSurvivesRepeatedCompactionAndCheckpointRestore(t *testing.T) {
+	const taskText = "Read every file, then report FIRST, MID, and LAST exactly. Do not modify files."
+	tr := newTranscript(taskText)
+	tr.policy = CompactionPolicy{
+		MaxChars: 1200, KeepRecent: 3, ToolOutputMax: 10_000, SummarizeAfter: 6,
+		VerbatimUserMaxChars: 800, CollapseOnlyMaxPressure: 1.20,
+	}
+	tr.CompactionBudget = CompactionBudgetSnapshot{
+		PolicyVersion: "test", WindowTokens: 2000, ReserveTokens: 200,
+		TriggerTokens: 300, MetadataSource: "test",
+	}
+	for i := range 52 {
+		marker := ""
+		switch i {
+		case 0:
+			marker = "FIRST=ORION-731\n"
+		case 25:
+			marker = "MID=LYRA-418\n"
+		case 51:
+			marker = "LAST=VEGA-952\n"
+		}
+		content := fmt.Sprintf("STEP=%02d NEXT=%02d ", i+1, i+2) + marker + strings.Repeat(fmt.Sprintf("payload-%02d ", i), 40)
+		tr.addTurn(Turn{
+			Tool: "read", Path: fmt.Sprintf("part-%02d.txt", i), ActionBrief: fmt.Sprintf("read part-%02d.txt", i),
+			Obs: Observation{Content: content},
+		})
+		tr.compact(nil)
+	}
+	if len(tr.CompactionReceipts) == 0 {
+		t.Fatal("52-turn fixture did not compact")
+	}
+	for _, want := range []string{"FIRST=ORION-731", "MID=LYRA-418", "LAST=VEGA-952"} {
+		if !strings.Contains(tr.render(), want) {
+			t.Fatalf("compacted transcript lost requested evidence %q:\n%s", want, tr.render())
+		}
+	}
+
+	raw, err := json.Marshal(&runCheckpoint{Turn: 52, Transcript: tr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := decodeRunCheckpoint(raw)
+	if restored == nil || restored.Transcript == nil {
+		t.Fatal("checkpoint restore failed")
+	}
+	for i := 52; i < 72; i++ {
+		restored.Transcript.addTurn(Turn{
+			Tool: "read", Path: fmt.Sprintf("part-%02d.txt", i), ActionBrief: fmt.Sprintf("read part-%02d.txt", i),
+			Obs: Observation{Content: strings.Repeat(fmt.Sprintf("payload-%02d ", i), 40)},
+		})
+		restored.Transcript.compact(nil)
+	}
+	visible := restored.Transcript.render()
+	for _, want := range []string{"FIRST=ORION-731", "MID=LYRA-418", "LAST=VEGA-952"} {
+		if !strings.Contains(visible, want) {
+			t.Fatalf("checkpoint plus repeated compaction lost requested evidence %q:\n%s", want, visible)
+		}
+	}
+	if len(restored.Transcript.DurableFacts) > maxDurableCompactionFacts {
+		t.Fatalf("requested evidence ledger exceeded bound: %+v", restored.Transcript.DurableFacts)
+	}
+}
+
+func TestRequestedReadEvidenceIgnoresTraversalMetadata(t *testing.T) {
+	const task = "Follow each NEXT path and read every step. Report FIRST, MID, and LAST exactly."
+	ordinary := Turn{Tool: "read", Obs: Observation{Content: "STEP=17 NEXT=18 payload"}}
+	if evidence, ok := requestedReadEvidence(task, ordinary); ok {
+		t.Fatalf("incidental traversal metadata consumed a durable slot: %q", evidence)
+	}
+	first := Turn{Tool: "read", Obs: Observation{Content: "STEP=01 FIRST=ORION-731 NEXT=02 payload"}}
+	if evidence, ok := requestedReadEvidence(task, first); !ok || evidence != "FIRST=ORION-731" {
+		t.Fatalf("explicit FIRST marker not selected: evidence=%q ok=%v", evidence, ok)
+	}
+	middle := Turn{Tool: "read", Obs: Observation{Content: "STEP=18 MID=LYRA-418 NEXT=19 payload"}}
+	if evidence, ok := requestedReadEvidence(task, middle); !ok || evidence != "MID=LYRA-418" {
+		t.Fatalf("explicit MID marker not selected: evidence=%q ok=%v", evidence, ok)
+	}
+}
