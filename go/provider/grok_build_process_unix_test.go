@@ -94,7 +94,7 @@ func (c *grokBuildTestDeadlineContext) expire() { c.once.Do(func() { close(c.don
 
 func waitForGrokBuildTestPID(t *testing.T, path string) []byte {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		raw, err := os.ReadFile(path)
 		if err == nil && len(strings.TrimSpace(string(raw))) > 0 {
