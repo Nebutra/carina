@@ -4287,14 +4287,11 @@ impl App {
             return Ok(());
         }
         if self.keybindings.expand_tools.matches(key) {
-            let expand = self.blocks.iter().any(|block| {
-                block.kind == crate::transcript::BlockKind::Tool
-                    && block.is_collapsible()
-                    && !self.effective_block_expanded(block)
-            });
-            for block in self.blocks.iter().filter(|block| {
-                block.kind == crate::transcript::BlockKind::Tool && block.is_collapsible()
-            }) {
+            let expand = self
+                .blocks
+                .iter()
+                .any(|block| block.is_collapsible() && !self.effective_block_expanded(block));
+            for block in self.blocks.iter().filter(|block| block.is_collapsible()) {
                 self.tool_disclosure_overrides
                     .insert(block.id.clone(), expand);
             }

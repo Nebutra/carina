@@ -54,6 +54,7 @@
         "ModelResponded",
         "RoutingDecision",
         "RoutingOutcome",
+        "PromptCacheObserved",
         "RoutingRetryScheduled",
         "PromptCacheObserved",
         "ContextCompacted",

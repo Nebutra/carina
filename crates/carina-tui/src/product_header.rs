@@ -72,6 +72,17 @@ impl ProductHeader<'_> {
         theme: Theme,
         interactions: &mut InteractionMap,
     ) {
+        self.render_with_expanded_header(frame, area, theme, interactions, true);
+    }
+
+    pub fn render_with_expanded_header(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        theme: Theme,
+        interactions: &mut InteractionMap,
+        allow_expanded: bool,
+    ) {
         frame.render_widget(
             Block::default()
                 .borders(Borders::BOTTOM)
@@ -79,7 +90,8 @@ impl ProductHeader<'_> {
                 .border_style(Style::default().fg(theme.border)),
             area,
         );
-        if area.height >= layout::EXPANDED_HEADER_HEIGHT
+        if allow_expanded
+            && area.height >= layout::EXPANDED_HEADER_HEIGHT
             && area.width >= layout::EXPANDED_HEADER_MIN_WIDTH
         {
             self.render_expanded(frame, area, theme, interactions);

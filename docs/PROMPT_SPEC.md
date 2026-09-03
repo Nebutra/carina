@@ -122,7 +122,7 @@ routing event; it must not silently stuff the constitution into TASK.
 - TASK and transcript bytes must never occur before the dynamic boundary.
 - Requery/fallback may append a local recovery hint to the volatile suffix; it
   may not mutate A-D.
-- Summary, compaction receipt (including v4 elision-only receipts), cache usage/SLO, actual cache-boundary hash,
+- Summary, compaction receipt, cache usage/SLO, actual cache-boundary hash,
   native schema count/share, and role mapping are emitted as structured
   telemetry so `/context` can explain what the model saw.
 

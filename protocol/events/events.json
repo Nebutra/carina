@@ -31,6 +31,7 @@
     { "name": "ModelResponded", "side_effect": false, "payload": ["provider", "model", "output_tokens", "stop_reason"] },
     { "name": "RoutingDecision", "side_effect": false, "payload": ["evidence_id", "requested_model", "reasoner", "policy", "prompt_sha256", "input_tokens_estimated"] },
     { "name": "RoutingOutcome", "side_effect": false, "payload": ["evidence_id", "requested_model", "status", "latency_ms", "prompt_sha256", "response_sha256", "output_tokens_estimated"] },
+    { "name": "PromptCacheObserved", "side_effect": false, "payload": ["status", "evidence", "provider_reported", "provider", "model", "cache_kind", "cache_read_tokens", "cache_write_tokens", "stable_prefix_sha256", "stable_prefix_bytes", "boundary"] },
     { "name": "RoutingRetryScheduled", "side_effect": false, "payload": ["evidence_id", "attempt", "max_attempts", "error"] },
     { "name": "PromptCacheObserved", "side_effect": false, "payload": ["status", "evidence", "provider_reported", "provider", "model", "cache_kind", "cache_read_tokens", "cache_write_tokens", "stable_prefix_sha256", "stable_prefix_bytes", "boundary"] },
     { "name": "ContextCompacted", "side_effect": false, "payload": ["receipt"] },

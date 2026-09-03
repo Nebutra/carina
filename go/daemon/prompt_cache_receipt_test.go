@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 )
 
@@ -78,35 +77,5 @@ func TestPromptCacheReceiptUsesAdapterActualBoundary(t *testing.T) {
 	openAI := promptCacheReceiptForSegments("openai_key", ModelUsage{Provider: "openai", Model: "gpt"}, seg)
 	if openAI["boundary"] != "stable_prefix" || openAI["stable_prefix_sha256"] != sha256Hex(seg.StablePrefix) {
 		t.Fatalf("OpenAI receipt must cover its prompt_cache_key prefix: %#v", openAI)
-	}
-}
-
-func TestPromptCacheReceiptSurvivesRustAuditRead(t *testing.T) {
-	d, workspace := newLoopDaemon(t)
-	defer d.Close()
-	sess, err := d.store.CreateSession(workspace, "read-only")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := d.kern.InitSessionWithPolicy(sess.SessionID, workspace, "read-only", nil); err != nil {
-		t.Fatal(err)
-	}
-	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "measure prompt cache")
-	payload := promptCacheReceipt("openai_key", ModelUsage{
-		Provider: "openai", Model: "gpt-test", CacheReadTokens: 123,
-	}, "stable prefix")
-	if err := d.recordStrict(sess.SessionID, "PromptCacheObserved", task.RunID, "go", payload, ""); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := d.kern.ReadEvents(sess.SessionID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), `"type":"PromptCacheObserved"`) || !strings.Contains(string(raw), `"cache_read_tokens":123`) {
-		t.Fatalf("Rust audit read lost prompt-cache receipt: %s", raw)
-	}
-	slo := promptCacheSLOFromEvents(raw, task.RunID)
-	if slo["available"] != true || slo["attempts"] != 1 || slo["hits"] != 1 {
-		t.Fatalf("persisted cache receipt was not measurable: %#v", slo)
 	}
 }

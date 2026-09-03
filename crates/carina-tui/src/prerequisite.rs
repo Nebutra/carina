@@ -13,8 +13,23 @@ pub struct PrerequisiteLayout {
 
 impl PrerequisiteLayout {
     pub fn compute(area: Rect) -> Self {
+        Self::compute_with_expanded_header(area, true)
+    }
+
+    /// Recovery/import is a focused browser surface, not a provider setup
+    /// surface. Keep its header compact even on a wide terminal so the list
+    /// starts at the same visual rhythm as the narrow layout.
+    pub fn compute_compact_header(area: Rect) -> Self {
+        Self::compute_with_expanded_header(area, false)
+    }
+
+    fn compute_with_expanded_header(area: Rect, allow_expanded_header: bool) -> Self {
         let canvas = layout::canvas(area);
-        let header_height = product_header_height(area);
+        let header_height = if allow_expanded_header {
+            product_header_height(area)
+        } else {
+            layout::COMPACT_HEADER_HEIGHT
+        };
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -293,6 +308,16 @@ mod tests {
     fn narrow_layout_collapses_to_one_column() {
         let layout = PrerequisiteLayout::compute(Rect::new(0, 0, 70, 22));
         assert!(BrowserLayout::compute(layout.content).detail.is_none());
+    }
+
+    #[test]
+    fn compact_header_layout_does_not_consume_expanded_rows() {
+        let expanded = PrerequisiteLayout::compute(Rect::new(0, 0, 120, 30));
+        let compact = PrerequisiteLayout::compute_compact_header(Rect::new(0, 0, 120, 30));
+        assert_eq!(expanded.header.height, layout::EXPANDED_HEADER_HEIGHT);
+        assert_eq!(compact.header.height, layout::COMPACT_HEADER_HEIGHT);
+        assert!(compact.content.y < expanded.content.y);
+        assert!(compact.content.height > expanded.content.height);
     }
 
     #[test]

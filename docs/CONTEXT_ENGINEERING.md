@@ -1,9 +1,9 @@
 # Carina Context Engineering
 
-Status: `v0.9.2` release specification. The core cascade, checkpoint lifecycle,
-cache SLO instrumentation, and deterministic long-session fidelity fixtures are
-hardened. Provider-backed cache runs and semantic quality curves remain release
-evidence.
+Status: implementation update after the `v0.8.42` audit. The core cascade,
+checkpoint lifecycle, cache SLO instrumentation, and deterministic 60-turn
+fidelity fixture are hardened. Provider-backed cache runs and semantic quality
+curves remain release evidence.
 
 ## 1. Two ledgers, one model projection
 
@@ -28,8 +28,8 @@ measured growth forecasting; embedding quality remains a later optimization.
 |---|---|---|---|
 | 0 enqueue snip | `snipObservation`, default 2,000 chars; typed importance + shape summary; pinned values over 64 KiB become a pinned artifact pointer | preview, hash, artifact pointer | richer provider-aware extractors |
 | 1 stale-read elision | `supersedeStaleReads` removes older unpinned reads of the same path | newest read and pinned failures | retain latest relevant evidence by topic, not path only |
-| 2 local collapse | keep three recent turns; elide old observations; deterministic action skeleton at pressure <= 1.10 | task, user steering, paths, and up to four explicitly requested `KEY=VALUE` read facts | add image replacement |
-| 3 summary | model summary after escalation plus a bounded deterministic durable-fact ledger | user-authored turns under 4,000 chars, requested read facts, changed paths, and failures | fact confidence and richer provenance |
+| 2 local collapse | keep three recent turns; elide old observations; deterministic action skeleton at pressure <= 1.10 | task, user steering, paths | add image replacement |
+| 3 summary | model summary after escalation plus a bounded deterministic durable-fact ledger | user-authored turns under 4,000 chars, changed paths and failures | fact confidence and richer provenance |
 | 4 rebuild | re-read at most five cited/key files into volatile `Transcript.Rebuild`, 8,000 char cap; project rules stay in the freshly composed dynamic system layer | current file contents; exactly one active rule revision | verify citations and invalidate stale rebuild entries |
 | 5 proactive/semantic | production policy enables lookahead, measured input-growth forecasting, and semantic boundaries; receipts record `hard_budget`, `proactive_lookahead`, `proactive_forecast`, or `semantic_shift` | bounded forecast and durable user turns | embedding/topic inference and richer fact segmentation |
 
@@ -45,12 +45,6 @@ prompt-too-long errors. Semantic compaction recognizes explicit
 steering/import/fork boundaries and low-overlap topic shifts using a
 deterministic lexical signal; embeddings remain a measured follow-up rather
 than an ungrounded host classifier.
-
-Every context-changing call returns a receipt. A v4 receipt represents
-Step-1-only elision: no turns were folded, `Summary` is unchanged,
-`removed_turns=0`, and `elided_turn_indices` plus the preimage hash identify the
-exact transformed observations. The daemon persists that receipt through
-`ContextCompacted` even when elision alone returns below the pressure trigger.
 
 ## 3. Token budget model
 
@@ -102,7 +96,7 @@ sections. Their child transcript remains isolated and only `done.summary`
 crosses back to the parent; tool visibility uses the same session projection as
 native schemas.
 
-## 6. `v0.9.2` prompt/context data flow
+## 6. `v0.8.42` prompt/context data flow
 
 ```mermaid
 flowchart TD
@@ -148,7 +142,7 @@ prompt/context system SOTA or publishing a release.
 | P0-1 | Stable/dynamic boundary was represented but serialized on every turn | Claude `09-system-prompt工程.md` and `04-Agent协调/06-Fork与提示词缓存优化.md` | `go/daemon/promptcache.go`, `go/daemon/reasoner.go`, route telemetry | **implemented:** memoized stable prefix, exact Anthropic A-D receipt boundary, Direct OpenAI key on both request paths, warm-up-adjusted 95% SLO with 20-request minimum |
 | P0-2 | Native HTTP sent all builtin schemas without the active authority projection | Claude tool loading and OMP session-tools deferred exposure | `go/daemon/tool_registry.go`, `go/daemon/tool_schema.go`, `go/daemon/agent.go` | **implemented:** native schemas and text catalog use the same session/mode projection; 32k schema-share fixture enforces <15% |
 | P0-3 | Pinned observations could bypass the model-view budget | Claude context compression cascade; OMP compaction | `go/daemon/transcript.go`, `context_compression.go`, artifact store | **implemented:** ordinary cap plus pinned >64 KiB recoverable artifact pointer and hash |
-| P0-4 | Compaction lacked proactive lookahead, semantic boundaries, and receipts for cheap-only transforms | jcode `compaction.rs`; OMP `docs/compaction.md` | `go/daemon/transcript.go`, `compaction_budget.go`, `compact_rebuild.go` | **implemented:** lookahead, EWMA forecast, lexical topic boundaries, v4 elision-only receipts, bounded requested-evidence facts, and checkpoint-roundtrip 60+/72-turn fidelity fixtures |
+| P0-4 | Compaction lacked proactive lookahead and semantic boundaries | jcode `compaction.rs`; OMP `docs/compaction.md` | `go/daemon/transcript.go`, `compaction_budget.go` | **implemented:** lookahead, EWMA forecast, lexical topic boundaries, bounded durable facts, and a checkpoint-roundtrip 60-turn fidelity fixture |
 | P0-5 | Rule lifecycle lacked durable source revisions | Codex `agents_md.rs`/manager and Claude layered CLAUDE.md | `go/daemon/memory.go`, `compact_rebuild.go`, checkpoint schema | **implemented:** deterministic path/bytes/SHA-256 manifest persisted and compared on compact/resume |
 
 ## 8. P1 and P2
@@ -156,7 +150,7 @@ prompt/context system SOTA or publishing a release.
 | Priority | Item | Completion signal |
 |---|---|---|
 | P1 implemented | EWMA proactive compaction and expected-output reservation | receipts distinguish lookahead, forecast, semantic shift, and hard budget |
-| P1 baseline | Semantic/topic-shift compaction with deterministic durable facts | 60-turn fixture preserves task, steering, changed path, failure, and next action; 72-turn fixture preserves explicit first/middle/last read evidence across checkpoint restore |
+| P1 baseline | Semantic/topic-shift compaction with deterministic durable facts | 60-turn fixture preserves task, steering, changed path, failure, and next action across checkpoint JSON |
 | P1 | Memory retrieval budget and reranking | task memory snapshot has a hard byte cap and relevance-first ordering; per-turn recall remains opt-in |
 | P1 implemented | Strict subagent prompt sections | child A-D uses named sections and a frozen prefix; parent receives summary-only output |
 | P1 implemented | Provider cache dashboard | `/context` reports actual boundary hash, provider evidence, post-warm-up hit rate, sample sufficiency, and SLO verdict |

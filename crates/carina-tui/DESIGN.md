@@ -49,11 +49,21 @@ third pink. The mark is the only consumer of `brand`.
 muted chips, A109 toy chrome speaks production, A116 overlay rest not a cyan
 room, A114′ terminal-brand-display.
 **Landed voice/header P1:** A108 operator English (`context` not `ctx`, queue
-preview not steer_id, Doctor); A117 import header no reasoning dump; A105
-question `glyphs.selected()`; A118 one-row header has no mini mark; A103
+preview not steer_id, Doctor); A105 question `glyphs.selected()`; A118 one-row
+header has no mini mark; A103
 `/changes` identity truncates on path/`-` segments; header mode recedes
 (Build muted, Plan accent only as the exception); A015 assistant
 markdown list/table labels recede, heading takes a document beat.
+
+Setup/import `ProductHeader` now forces the compact header layout while the
+conversation import browser is open. Wide terminals therefore show only the
+recovery phase and target workspace; provider/model/reasoning telemetry stays
+inside the dedicated setup surface rather than the first visual line.
+
+Completed assistant answers that exceed 28 logical lines or 3.2KB are also
+progressive disclosures: the reading column keeps a 16-row head/tail preview
+with a localized omission receipt, and `Ctrl-O` or the block action restores
+the full markdown. Streaming and ordinary short answers remain fully visible.
 
 ---
 
@@ -137,7 +147,7 @@ Empty transcript (no blocks):
                     ⠀⠈⠻⠿⠟⠁⠀⠀⠀⠀
 
                          Carina
-              Type a request, or /help · /model
+              Type a request, or /help · /model · /status
 ```
 
 Rules:

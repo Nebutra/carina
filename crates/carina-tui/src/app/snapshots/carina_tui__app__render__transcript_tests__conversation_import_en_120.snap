@@ -4,11 +4,8 @@ expression: rendered
 ---
 size=120x30
 
-    ⠀⢀⣀⣀⡀⣠⣶⣶⣄⠀   Carina                                                                        Conversation recovery
-    ⠀⣿⣿⣿⣿⣿⣿⣿⣿⠀   Provider   Provider  ·  Direct API
-    ⠀⠙⣿⣿⡏⠀⠈⢻⡇⠀   Model      model
-    ⠀⢰⣿⣿⣿⣦⣴⣿⡿⠀   Workspace  <workspace>
-    ⠀⠈⠻⠿⠟⠁⠀⠀⠀⠀
+   Carina                                                                                      Conversation recovery
+   <workspace>
    ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
    ▌ Import conversations
@@ -25,6 +22,9 @@ size=120x30
    │                                                                       │  │ Target workspace  <workspace>       │
    │                                                                       │  │ 7 visible user/assistant messages   │
    │                                                                       │  │ Updated 2026-08-13 16:01            │
+   │                                                                       │  │                                     │
+   │                                                                       │  │                                     │
+   │                                                                       │  │                                     │
    │                                                                       │  │                                     │
    │ Review import  Select all  Change source  Cancel                      │  │                                     │
    │                                                                       │  │                                     │

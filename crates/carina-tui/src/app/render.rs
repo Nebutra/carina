@@ -85,8 +85,14 @@ impl App {
     }
 
     fn render_scene(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        let layout = PrerequisiteLayout::compute(area);
-        self.render_scene_header(frame, layout.header);
+        let compact_recovery_header =
+            self.phase == Phase::Session && self.session_browser.conversation_import().is_open();
+        let layout = if compact_recovery_header {
+            PrerequisiteLayout::compute_compact_header(area)
+        } else {
+            PrerequisiteLayout::compute(area)
+        };
+        self.render_scene_header(frame, layout.header, !compact_recovery_header);
         match self.phase {
             Phase::Locale => self.render_locale(frame, layout.content),
             Phase::Provider => self.render_providers(frame, layout.content),
@@ -99,7 +105,7 @@ impl App {
         self.render_scene_footer(frame, layout.footer);
     }
 
-    fn render_scene_header(&self, frame: &mut Frame<'_>, area: Rect) {
+    fn render_scene_header(&self, frame: &mut Frame<'_>, area: Rect, allow_expanded: bool) {
         let locale = self.ui_locale();
         let phase = match self.phase {
             Phase::Locale => tr(locale, MessageId::PhaseLanguage),
@@ -121,7 +127,13 @@ impl App {
             workspace: &self.options.workspace,
             actions: &[],
         }
-        .render(frame, area, self.theme, &mut InteractionMap::default());
+        .render_with_expanded_header(
+            frame,
+            area,
+            self.theme,
+            &mut InteractionMap::default(),
+            allow_expanded,
+        );
     }
 
     fn render_locale(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -9139,7 +9151,7 @@ fn transcript_lines_with_tool_key_and_density(
             ),
             None => transcript_dialogue_mark(glyphs.role_prefix(), metadata_style, metadata_style),
         };
-        return render_markdown_prefixed(
+        let lines = render_markdown_prefixed(
             &block.body,
             content_width,
             MarkdownTheme {
@@ -9160,6 +9172,16 @@ fn transcript_lines_with_tool_key_and_density(
             },
             &prefix,
         );
+        if block.is_collapsible() && !block.expanded {
+            return bounded_assistant_response_lines(
+                lines,
+                locale,
+                styles,
+                content_width,
+                tool_expand_key,
+            );
+        }
+        return lines;
     }
     if let Some(failure) = &block.failure {
         let count = failure.attempt_count.max(1).to_string();
@@ -9660,6 +9682,48 @@ fn bounded_plain_visual_rows(
         nested,
     ));
     bounded.extend(lines.into_iter().skip(head + omitted));
+    bounded
+}
+
+const ASSISTANT_PREVIEW_VISUAL_ROWS: usize = 16;
+
+fn bounded_assistant_response_lines(
+    lines: Vec<Line<'static>>,
+    locale: Locale,
+    styles: TranscriptStyles,
+    content_width: u16,
+    expand_key: &'static str,
+) -> Vec<Line<'static>> {
+    if lines.len() <= ASSISTANT_PREVIEW_VISUAL_ROWS {
+        return lines;
+    }
+    let retained = ASSISTANT_PREVIEW_VISUAL_ROWS.saturating_sub(1);
+    let head = retained.div_ceil(2).max(1);
+    let tail = retained.saturating_sub(head);
+    let omitted = lines.len().saturating_sub(head + tail);
+    let hint = tr_format(
+        locale,
+        MessageId::AssistantResponseOmitted,
+        &[("count", omitted.to_string().as_str()), ("key", expand_key)],
+    );
+    let hint = tool_hint_line(
+        hint,
+        ToolLineContext {
+            locale,
+            density: DensityMode::Compact,
+            styles,
+            content_width,
+            expand_key,
+            inspect_key: expand_key,
+            expanded_output_budget: ASSISTANT_PREVIEW_VISUAL_ROWS,
+        },
+        false,
+    );
+    let tail_start = lines.len().saturating_sub(tail);
+    let mut bounded = Vec::with_capacity(ASSISTANT_PREVIEW_VISUAL_ROWS);
+    bounded.extend(lines.iter().take(head).cloned());
+    bounded.push(hint);
+    bounded.extend(lines.into_iter().skip(tail_start));
     bounded
 }
 
@@ -11243,6 +11307,14 @@ mod transcript_tests {
                     assert!(
                         rendered.contains(tr(locale, MessageId::ConversationImportTargetWorkspace)),
                         "wide import view must state the write target"
+                    );
+                    assert!(
+                        !rendered.contains("Provider  ·  Direct API"),
+                        "wide recovery view must not reintroduce provider telemetry"
+                    );
+                    assert!(
+                        !rendered.contains("reasoning off"),
+                        "wide recovery view must not reintroduce reasoning telemetry"
                     );
                 }
                 insta::assert_snapshot!(
@@ -16445,6 +16517,26 @@ mod transcript_tests {
         );
         assert_eq!(visible.last().unwrap(), "  line 10");
         assert_eq!(height, 10);
+    }
+
+    #[test]
+    fn collapsed_long_assistant_response_keeps_head_tail_and_expand_receipt() {
+        let body = (1..=40)
+            .map(|line| format!("response line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut block = block(BlockKind::Assistant, &body);
+        block.assistant_phase = Some(crate::rpc::AssistantMessagePhase::FinalAnswer);
+        block.collapsible = true;
+        block.expanded = false;
+
+        let lines = transcript_lines(&block, Locale::En, TranscriptStyles::default(), 100);
+        let visible = plain(&lines).join("\n");
+        assert_eq!(lines.len(), ASSISTANT_PREVIEW_VISUAL_ROWS);
+        assert!(visible.contains("response line 1"));
+        assert!(visible.contains("response line 40"));
+        assert!(visible.contains("response lines omitted"));
+        assert!(!visible.contains("response line 20"));
     }
 
     #[test]

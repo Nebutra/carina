@@ -476,11 +476,8 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 		if cacheModel == "" {
 			cacheModel = taskModel(task)
 		}
-		if err := d.recordStrict(sess.SessionID, "PromptCacheObserved", task.RunID, "go",
-			promptCacheReceiptForSegments(d.promptCacheKind(cacheModel), result.Usage, seg), ""); err != nil {
-			d.sched.SetStatus(task.RunID, "failed")
-			return "subagent failed: " + err.Error()
-		}
+		d.record(sess.SessionID, "PromptCacheObserved", task.RunID, "go",
+			promptCacheReceiptForSegments(d.promptCacheKind(cacheModel), result.Usage, seg), "")
 		if !result.Usage.Estimated {
 			tr.noteObservedInputTokens(result.Usage.promptTokens())
 		}

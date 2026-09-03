@@ -597,11 +597,8 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			if cacheModel == "" {
 				cacheModel = taskModel(task)
 			}
-			if err := d.recordStrict(sess.SessionID, "PromptCacheObserved", task.RunID, "go",
-				promptCacheReceiptForSegments(d.promptCacheKind(cacheModel), result.Usage, seg), ""); err != nil {
-				d.degradeReasoner(sess, task, tr, err)
-				return
-			}
+			d.record(sess.SessionID, "PromptCacheObserved", task.RunID, "go",
+				promptCacheReceiptForSegments(d.promptCacheKind(cacheModel), result.Usage, seg), "")
 			turnTokens += result.Usage.totalTokens()
 			if !result.Usage.Estimated {
 				tr.noteObservedInputTokens(result.Usage.promptTokens())

@@ -139,9 +139,8 @@ const (
 	maxCollapsedPriorSummaryChars  = 2000
 	maxCollapsedActionBriefs       = 20
 	maxCollapsedActionBriefChars   = 160
-	maxDurableCompactionFacts      = 16
+	maxDurableCompactionFacts      = 12
 	maxDurableCompactionFactChars  = 280
-	maxDurableRequestedFacts       = 4
 	maxDurableFailureFacts         = 4
 	maxDurableChangeFacts          = 8
 )
@@ -831,8 +830,7 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 	// force a summary after cheap elision. Next Think will note usage again.
 	t.observedInputTokens = 0
 	t.inputGrowthEWMA = 0
-	// Step 1: elide. Track only newly transformed observations so a repeated
-	// compact call never claims the same savings twice.
+	// Step 1: elide.
 	cutoff := len(t.Turns) - t.policy.KeepRecent
 	var elidedPre []Turn
 	var elidedIdx []int
@@ -964,28 +962,6 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 	return nil
 }
 
-func (t *Transcript) elisionOnlyReceipt(previousSummary string, elided []Turn, indices []int, trigger string, charsBefore, tokensBefore int, pressureBefore float64) *CompactionReceipt {
-	if t == nil || len(elided) == 0 {
-		return nil
-	}
-	t.retainDurableFacts(elided)
-	afterRender := t.render()
-	receipt := CompactionReceipt{
-		Version: 4, CreatedAt: time.Now().UTC(), FirstTurn: indices[0], LastTurn: indices[len(indices)-1],
-		PreimageSHA256: compactionPreimageHash(previousSummary, elided), SummarySHA256: sha256Hex(t.Summary),
-		ElidedTurns: len(indices), ElidedTurnIndices: append([]int(nil), indices...),
-		PolicyVersion: t.policy.PolicyVersion, WindowTokens: t.policy.WindowTokens,
-		ReserveTokens: t.policy.ReserveTokens, MetadataSource: t.policy.MetadataSource,
-		PressureBefore: pressureBefore, PressureAfter: t.compactionPressure(),
-		CharsBefore: charsBefore, CharsAfter: len(afterRender),
-		TokensBefore: tokensBefore, TokensAfter: estimateTokens(afterRender),
-		Mode: compactionModeCollapseOnly, Transforms: []string{"elide_tool_output"}, Trigger: trigger,
-		DurableFactCount: len(t.DurableFacts), DurableFactsSHA256: durableFactsSHA256(t.DurableFacts),
-	}
-	t.CompactionReceipts = append(t.CompactionReceipts, receipt)
-	return &receipt
-}
-
 func (t *Transcript) retainDurableFacts(folded []Turn) {
 	if t == nil {
 		return
@@ -996,18 +972,6 @@ func (t *Transcript) retainDurableFacts(folded []Turn) {
 		seen[compactionFactKey(fact)] = true
 	}
 	for _, turn := range folded {
-		if evidence, ok := requestedReadEvidence(t.Task, turn); ok {
-			fact := CompactionFact{
-				Turn: turn.Index, Tool: turn.Tool, Action: turn.ActionBrief,
-				Kind: "requested_evidence", Evidence: evidence,
-				SHA256: sha256Hex(turn.Obs.Content), Ref: turn.Obs.OriginalRef,
-			}
-			key := compactionFactKey(fact)
-			if !seen[key] {
-				seen[key] = true
-				facts = append(facts, fact)
-			}
-		}
 		importance := turn.Obs.Importance
 		if importance == "" {
 			importance = toolObservationImportance(turn.Tool, turn.Obs.Content)
@@ -1055,19 +1019,13 @@ func (t *Transcript) retainDurableFacts(folded []Turn) {
 }
 
 func boundDurableFacts(facts []CompactionFact) []CompactionFact {
-	var requested, failures, changes []CompactionFact
+	var failures, changes []CompactionFact
 	for _, fact := range facts {
-		switch fact.Kind {
-		case "requested_evidence":
-			requested = append(requested, fact)
-		case "change":
+		if fact.Kind == "change" {
 			changes = append(changes, fact)
-		default:
+		} else {
 			failures = append(failures, fact)
 		}
-	}
-	if len(requested) > maxDurableRequestedFacts {
-		requested = requested[len(requested)-maxDurableRequestedFacts:]
 	}
 	if len(failures) > maxDurableFailureFacts {
 		failures = failures[len(failures)-maxDurableFailureFacts:]
@@ -1075,7 +1033,7 @@ func boundDurableFacts(facts []CompactionFact) []CompactionFact {
 	if len(changes) > maxDurableChangeFacts {
 		changes = changes[len(changes)-maxDurableChangeFacts:]
 	}
-	out := append(append(append([]CompactionFact(nil), requested...), failures...), changes...)
+	out := append(append([]CompactionFact(nil), failures...), changes...)
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Turn < out[j].Turn })
 	return out
 }
@@ -1089,52 +1047,10 @@ func durableFactsSHA256(facts []CompactionFact) string {
 }
 
 func compactionFactKey(fact CompactionFact) string {
-	if fact.Kind == "requested_evidence" {
-		return fact.Kind + "\x00" + strings.ToLower(fact.Evidence)
-	}
 	if (fact.Tool == "patch" || fact.Tool == "edit") && fact.SHA256 == "" {
 		return fact.Tool + "\x00" + fact.Action
 	}
 	return fmt.Sprintf("%d\x00%s\x00%s", fact.Turn, fact.Tool, fact.SHA256)
-}
-
-func requestedReadEvidence(task string, turn Turn) (string, bool) {
-	if turn.Obs.Error != nil || (turn.Tool != "read" && turn.Tool != "git.diff" && turn.Tool != "git.log" && turn.Tool != "git.status") {
-		return "", false
-	}
-	requested := explicitlyRequestedMarkerKeys(task)
-	for _, match := range markerAssignmentPattern.FindAllStringSubmatch(turn.Obs.Content, -1) {
-		if len(match) != 3 || !requested[strings.ToLower(match[1])] {
-			continue
-		}
-		value := strings.Trim(match[2], "\"'`[](){}<>")
-		if value == "" {
-			continue
-		}
-		return brief(match[1]+"="+value, maxDurableCompactionFactChars), true
-	}
-	return "", false
-}
-
-// explicitlyRequestedMarkerKeys deliberately ignores incidental field names
-// mentioned elsewhere in a task (for example STEP and NEXT in a traversal
-// protocol). Only uppercase identifiers in an explicit output/retention clause
-// are eligible for durable-fact slots. This keeps the bounded ledger from
-// being poisoned by high-cardinality progress metadata.
-func explicitlyRequestedMarkerKeys(task string) map[string]bool {
-	requested := make(map[string]bool)
-	for _, location := range markerRequestAnchorPattern.FindAllStringIndex(task, -1) {
-		end := len(task)
-		if relative := strings.IndexAny(task[location[1]:], ".;\n"); relative >= 0 {
-			end = location[1] + relative
-		}
-		for _, word := range markerIdentifierPattern.FindAllString(task[location[1]:end], -1) {
-			if word == strings.ToUpper(word) && word != strings.ToLower(word) {
-				requested[strings.ToLower(word)] = true
-			}
-		}
-	}
-	return requested
 }
 
 func collapseActionSkeleton(previousSummary string, folded []Turn) string {

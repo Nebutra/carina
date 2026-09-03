@@ -165,6 +165,18 @@ pub struct TranscriptBlock {
     pub layout_revision: u64,
 }
 
+/// Completed answers above this threshold become progressive disclosures in
+/// the reading column. Short answers remain ordinary unboxed dialogue, while
+/// very large responses keep their head/tail visible and expose an explicit
+/// expansion escape hatch.
+pub const ASSISTANT_DISCLOSURE_CHAR_THRESHOLD: usize = 3_200;
+pub const ASSISTANT_DISCLOSURE_LINE_THRESHOLD: usize = 28;
+
+pub fn assistant_requires_disclosure(body: &str) -> bool {
+    body.len() >= ASSISTANT_DISCLOSURE_CHAR_THRESHOLD
+        || body.lines().count() > ASSISTANT_DISCLOSURE_LINE_THRESHOLD
+}
+
 impl TranscriptBlock {
     pub fn localized_title(&self, locale: Locale) -> String {
         match self.tool_group_state() {
@@ -2213,12 +2225,23 @@ fn upsert_projected_block(blocks: &mut Vec<TranscriptBlock>, mut block: Transcri
         block.selected = previous.selected;
         block.layout_revision = previous.layout_revision.saturating_add(1);
     }
+    let auto_collapsible = block.kind == BlockKind::Assistant
+        && block.assistant_phase == Some(AssistantMessagePhase::FinalAnswer)
+        && assistant_requires_disclosure(&block.body);
+    if auto_collapsible {
+        block.collapsible = true;
+        block.expanded = false;
+    }
     if let Some(existing) = blocks.iter_mut().find(|item| item.id == block.id) {
         let was_terminal = existing.status.is_empty() || is_failure_status(&existing.status);
         let is_terminal = block.status.is_empty() || is_failure_status(&block.status);
         let gained_reviewable_diff =
             !existing.collapsible && block.collapsible && block.body_kind == BlockBodyKind::Diff;
-        if block.collapsible && !gained_reviewable_diff && (!is_terminal || was_terminal) {
+        if block.collapsible
+            && !gained_reviewable_diff
+            && (!is_terminal || was_terminal)
+            && (!auto_collapsible || existing.collapsible)
+        {
             block.expanded = existing.expanded;
         }
         block.selected = existing.selected;
@@ -3928,6 +3951,28 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         assert_eq!(blocks[0].body, "正在处理 **结果**。");
         assert!(!blocks[0].body.contains("duplicate"));
         assert_eq!(blocks[0].layout_revision, 3);
+    }
+
+    #[test]
+    fn completed_long_assistant_answer_starts_as_a_collapsed_disclosure() {
+        let body = (1..=ASSISTANT_DISCLOSURE_LINE_THRESHOLD + 1)
+            .map(|line| format!("response line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut blocks = Vec::new();
+        let mut answer = message_block(
+            "assistant:long".into(),
+            "run-long".into(),
+            BlockKind::Assistant,
+            "Carina",
+            body,
+            String::new(),
+        );
+        answer.assistant_phase = Some(AssistantMessagePhase::FinalAnswer);
+
+        assert!(upsert_projected_block(&mut blocks, answer));
+        assert!(blocks[0].is_collapsible());
+        assert!(!blocks[0].expanded);
     }
 
     #[test]

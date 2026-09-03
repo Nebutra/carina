@@ -49,6 +49,7 @@ pub enum EventType {
     ModelResponded,
     RoutingDecision,
     RoutingOutcome,
+    PromptCacheObserved,
     RoutingRetryScheduled,
     PromptCacheObserved,
     ContextCompacted,

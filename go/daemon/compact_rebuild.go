@@ -10,8 +10,7 @@ import (
 )
 
 // recordCompactRebuild rehydrates cited files into the volatile transcript
-// after a fold when present, then audits every receipt, including Step-1-only
-// elision. Persistent project instructions
+// after a Step-2 fold, then audits the receipt. Persistent project instructions
 // remain owned by the freshly composed dynamic system layer; copying them into
 // Rebuild would duplicate them and could retain a stale revision across resume.
 func (d *Daemon) recordCompactRebuild(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, receipt *CompactionReceipt, extra map[string]any) {
