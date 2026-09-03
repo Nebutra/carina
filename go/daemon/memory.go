@@ -3,12 +3,118 @@ package daemon
 import (
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 )
+
+const instructionManifestVersion = 1
+
+// InstructionManifest is the revisioned identity of the persistent
+// instruction sources that shaped a run. Checkpoints carry this manifest so
+// resume/compact can detect a changed CLAUDE.md/AGENTS.md-style source instead
+// of silently continuing with an un-audited rule set.
+type InstructionManifest struct {
+	Version int                        `json:"version"`
+	Digest  string                     `json:"digest"`
+	Entries []InstructionManifestEntry `json:"entries,omitempty"`
+}
+
+type InstructionManifestEntry struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+	Bytes  int    `json:"bytes"`
+	Order  int    `json:"order"`
+}
+
+func instructionManifestForTask(d *Daemon, ws string, agent string) *InstructionManifest {
+	if (d != nil && d.safeMode) || !shouldLoadProjectInstructions(agent) {
+		return nil
+	}
+	manifest := discoverInstructionManifest(ws)
+	if len(manifest.Entries) == 0 {
+		return nil
+	}
+	return &manifest
+}
+
+func discoverInstructionManifest(ws string) InstructionManifest {
+	paths := make([]string, 0)
+	if home, err := os.UserHomeDir(); err == nil {
+		path := filepath.Join(home, ".carina", "CARINA.md")
+		if instructionFileUsable(path) {
+			paths = append(paths, path)
+		}
+	}
+	if ws != "" {
+		for _, dir := range projectInstructionDirs(ws) {
+			for _, candidate := range projectInstructionCandidates {
+				path := filepath.Join(dir, candidate)
+				if instructionFileUsable(path) {
+					paths = append(paths, path)
+					break
+				}
+			}
+		}
+	}
+	entries := make([]InstructionManifestEntry, 0, len(paths))
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err != nil || len(strings.TrimSpace(string(raw))) == 0 {
+			continue
+		}
+		display := filepath.ToSlash(path)
+		if ws != "" {
+			if rel, relErr := filepath.Rel(ws, path); relErr == nil && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				display = filepath.ToSlash(filepath.Join("project", rel))
+			}
+		}
+		sha := sha256Hex(string(raw))
+		entries = append(entries, InstructionManifestEntry{Path: display, SHA256: sha, Bytes: len(raw), Order: len(entries)})
+	}
+	// The discovery order is already root-to-workspace and user-first, but
+	// sorting makes the digest stable if a future loader changes traversal.
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
+	var digestInput strings.Builder
+	for _, entry := range entries {
+		digestInput.WriteString(entry.Path)
+		digestInput.WriteByte('\x00')
+		digestInput.WriteString(entry.SHA256)
+		digestInput.WriteByte('\x00')
+		digestInput.WriteString(strconv.Itoa(entry.Bytes))
+		digestInput.WriteByte('\x00')
+		digestInput.WriteString(strconv.Itoa(entry.Order))
+		digestInput.WriteByte('\n')
+	}
+	return InstructionManifest{Version: instructionManifestVersion, Digest: sha256Hex(digestInput.String()), Entries: entries}
+}
+
+func instructionFileUsable(path string) bool {
+	raw, err := os.ReadFile(path)
+	return err == nil && len(strings.TrimSpace(string(raw))) > 0
+}
+
+func instructionManifestsEqual(a, b *InstructionManifest) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Version == b.Version && a.Digest == b.Digest
+}
+
+func instructionManifestDigest(manifest *InstructionManifest) string {
+	if manifest == nil {
+		return ""
+	}
+	return manifest.Digest
+}
 
 // memoryBudget bounds how much project instruction text is injected into the
 // system prompt, so a large repository doc can't crowd out the task/transcript.
 const memoryBudget = 8000
+
+// memorySnapshotBudget is stricter than the source-file budget because the
+// snapshot shares the live prompt with workspace/catalog and transcript.
+const memorySnapshotBudget = 6000
 
 var projectInstructionCandidates = []string{
 	"CARINA.override.md",
@@ -40,7 +146,7 @@ func loadMemory(ws string) string {
 	}
 	mem := strings.Join(parts, "\n\n")
 	if len(mem) > memoryBudget {
-		mem = mem[:memoryBudget] + "\n…[memory truncated]"
+		mem = truncateUTF8Bytes(mem, memoryBudget) + "\n…[memory truncated]"
 	}
 	return mem
 }

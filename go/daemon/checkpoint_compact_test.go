@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -151,5 +153,88 @@ func TestCheckpointCompactAllowsCompletedTask(t *testing.T) {
 	compact := summary.(map[string]any)["compact"].(map[string]any)
 	if compact["available"] != true {
 		t.Fatalf("context.summary compact after completed: %#v", compact)
+	}
+}
+
+func TestCheckpointCompactChangedInstructionManifestDropsStaleRebuildRules(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	rulesPath := filepath.Join(ws, "AGENTS.md")
+	if err := os.WriteFile(rulesPath, []byte("STALE_CHECKPOINT_RULE\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sess, _ := d.store.CreateSession(ws, "full-workspace")
+	if err := d.kern.InitSessionWithPolicy(sess.SessionID, ws, "full-workspace", nil); err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, "compact changed rules", "", "build", nil)
+	oldManifest := instructionManifestForTask(d, ws, task.Agent)
+	sourceTranscript := compactFixtureTranscript()
+	sourceTranscript.Rebuild = "REBUILT CONTEXT (post-compact; re-read, not new user input):\nPROJECT INSTRUCTIONS (legacy copy):\nSTALE_CHECKPOINT_RULE"
+	source := &runCheckpoint{Turn: 9, Transcript: sourceTranscript, InstructionManifest: oldManifest}
+	if err := d.runs.saveCheckpointChecked(task.RunID, source); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rulesPath, []byte("CURRENT_CHECKPOINT_RULE\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d.sched.SetStatus(task.RunID, "completed")
+	d.SetSummarizer(&scriptedReasoner{steps: []string{"current work summarized"}})
+	if _, err := d.handleCheckpointCompact(mustJSON(t, map[string]any{"session_id": sess.SessionID, "run_id": task.RunID})); err != nil {
+		t.Fatal(err)
+	}
+	latest := d.runs.loadCheckpoint(task.RunID)
+	if latest == nil || latest.Transcript == nil {
+		t.Fatal("compacted checkpoint missing")
+	}
+	layers := d.composeAgentPromptLayers(sess, task, latest.MemorySnapshot)
+	seg := buildPromptSegmentsFromLayers(layers, task.UserPrompt, latest.Transcript.render(), "GO")
+	if strings.Contains(seg.full(), "STALE_CHECKPOINT_RULE") {
+		t.Fatalf("compacted checkpoint retained stale project instructions:\n%s", seg.full())
+	}
+	if got := strings.Count(seg.full(), "CURRENT_CHECKPOINT_RULE"); got != 1 {
+		t.Fatalf("current project instruction occurrences = %d, want exactly 1:\n%s", got, seg.full())
+	}
+	currentManifest := instructionManifestForTask(d, ws, task.Agent)
+	if !instructionManifestsEqual(latest.InstructionManifest, currentManifest) {
+		t.Fatalf("checkpoint manifest = %+v, want current %+v", latest.InstructionManifest, currentManifest)
+	}
+}
+
+func TestCheckpointCompactInstructionDeletionClearsManifestAndStaleRebuild(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	rulesPath := filepath.Join(ws, "AGENTS.md")
+	if err := os.WriteFile(rulesPath, []byte("RULE_REMOVED_BEFORE_COMPACT\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sess, _ := d.store.CreateSession(ws, "full-workspace")
+	if err := d.kern.InitSessionWithPolicy(sess.SessionID, ws, "full-workspace", nil); err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, "compact deleted rules", "", "build", nil)
+	sourceTranscript := compactFixtureTranscript()
+	sourceTranscript.Rebuild = "REBUILT CONTEXT (post-compact; re-read, not new user input):\nPROJECT INSTRUCTIONS (legacy copy):\nRULE_REMOVED_BEFORE_COMPACT"
+	source := &runCheckpoint{Turn: 9, Transcript: sourceTranscript, InstructionManifest: instructionManifestForTask(d, ws, task.Agent)}
+	if err := d.runs.saveCheckpointChecked(task.RunID, source); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(rulesPath); err != nil {
+		t.Fatal(err)
+	}
+	d.sched.SetStatus(task.RunID, "completed")
+	d.SetSummarizer(&scriptedReasoner{steps: []string{"current work summarized"}})
+	if _, err := d.handleCheckpointCompact(mustJSON(t, map[string]any{"session_id": sess.SessionID, "run_id": task.RunID})); err != nil {
+		t.Fatal(err)
+	}
+	latest := d.runs.loadCheckpoint(task.RunID)
+	if latest == nil || latest.Transcript == nil {
+		t.Fatal("compacted checkpoint missing")
+	}
+	if latest.InstructionManifest != nil {
+		t.Fatalf("deleted instruction source retained stale manifest: %+v", latest.InstructionManifest)
+	}
+	if strings.Contains(latest.Transcript.render(), "RULE_REMOVED_BEFORE_COMPACT") {
+		t.Fatalf("deleted instruction source retained stale rebuild:\n%s", latest.Transcript.render())
 	}
 }

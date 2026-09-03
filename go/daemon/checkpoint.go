@@ -460,7 +460,7 @@ func checkpointID(task *scheduler.ExecutionRun, cp *runCheckpoint) string {
 	return runCheckpointID(task.RunID, cp)
 }
 func checkpointInfo(task *scheduler.ExecutionRun, cp *runCheckpoint) map[string]any {
-	return map[string]any{"checkpoint_id": checkpointID(task, cp), "parent_checkpoint_id": cp.ParentCheckpointID, "created_at": cp.CreatedAt, "sequence": fmt.Sprintf("%020d", cp.Sequence), "task_id": task.RunID, "session_id": task.SessionID, "turn": cp.Turn, "summary": cp.Transcript.Summary, "applied_patches": nonNilStrings(cp.AppliedPatches)}
+	return map[string]any{"checkpoint_id": checkpointID(task, cp), "parent_checkpoint_id": cp.ParentCheckpointID, "created_at": cp.CreatedAt, "sequence": fmt.Sprintf("%020d", cp.Sequence), "task_id": task.RunID, "session_id": task.SessionID, "turn": cp.Turn, "summary": cp.Transcript.Summary, "applied_patches": nonNilStrings(cp.AppliedPatches), "instruction_manifest_digest": instructionManifestDigest(cp.InstructionManifest)}
 }
 func (d *Daemon) appliedPatchIDsForSession(sessionID string) []string {
 	sess, ok := d.store.Get(sessionID)

@@ -294,17 +294,18 @@ func (r *runStore) reconcileRestoreJournals() ([]string, error) {
 // (compacted) transcript. The audit log remains the full source of truth; this
 // is only what the agent loop needs to continue from where it left off.
 type runCheckpoint struct {
-	Version            int                         `json:"version,omitempty"`
-	CheckpointID       string                      `json:"checkpoint_id,omitempty"`
-	ParentCheckpointID string                      `json:"parent_checkpoint_id,omitempty"`
-	CreatedAt          string                      `json:"created_at,omitempty"`
-	Sequence           int64                       `json:"sequence,omitempty"`
-	Turn               int                         `json:"turn"`
-	Transcript         *Transcript                 `json:"transcript"`
-	MemorySnapshot     string                      `json:"memory_snapshot,omitempty"`
-	AppliedPatches     []string                    `json:"applied_patches,omitempty"`
-	WorkspaceAnchor    *continuity.WorkspaceAnchor `json:"workspace_anchor,omitempty"`
-	ReadProvenance     sessionReadProvenance       `json:"read_provenance,omitempty"`
+	Version             int                         `json:"version,omitempty"`
+	CheckpointID        string                      `json:"checkpoint_id,omitempty"`
+	ParentCheckpointID  string                      `json:"parent_checkpoint_id,omitempty"`
+	CreatedAt           string                      `json:"created_at,omitempty"`
+	Sequence            int64                       `json:"sequence,omitempty"`
+	Turn                int                         `json:"turn"`
+	Transcript          *Transcript                 `json:"transcript"`
+	MemorySnapshot      string                      `json:"memory_snapshot,omitempty"`
+	AppliedPatches      []string                    `json:"applied_patches,omitempty"`
+	WorkspaceAnchor     *continuity.WorkspaceAnchor `json:"workspace_anchor,omitempty"`
+	ReadProvenance      sessionReadProvenance       `json:"read_provenance,omitempty"`
+	InstructionManifest *InstructionManifest        `json:"instruction_manifest,omitempty"`
 }
 
 func (r *runStore) saveCheckpoint(taskID string, cp *runCheckpoint) {

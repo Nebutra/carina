@@ -117,6 +117,22 @@ func (d *Daemon) handleCheckpointCompact(params json.RawMessage) (any, error) {
 	if source == nil || source.Transcript == nil {
 		return nil, fmt.Errorf("compact requires a persisted checkpoint")
 	}
+	var sess *sessionstore.Session
+	workspaceRoot := ""
+	if stored, ok := d.store.Get(task.SessionID); ok && stored != nil {
+		sess = stored
+		workspaceRoot = sess.WorkspaceRoot
+	}
+	currentManifest := instructionManifestForTask(d, workspaceRoot, taskAgent(task))
+	if !instructionManifestsEqual(source.InstructionManifest, currentManifest) {
+		if err := d.recordChecked(task.SessionID, "ExecutionProgressed", task.RunID, "operator", map[string]any{
+			"status":            "instruction_manifest_changed",
+			"checkpoint_digest": instructionManifestDigest(source.InstructionManifest),
+			"current_digest":    instructionManifestDigest(currentManifest),
+		}, ""); err != nil {
+			return nil, fmt.Errorf("record instruction manifest change: %w", err)
+		}
+	}
 	clone, err := cloneTranscriptForCompact(source.Transcript)
 	if err != nil {
 		return nil, err
@@ -131,7 +147,14 @@ func (d *Daemon) handleCheckpointCompact(params json.RawMessage) (any, error) {
 	if receipt == nil {
 		return map[string]any{"compacted": false, "task_id": task.RunID, "checkpoint_id": checkpointID(task, source), "reason": "checkpoint has no safely compactable head"}, nil
 	}
-	target := &runCheckpoint{Turn: source.Turn, Transcript: clone, MemorySnapshot: source.MemorySnapshot, AppliedPatches: append([]string(nil), source.AppliedPatches...), WorkspaceAnchor: source.WorkspaceAnchor, ReadProvenance: source.ReadProvenance}
+	rebuildPaths := d.rebuildAfterCompact(sess, task, clone, receipt)
+	var instructionManifest *InstructionManifest
+	if currentManifest != nil {
+		copyManifest := *currentManifest
+		copyManifest.Entries = append([]InstructionManifestEntry(nil), currentManifest.Entries...)
+		instructionManifest = &copyManifest
+	}
+	target := &runCheckpoint{Turn: source.Turn, Transcript: clone, MemorySnapshot: source.MemorySnapshot, AppliedPatches: append([]string(nil), source.AppliedPatches...), WorkspaceAnchor: source.WorkspaceAnchor, ReadProvenance: source.ReadProvenance, InstructionManifest: instructionManifest}
 	operationID := sessionstore.NewID("compact")
 	j, err := d.runs.prepareCompact(task.RunID, operationID, checkpointID(task, source), target)
 	if err != nil {
@@ -147,7 +170,7 @@ func (d *Daemon) handleCheckpointCompact(params json.RawMessage) (any, error) {
 	if err = d.runs.commitCompact(task.RunID, j); err != nil {
 		return nil, fmt.Errorf("compact commit (retry is idempotent): %w", err)
 	}
-	if err = d.recordChecked(task.SessionID, "ContextCompacted", task.RunID, "operator", contextCompactedPayload(receipt, map[string]any{"status": "checkpoint_compacted", "operation_id": operationID, "source_checkpoint_id": j.SourceCheckpointID, "target_checkpoint_id": j.Target.CheckpointID, "phase": "completion"}), ""); err != nil {
+	if err = d.recordChecked(task.SessionID, "ContextCompacted", task.RunID, "operator", contextCompactedPayload(receipt, map[string]any{"status": "checkpoint_compacted", "operation_id": operationID, "source_checkpoint_id": j.SourceCheckpointID, "target_checkpoint_id": j.Target.CheckpointID, "phase": "completion", "rebuild_paths": rebuildPaths}), ""); err != nil {
 		return nil, fmt.Errorf("compact committed but completion audit failed: %w", err)
 	}
 	cleanup := d.runs.clearCompactJournal(task.RunID) != nil

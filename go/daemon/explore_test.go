@@ -193,8 +193,16 @@ func TestNonExploreSubagentKeepsFullToolContract(t *testing.T) {
 	d.kern.InitSessionFull(parent.SessionID, ws, "full-workspace", "on_request", nil)
 	parentTask := d.sched.Submit(parent.SessionID, parent.WorkspaceID, "delegate")
 	_ = d.spawnSubagent(parent, parentTask, "scout", "look")
-	if len(spy.prompts) == 0 || !strings.Contains(spy.prompts[0], toolsHelp) || !strings.Contains(spy.prompts[0], "patch:") {
-		t.Fatalf("non-explore subagent must keep the full tool contract, prompts=%q", spy.prompts)
+	if len(spy.prompts) == 0 || !strings.Contains(spy.prompts[0], toolsCatalog) || !strings.Contains(spy.prompts[0], "patch:") || !strings.Contains(spy.prompts[0], harnessProtocol) {
+		t.Fatalf("non-explore subagent must keep the full tool contract in named sections, prompts=%q", spy.prompts)
+	}
+	layers := d.composeSubagentPromptLayers(parent, parentTask, loadAgentSpecs(ws)["scout"], "")
+	if layers.Constitution == "" || strings.Contains(layers.Constitution, toolsHelp) {
+		t.Fatalf("non-explore subagent must not use legacy monolithic constitution: %+v", layers)
+	}
+	sections := buildPromptSegmentsFromLayers(layers, "look", "", "next").ConstitutionSections()
+	if len(sections) != 4 {
+		t.Fatalf("non-explore subagent sections = %d, want mode+intent/identity/protocol/tools", len(sections))
 	}
 }
 

@@ -269,6 +269,7 @@ func (o *openAIProvider) completeChatStream(ctx context.Context, req modelrouter
 	}
 	mergeRawBody(bodyMap, o.body)
 	mergeRawBody(bodyMap, override.Body)
+	attachOpenAIPromptCacheKey(bodyMap, req, o.id)
 	attachOpenAITools(bodyMap, req.Tools)
 	bodyMap["stream"] = true
 	if _, exists := bodyMap["stream_options"]; !exists {
@@ -406,6 +407,7 @@ func (o *openAIProvider) completeResponsesStream(ctx context.Context, req modelr
 	mergeRawBody(bodyMap, o.body)
 	attachResponsesTools(bodyMap, req.Tools)
 	mergeRawBody(bodyMap, override.Body)
+	attachOpenAIPromptCacheKey(bodyMap, req, o.id)
 	bodyMap["stream"] = true
 	effectiveEffort, err := applyNativeReasoningEffort(o.id, model, req.ReasoningEffort, bodyMap)
 	if err != nil {

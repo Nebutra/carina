@@ -437,6 +437,12 @@ func classifyProviderCause(err error) providerErrorInfo {
 			UserAction: "compact the conversation or start a new session",
 		}
 	}
+	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(err.Error())), ": empty response") {
+		return providerErrorInfo{
+			Code: "provider_empty_response", Category: "unavailable", Retryable: true,
+			UserAction: "retry or choose another provider",
+		}
+	}
 	return providerErrorInfo{Code: "reasoner_internal_error", Category: "internal", Retryable: false}
 }
 
@@ -454,7 +460,7 @@ func operatorFacingReasonerError(err error) string {
 	switch info.Code {
 	case "provider_stream_budget_exceeded":
 		return "The model stream stopped before finishing. Not auto-retried. Check the proxy and network, then retry explicitly if needed."
-	case "provider_stream_unavailable", "provider_transport_error", "provider_unavailable", "provider_timeout":
+	case "provider_stream_unavailable", "provider_transport_error", "provider_unavailable", "provider_timeout", "provider_empty_response":
 		return joinOperatorSentence("The model provider was temporarily unavailable", info.UserAction)
 	case "provider_stream_request_failed", "provider_stream_failed":
 		return joinOperatorSentence("The model stream request failed", info.UserAction)
@@ -535,7 +541,7 @@ func routingFailureMessage(err error, info providerErrorInfo) string {
 	if detail := operatorFacingCLIDetail(err); detail != "" {
 		return detail
 	}
-	if info.Code == "provider_unavailable" || info.Code == "provider_timeout" {
+	if info.Code == "provider_unavailable" || info.Code == "provider_timeout" || info.Code == "provider_empty_response" {
 		return "provider temporarily unavailable"
 	}
 	return "provider request failed"

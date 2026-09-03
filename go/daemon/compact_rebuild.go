@@ -10,10 +10,10 @@ import (
 )
 
 // recordCompactRebuild rehydrates cited files into the volatile transcript
-// after a Step-2 fold, then audits the receipt. Rebuild never mutates the
-// cacheable Workspace/F prefix: greetings and converse still must not dump
-// AGENTS.md just because compact ran. Build/plan append a verbatim project-
-// instructions item (P1-C5) into Rebuild only.
+// after a fold when present, then audits every receipt, including Step-1-only
+// elision. Persistent project instructions
+// remain owned by the freshly composed dynamic system layer; copying them into
+// Rebuild would duplicate them and could retain a stale revision across resume.
 func (d *Daemon) recordCompactRebuild(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, receipt *CompactionReceipt, extra map[string]any) {
 	if d == nil || receipt == nil {
 		return
@@ -54,20 +54,6 @@ func (d *Daemon) rebuildAfterCompact(sess *sessionstore.Session, task *scheduler
 	ensureHeader := func() {
 		if b.Len() == 0 {
 			b.WriteString("REBUILT CONTEXT (post-compact; re-read, not new user input):\n")
-		}
-	}
-	if d != nil && sess != nil && !d.safeMode && shouldLoadProjectInstructions(taskAgent(task)) {
-		if mem := strings.TrimSpace(loadMemory(sess.WorkspaceRoot)); mem != "" {
-			ensureHeader()
-			const header = "PROJECT INSTRUCTIONS (rehydrated after compact; not new user input):\n"
-			limit := maxRebuildTotalBytes / 2
-			if n := len(header) + len(mem) + 1; n < limit {
-				limit = n
-			}
-			body := truncateUTF8Bytes(mem, limit-len(header)-1)
-			if strings.TrimSpace(body) != "" {
-				fmt.Fprintf(&b, "%s%s\n", header, body)
-			}
 		}
 	}
 	var kept []string

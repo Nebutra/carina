@@ -46,6 +46,20 @@ func TestPromptSegmentationStablePrefix(t *testing.T) {
 	}
 }
 
+func TestPromptLayersReuseMemoizedPrefixAndInvalidateContractVariant(t *testing.T) {
+	layers := promptLayers{Mode: "MODE", Identity: "IDENTITY", Protocol: "PROTOCOL", Tools: "TOOLS", Workspace: "WORKSPACE"}
+	layers.StablePrefix = layers.assembledStablePrefix()
+	first := buildPromptSegmentsFromLayers(layers, "task", "turn 1", "GO")
+	second := buildPromptSegmentsFromLayers(layers, "task", "turn 1\nturn 2", "GO")
+	if first.StablePrefix != layers.StablePrefix || second.StablePrefix != layers.StablePrefix {
+		t.Fatalf("segments did not reuse memoized prefix: layers=%q first=%q second=%q", layers.StablePrefix, first.StablePrefix, second.StablePrefix)
+	}
+	native := layers.withToolContract(nativeToolsContract)
+	if native.StablePrefix == layers.StablePrefix || !strings.Contains(native.StablePrefix, nativeToolsContract) {
+		t.Fatalf("tool contract variant did not invalidate prefix: base=%q native=%q", layers.StablePrefix, native.StablePrefix)
+	}
+}
+
 func TestPromptSectionsKeepOrderAndOmitEmpty(t *testing.T) {
 	seg := buildPromptSegmentsFromLayers(promptLayers{
 		Constitution: "CONSTITUTION",

@@ -39,6 +39,13 @@ func (u ModelUsage) totalTokens() int {
 	return u.InputTokens + u.OutputTokens + u.CacheReadTokens + u.CacheWriteTokens
 }
 
+// promptTokens is the model-visible input footprint. InputTokens deliberately
+// excludes cached input in this provider-neutral contract, so context pressure
+// must add cache reads/writes back even though billing keeps them separate.
+func (u ModelUsage) promptTokens() int {
+	return u.InputTokens + u.CacheReadTokens + u.CacheWriteTokens
+}
+
 type usageAggregate struct {
 	SessionID string `json:"session_id"`
 	TaskID    string `json:"task_id"`

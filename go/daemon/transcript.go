@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -15,8 +16,11 @@ import (
 )
 
 const (
-	observationSnipInlineEnv    = "CARINA_INLINE_TOOL_OUTPUT"
-	pinnedObservationMaxChars   = 1 << 20
+	observationSnipInlineEnv = "CARINA_INLINE_TOOL_OUTPUT"
+	// Pinned observations remain semantically visible, but they are not
+	// allowed to bypass the model-view budget. Full bytes are recoverable from
+	// the artifact store and only this bounded pointer enters the transcript.
+	pinnedObservationMaxChars   = 64 << 10
 	observationSnipPointerSlack = 220
 	maxRebuildFiles             = 5
 	maxRebuildFileBytes         = 20_000 // 5k tok ceiling per file
@@ -35,6 +39,8 @@ const (
 type Observation struct {
 	Tool              string                `json:"tool,omitempty"`
 	Content           string                `json:"content"`
+	Importance        string                `json:"importance,omitempty"`
+	Summary           string                `json:"summary,omitempty"`
 	Pinned            bool                  `json:"pinned,omitempty"` // failing tests / current edit / patch result — never elided
 	Elided            bool                  `json:"elided,omitempty"`
 	OriginalRef       string                `json:"original_ref,omitempty"`
@@ -65,11 +71,26 @@ type Turn struct {
 	Obs         Observation
 }
 
+// CompactionFact is deterministic state that a prose summary is not trusted
+// to remember. It is intentionally small: recent failures and changed-file
+// evidence survive repeated folds, while the full observation stays in the
+// audit/artifact ledger.
+type CompactionFact struct {
+	Turn     int    `json:"turn"`
+	Tool     string `json:"tool"`
+	Kind     string `json:"kind"`
+	Action   string `json:"action,omitempty"`
+	Evidence string `json:"evidence"`
+	SHA256   string `json:"sha256,omitempty"`
+	Ref      string `json:"ref,omitempty"`
+}
+
 // Transcript is the model-facing conversation state.
 type Transcript struct {
 	Task               string
-	Summary            string // rolling summary of compacted-away head turns
-	Rebuild            string `json:"rebuild,omitempty"` // post-compact cited-file rehydrate; volatile; not prefix
+	Summary            string           // rolling summary of compacted-away head turns
+	DurableFacts       []CompactionFact `json:"durable_facts,omitempty"`
+	Rebuild            string           `json:"rebuild,omitempty"` // post-compact cited-file evidence only; volatile; not prefix
 	Turns              []Turn
 	CompactionReceipts []CompactionReceipt      `json:"compaction_receipts,omitempty"`
 	CompactionBudget   CompactionBudgetSnapshot `json:"compaction_budget,omitempty"`
@@ -81,6 +102,13 @@ type Transcript struct {
 	// view. Zero means pressure falls back to chars/4. Not checkpointed:
 	// after resume, usage is absent until the next provider response.
 	observedInputTokens int
+	// semanticShiftPending is a process-local trigger hint set by new user
+	// steering/import turns. The turn itself remains durable and verbatim.
+	semanticShiftPending bool
+	// inputGrowthEWMA is a process-local forecast of the next prompt growth.
+	// Provider usage remains the source of truth; this only moves compaction
+	// earlier when successive measured views are growing quickly.
+	inputGrowthEWMA float64
 }
 
 func (t *Transcript) bindArtifacts(store *artifact.Store, scope artifact.Scope) {
@@ -92,11 +120,13 @@ func (t *Transcript) bindArtifacts(store *artifact.Store, scope artifact.Scope) 
 }
 
 type CompactionBudgetSnapshot struct {
-	PolicyVersion  string `json:"policy_version,omitempty"`
-	WindowTokens   int    `json:"window_tokens,omitempty"`
-	ReserveTokens  int    `json:"reserve_tokens,omitempty"`
-	TriggerTokens  int    `json:"trigger_tokens,omitempty"`
-	MetadataSource string `json:"metadata_source,omitempty"`
+	PolicyVersion   string `json:"policy_version,omitempty"`
+	WindowTokens    int    `json:"window_tokens,omitempty"`
+	ReserveTokens   int    `json:"reserve_tokens,omitempty"`
+	TriggerTokens   int    `json:"trigger_tokens,omitempty"`
+	MetadataSource  string `json:"metadata_source,omitempty"`
+	LookaheadTokens int    `json:"lookahead_tokens,omitempty"`
+	SemanticEnabled bool   `json:"semantic_enabled,omitempty"`
 }
 
 type CompactionMode string
@@ -109,9 +139,20 @@ const (
 	maxCollapsedPriorSummaryChars  = 2000
 	maxCollapsedActionBriefs       = 20
 	maxCollapsedActionBriefChars   = 160
+	maxDurableCompactionFacts      = 16
+	maxDurableCompactionFactChars  = 280
+	maxDurableRequestedFacts       = 4
+	maxDurableFailureFacts         = 4
+	maxDurableChangeFacts          = 8
 )
 
-// CompactionReceipt is the auditable record of one Step-2 summarize fold.
+var (
+	markerIdentifierPattern    = regexp.MustCompile(`[A-Za-z][A-Za-z0-9_.-]{0,63}`)
+	markerAssignmentPattern    = regexp.MustCompile(`(?m)\b([A-Za-z][A-Za-z0-9_.-]{0,63})\s*[:=]\s*([^\s,;]+)`)
+	markerRequestAnchorPattern = regexp.MustCompile(`(?i)\b(report|return|output|preserve|remember|retain|include)\b`)
+)
+
+// CompactionReceipt is the auditable record of one model-view transformation.
 // Semantics are versioned:
 //
 //   - Version 1 (historical; still valid for old checkpoints and audit
@@ -133,6 +174,10 @@ const (
 //     path produced every new receipt; their absence remains valid for old
 //     v1/v2 checkpoints. SummarizerFailures is the consecutive empty/error
 //     count after this fold (0 after a successful model summary).
+//   - Version 4: Step-1 elision alone returned the view below its trigger, so
+//     no head turns were folded and Summary is unchanged. ElidedTurnIndices
+//     identifies each transformed turn, while PreimageSHA256 covers the prior
+//     summary plus their exact pre-elision values. RemovedTurns remains zero.
 type CompactionReceipt struct {
 	Version            int            `json:"version"`
 	CreatedAt          time.Time      `json:"created_at"`
@@ -143,6 +188,8 @@ type CompactionReceipt struct {
 	SummarySHA256      string         `json:"summary_sha256"`
 	KeptTurnIndices    []int          `json:"kept_turn_indices,omitempty"`
 	KeptSHA256         string         `json:"kept_sha256,omitempty"`
+	ElidedTurns        int            `json:"elided_turns,omitempty"`
+	ElidedTurnIndices  []int          `json:"elided_turn_indices,omitempty"`
 	KeyFiles           []string       `json:"key_files,omitempty"`
 	CitedFiles         []string       `json:"cited_files,omitempty"`
 	PolicyVersion      string         `json:"policy_version,omitempty"`
@@ -158,6 +205,9 @@ type CompactionReceipt struct {
 	Mode               CompactionMode `json:"mode,omitempty"`
 	Transforms         []string       `json:"transforms,omitempty"`
 	SummarizerFailures int            `json:"summarizer_failures,omitempty"`
+	Trigger            string         `json:"trigger,omitempty"`
+	DurableFactCount   int            `json:"durable_fact_count,omitempty"`
+	DurableFactsSHA256 string         `json:"durable_facts_sha256,omitempty"`
 }
 
 // CompactionPolicy bounds the model view. Provider-neutral preflight
@@ -195,11 +245,13 @@ type CompactionPolicy struct {
 	// count (see the CompactionPolicy doc comment above), so this reuses
 	// agent.go's existing estimateTokens() approximation rather than adding a
 	// second estimator.
-	MaxTokens      int
-	PolicyVersion  string
-	WindowTokens   int
-	ReserveTokens  int
-	MetadataSource string
+	MaxTokens          int
+	PolicyVersion      string
+	WindowTokens       int
+	ReserveTokens      int
+	MetadataSource     string
+	LookaheadTokens    int
+	SemanticCompaction bool
 
 	// CollapseOnlyMaxPressure selects deterministic local collapse while the
 	// transcript is only modestly over its effective trigger. Zero uses the
@@ -230,16 +282,26 @@ func snipObservation(obs Observation, policy CompactionPolicy, store *artifact.S
 	if strings.TrimSpace(obs.Content) == "" {
 		return obs
 	}
+	if obs.Importance == "" {
+		obs.Importance = toolObservationImportance(obs.Tool, obs.Content)
+	}
 	if obs.Pinned {
 		if len(obs.Content) > pinnedObservationMaxChars {
+			raw := []byte(obs.Content)
 			sum := sha256Hex(obs.Content)
 			obs.OriginalSHA256 = sum
 			obs.OriginalBytes = len(obs.Content)
+			if store != nil && strings.TrimSpace(scope.SessionID) != "" {
+				if meta, err := store.Put(raw, artifact.PutOptions{
+					Scope: scope, MediaType: "text/plain; charset=utf-8",
+					Retention: artifact.RetentionPinned,
+				}); err == nil {
+					obs.OriginalRef = "artifact:" + meta.ID
+				}
+			}
 			obs.Transforms = append(obs.Transforms, "snip_pinned_fail_closed")
-			obs.Content = fmt.Sprintf(
-				"error: pinned observation exceeds %d bytes; re-read the source. sha256=%s bytes=%d",
-				pinnedObservationMaxChars, sum, len(obs.Content),
-			)
+			obs.Content = fmt.Sprintf("error: pinned observation exceeds %d bytes; full content retained at %s. sha256=%s bytes=%d",
+				pinnedObservationMaxChars, obs.OriginalRef, sum, len(raw))
 		}
 		return obs
 	}
@@ -261,10 +323,17 @@ func snipObservation(obs Observation, policy CompactionPolicy, store *artifact.S
 			obs.OriginalRef = "artifact:" + meta.ID
 		}
 	}
-	previewBudget := max
 	pointer := snipPointerLine(obs)
-	if previewBudget > len(pointer)+32 {
-		previewBudget -= len(pointer)
+	obs.Summary = summarizeToolObservation(obs.Tool, raw)
+	summaryPrefix := ""
+	if obs.Summary != "" {
+		summaryPrefix = "structured summary: " + obs.Summary + "\n"
+	}
+	// Leave room for the reversible pointer and local summary while retaining
+	// the active tool-output cap plus its documented pointer slack.
+	previewBudget := max + observationSnipPointerSlack - len(summaryPrefix) - len(pointer) - 1
+	if previewBudget < 32 {
+		previewBudget = 32
 	}
 	preview, truncated, valid := artifact.Preview(raw, previewBudget, 0)
 	if !valid {
@@ -272,10 +341,45 @@ func snipObservation(obs Observation, policy CompactionPolicy, store *artifact.S
 	}
 	if truncated {
 		obs.Content = strings.TrimRight(preview, "\n") + "\n" + pointer
+		limit := max + observationSnipPointerSlack
+		if len(obs.Content) > limit {
+			obs.Content = boundObservationContent("", preview, pointer, limit)
+		}
 		obs.Transforms = append(obs.Transforms, "snip_on_enqueue")
 		obs.CompressedBytes = len(obs.Content)
 	}
 	return obs
+}
+
+func boundObservationContent(prefix, preview, pointer string, limit int) string {
+	available := limit - len(prefix) - len(pointer) - 1
+	if available <= 0 {
+		return prefix + pointer
+	}
+	preview = strings.TrimRight(preview, "\n")
+	if len(preview) <= available {
+		return prefix + preview + "\n" + pointer
+	}
+	head := available * 2 / 3
+	tail := available - head
+	if head < 1 {
+		head = 1
+	}
+	if tail < 1 {
+		tail = 1
+	}
+	return prefix + truncateUTF8Bytes(preview, head) + "\n...[preview bounded]...\n" + lastUTF8Bytes(preview, tail) + "\n" + pointer
+}
+
+func lastUTF8Bytes(value string, budget int) string {
+	if budget <= 0 || len(value) <= budget {
+		return value
+	}
+	trimmed := value[len(value)-budget:]
+	for len(trimmed) > 0 && (trimmed[0]&0xc0) == 0x80 {
+		trimmed = trimmed[1:]
+	}
+	return trimmed
 }
 
 func snipPointerLine(obs Observation) string {
@@ -289,6 +393,97 @@ func snipPointerLine(obs Observation) string {
 	)
 }
 
+func toolObservationImportance(tool, content string) string {
+	lower := strings.ToLower(strings.TrimSpace(content))
+	if strings.Contains(lower, "error") || strings.Contains(lower, "failed") || strings.Contains(lower, "denied") || strings.Contains(lower, "timed out") {
+		return "critical"
+	}
+	switch tool {
+	case "patch", "edit", "run", "memory", "ask_user":
+		return "high"
+	case "read", "search", "list", "git.status", "git.diff", "git.log", "code.search", "code.symbols", "code.map", "code.def", "code.refs", "code.impact":
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+// summarizeToolObservation extracts shape, not a second copy of the result.
+// This keeps long JSON/log observations useful after the preview is elided
+// while avoiding a model call in the hot path.
+func summarizeToolObservation(tool string, raw []byte) string {
+	text := strings.TrimSpace(string(raw))
+	if text == "" {
+		return ""
+	}
+	if json.Valid(raw) {
+		var value any
+		if json.Unmarshal(raw, &value) == nil {
+			switch typed := value.(type) {
+			case map[string]any:
+				keys := make([]string, 0, len(typed))
+				for key := range typed {
+					keys = append(keys, key)
+				}
+				sort.Strings(keys)
+				if len(keys) > 12 {
+					keys = keys[:12]
+				}
+				return fmt.Sprintf("%s JSON object; keys=%s", tool, strings.Join(keys, ","))
+			case []any:
+				return fmt.Sprintf("%s JSON array; items=%d", tool, len(typed))
+			}
+		}
+	}
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	first := strings.TrimSpace(lines[0])
+	if len(first) > 180 {
+		first = truncateUTF8Bytes(first, 180)
+	}
+	if len(lines) > 1 {
+		return fmt.Sprintf("%s text; lines=%d; first=%q", tool, len(lines), first)
+	}
+	return fmt.Sprintf("%s text; first=%q", tool, first)
+}
+
+func semanticTurnBoundary(turns []Turn, current Turn) bool {
+	brief := strings.ToLower(strings.TrimSpace(current.ActionBrief))
+	if strings.Contains(brief, "steer") || strings.Contains(brief, "import") || strings.Contains(brief, "fork") {
+		return true
+	}
+	currentTerms := memorySearchTerms(current.Obs.Content)
+	if len(currentTerms) < 3 {
+		return false
+	}
+	var previous []string
+	for i := len(turns) - 1; i >= 0; i-- {
+		if turns[i].Tool == "user" {
+			previous = memorySearchTerms(turns[i].Obs.Content)
+			break
+		}
+	}
+	if len(previous) < 3 {
+		return false
+	}
+	seen := make(map[string]bool, len(previous))
+	for _, term := range previous {
+		seen[term] = true
+	}
+	overlap := 0
+	for _, term := range currentTerms {
+		if seen[term] {
+			overlap++
+		}
+	}
+	union := len(seen)
+	for _, term := range currentTerms {
+		if !seen[term] {
+			union++
+		}
+	}
+	return union > 0 && float64(overlap)/float64(union) < 0.20
+}
+
 // addTurn records a completed turn, truncating oversized observations up front.
 // A new turn carrying a Path (a read-family tool) first supersedes any
 // earlier, still-verbatim turn of the identical path: the earlier read is now
@@ -296,6 +491,9 @@ func snipPointerLine(obs Observation) string {
 // copies verbatim in the model view only burns budget for no benefit — see
 // supersedeStaleReads.
 func (t *Transcript) addTurn(turn Turn) {
+	if turn.Tool == "user" && len(t.Turns) > 0 && semanticTurnBoundary(t.Turns, turn) {
+		t.semanticShiftPending = true
+	}
 	if !observationSnipInline() {
 		turn.Obs = snipObservation(turn.Obs, t.policy, t.artifacts, t.artifactScope)
 	}
@@ -335,17 +533,49 @@ func (t *Transcript) render() string {
 	if t == nil {
 		return ""
 	}
-	return renderTranscriptRebuild(t.Summary, t.Rebuild, t.Turns)
+	return renderTranscriptProjection(t.Summary, t.DurableFacts, t.Rebuild, t.Turns)
 }
 
 func renderTranscript(summary string, turns []Turn) string {
-	return renderTranscriptRebuild(summary, "", turns)
+	return renderTranscriptProjection(summary, nil, "", turns)
 }
 
 func renderTranscriptRebuild(summary, rebuild string, turns []Turn) string {
+	return renderTranscriptProjection(summary, nil, rebuild, turns)
+}
+
+func renderTranscriptProjection(summary string, facts []CompactionFact, rebuild string, turns []Turn) string {
 	var b strings.Builder
 	if summary != "" {
 		fmt.Fprintf(&b, "SUMMARY OF EARLIER WORK:\n%s\n\n", summary)
+	}
+	if len(facts) > 0 {
+		var renderedFacts []CompactionFact
+		for _, fact := range facts {
+			// Avoid paying twice when the current summary already carries the
+			// deterministic fact. It remains stored and reappears automatically if
+			// a later model-written summary omits it.
+			if strings.Contains(summary, fact.Evidence) {
+				continue
+			}
+			renderedFacts = append(renderedFacts, fact)
+		}
+		if len(renderedFacts) > 0 {
+			b.WriteString("DURABLE FACTS (deterministic; preserve across compaction):\n")
+		}
+		for _, fact := range renderedFacts {
+			fmt.Fprintf(&b, "- turn %d %s: %s", fact.Turn, fact.Tool, fact.Evidence)
+			if fact.Ref != "" {
+				fmt.Fprintf(&b, " [ref=%s]", fact.Ref)
+			}
+			if fact.SHA256 != "" {
+				fmt.Fprintf(&b, " [sha256=%s]", fact.SHA256)
+			}
+			b.WriteByte('\n')
+		}
+		if len(renderedFacts) > 0 {
+			b.WriteByte('\n')
+		}
 	}
 	if rebuild != "" {
 		fmt.Fprintf(&b, "%s\n\n", rebuild)
@@ -363,6 +593,9 @@ func renderTranscriptRebuild(summary, rebuild string, turns []Turn) string {
 			for _, ref := range turn.Obs.MediaRefs {
 				obs += "\n" + ref.placeholder()
 			}
+			if turn.Obs.Summary != "" {
+				obs = "structured summary: " + turn.Obs.Summary + "\n" + obs
+			}
 		}
 		fmt.Fprintf(&b, "turn %d: %s\nobservation: %s\n\n", turn.Index, turn.ActionBrief, obs)
 	}
@@ -370,7 +603,7 @@ func renderTranscriptRebuild(summary, rebuild string, turns []Turn) string {
 }
 
 func (t *Transcript) projectedPressure(summary string, turns []Turn) float64 {
-	view := renderTranscript(summary, turns)
+	view := renderTranscriptProjection(summary, t.DurableFacts, "", turns)
 	if t.policy.MaxTokens > 0 {
 		return float64(estimateTokens(view)) / float64(t.policy.MaxTokens)
 	}
@@ -429,7 +662,42 @@ func (t *Transcript) shouldCompact() bool {
 	if t.policy.MaxTokens > 0 && t.viewTokens() > t.policy.MaxTokens {
 		return true
 	}
+	if t.policy.MaxTokens > 0 && t.policy.LookaheadTokens > 0 &&
+		t.viewTokens()+t.policy.LookaheadTokens >= t.policy.MaxTokens {
+		return true
+	}
+	if t.policy.MaxTokens > 0 && t.inputGrowthEWMA > 0 &&
+		t.viewTokens()+max(t.policy.LookaheadTokens, int(t.inputGrowthEWMA*2)) >= t.policy.MaxTokens {
+		return true
+	}
+	if t.policy.SemanticCompaction && t.semanticShiftPending && len(t.Turns) > t.policy.KeepRecent+1 {
+		return true
+	}
 	return false
+}
+
+func (t *Transcript) compactionTrigger() string {
+	if t == nil {
+		return ""
+	}
+	if t.policy.MaxTokens > 0 && t.viewTokens() > t.policy.MaxTokens {
+		return "hard_budget"
+	}
+	if t.size() > t.triggerChars() {
+		return "hard_budget"
+	}
+	if t.policy.MaxTokens > 0 && t.policy.LookaheadTokens > 0 &&
+		t.viewTokens()+t.policy.LookaheadTokens >= t.policy.MaxTokens {
+		return "proactive_lookahead"
+	}
+	if t.policy.MaxTokens > 0 && t.inputGrowthEWMA > 0 &&
+		t.viewTokens()+max(t.policy.LookaheadTokens, int(t.inputGrowthEWMA*2)) >= t.policy.MaxTokens {
+		return "proactive_forecast"
+	}
+	if t.policy.SemanticCompaction && t.semanticShiftPending {
+		return "semantic_shift"
+	}
+	return ""
 }
 
 func (t *Transcript) compactionPressure() float64 {
@@ -445,6 +713,14 @@ func (t *Transcript) compactionPressure() float64 {
 func (t *Transcript) noteObservedInputTokens(n int) {
 	if t == nil || n <= 0 {
 		return
+	}
+	if t.observedInputTokens > 0 && n > t.observedInputTokens {
+		growth := float64(n - t.observedInputTokens)
+		if t.inputGrowthEWMA == 0 {
+			t.inputGrowthEWMA = growth
+		} else {
+			t.inputGrowthEWMA = 0.7*t.inputGrowthEWMA + 0.3*growth
+		}
 	}
 	t.observedInputTokens = n
 }
@@ -540,6 +816,11 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 	if !t.shouldCompact() {
 		return nil
 	}
+	trigger := t.compactionTrigger()
+	// Consume semantic boundary hints even when no foldable head exists; the
+	// durable user turn remains in the transcript and will be considered by
+	// the next trigger independently.
+	t.semanticShiftPending = false
 	preCompactionSummary := t.Summary
 	preCompactionTurns := append([]Turn(nil), t.Turns...)
 	preRender := t.render()
@@ -549,21 +830,31 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 	// The view is about to change; stale provider input tokens must not
 	// force a summary after cheap elision. Next Think will note usage again.
 	t.observedInputTokens = 0
-	// Step 1: elide.
+	t.inputGrowthEWMA = 0
+	// Step 1: elide. Track only newly transformed observations so a repeated
+	// compact call never claims the same savings twice.
 	cutoff := len(t.Turns) - t.policy.KeepRecent
+	var elidedPre []Turn
+	var elidedIdx []int
 	for i := 0; i < cutoff; i++ {
-		if !t.Turns[i].Obs.Pinned {
-			t.Turns[i].Obs.Elided = true
+		if t.Turns[i].Obs.Pinned || t.Turns[i].Obs.Elided {
+			continue
 		}
+		elidedPre = append(elidedPre, preCompactionTurns[i])
+		elidedIdx = append(elidedIdx, t.Turns[i].Index)
+		if t.Turns[i].Obs.OriginalSHA256 == "" {
+			t.Turns[i].Obs.OriginalSHA256 = sha256Hex(t.Turns[i].Obs.Content)
+		}
+		t.Turns[i].Obs.Elided = true
 	}
 	if !t.shouldCompact() || len(t.Turns) <= t.policy.SummarizeAfter {
-		return nil
+		return t.elisionOnlyReceipt(preCompactionSummary, elidedPre, elidedIdx, trigger, charsBefore, tokensBefore, pressureBefore)
 	}
 	// Step 2: summarize the head (all but the recent tail) into Summary.
 	tail := t.policy.KeepRecent
 	headEnd := len(t.Turns) - tail
 	if headEnd <= 0 {
-		return nil
+		return t.elisionOnlyReceipt(preCompactionSummary, elidedPre, elidedIdx, trigger, charsBefore, tokensBefore, pressureBefore)
 	}
 	// Partition the head. kept turns retain their original ascending Index
 	// values (indices are already non-contiguous post-compaction, so no
@@ -582,9 +873,9 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 		}
 	}
 	if len(folded) == 0 {
-		// Nothing to fold — the head is entirely user turns and Step-1
-		// elision already ran. Fail closed: no summarizer call, no receipt.
-		return nil
+		// Nothing to fold — the head is entirely user turns. Any Step-1
+		// transformation still receives a durable receipt.
+		return t.elisionOnlyReceipt(preCompactionSummary, elidedPre, elidedIdx, trigger, charsBefore, tokensBefore, pressureBefore)
 	}
 	// Select after the cheap Step-1 elision. PressureBefore remains the honest
 	// pre-compaction measurement in the receipt, while the tier decision asks
@@ -647,6 +938,7 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 		preimageHash := compactionPreimageHash(preCompactionSummary, foldedPre)
 		firstTurn, lastTurn := folded[0].Index, folded[len(folded)-1].Index
 		t.Summary = summary
+		t.retainDurableFacts(foldedPre)
 		kept = applyVerbatimUserBudget(kept, t.policy.VerbatimUserMaxChars)
 		t.Turns = append(kept, t.Turns[headEnd:]...)
 		afterRender := t.render()
@@ -661,6 +953,7 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 			CharsBefore: charsBefore, CharsAfter: len(afterRender),
 			TokensBefore: tokensBefore, TokensAfter: estimateTokens(afterRender),
 			Mode: mode, Transforms: transforms, SummarizerFailures: t.SummarizerFailures,
+			Trigger: trigger, DurableFactCount: len(t.DurableFacts), DurableFactsSHA256: durableFactsSHA256(t.DurableFacts),
 		}
 		if len(kept) > 0 {
 			receipt.KeptSHA256 = turnsSHA256(kept)
@@ -669,6 +962,179 @@ func (t *Transcript) compact(summarize func(head string) (string, error)) *Compa
 		return &receipt
 	}
 	return nil
+}
+
+func (t *Transcript) elisionOnlyReceipt(previousSummary string, elided []Turn, indices []int, trigger string, charsBefore, tokensBefore int, pressureBefore float64) *CompactionReceipt {
+	if t == nil || len(elided) == 0 {
+		return nil
+	}
+	t.retainDurableFacts(elided)
+	afterRender := t.render()
+	receipt := CompactionReceipt{
+		Version: 4, CreatedAt: time.Now().UTC(), FirstTurn: indices[0], LastTurn: indices[len(indices)-1],
+		PreimageSHA256: compactionPreimageHash(previousSummary, elided), SummarySHA256: sha256Hex(t.Summary),
+		ElidedTurns: len(indices), ElidedTurnIndices: append([]int(nil), indices...),
+		PolicyVersion: t.policy.PolicyVersion, WindowTokens: t.policy.WindowTokens,
+		ReserveTokens: t.policy.ReserveTokens, MetadataSource: t.policy.MetadataSource,
+		PressureBefore: pressureBefore, PressureAfter: t.compactionPressure(),
+		CharsBefore: charsBefore, CharsAfter: len(afterRender),
+		TokensBefore: tokensBefore, TokensAfter: estimateTokens(afterRender),
+		Mode: compactionModeCollapseOnly, Transforms: []string{"elide_tool_output"}, Trigger: trigger,
+		DurableFactCount: len(t.DurableFacts), DurableFactsSHA256: durableFactsSHA256(t.DurableFacts),
+	}
+	t.CompactionReceipts = append(t.CompactionReceipts, receipt)
+	return &receipt
+}
+
+func (t *Transcript) retainDurableFacts(folded []Turn) {
+	if t == nil {
+		return
+	}
+	facts := append([]CompactionFact(nil), t.DurableFacts...)
+	seen := make(map[string]bool, len(facts))
+	for _, fact := range facts {
+		seen[compactionFactKey(fact)] = true
+	}
+	for _, turn := range folded {
+		if evidence, ok := requestedReadEvidence(t.Task, turn); ok {
+			fact := CompactionFact{
+				Turn: turn.Index, Tool: turn.Tool, Action: turn.ActionBrief,
+				Kind: "requested_evidence", Evidence: evidence,
+				SHA256: sha256Hex(turn.Obs.Content), Ref: turn.Obs.OriginalRef,
+			}
+			key := compactionFactKey(fact)
+			if !seen[key] {
+				seen[key] = true
+				facts = append(facts, fact)
+			}
+		}
+		importance := turn.Obs.Importance
+		if importance == "" {
+			importance = toolObservationImportance(turn.Tool, turn.Obs.Content)
+		}
+		if turn.Tool != "patch" && turn.Tool != "edit" && importance != "critical" && turn.Obs.Error == nil {
+			continue
+		}
+		action := strings.TrimSpace(turn.ActionBrief)
+		evidence := strings.TrimSpace(turn.Obs.Content)
+		if (turn.Tool == "patch" || turn.Tool == "edit") && importance != "critical" && turn.Obs.Error == nil {
+			evidence = action
+		} else if turn.Obs.Error != nil {
+			evidence = turn.Obs.Error.modelJSON()
+		}
+		if action != "" && evidence != action {
+			evidence = action + " -> " + evidence
+		}
+		evidence = brief(evidence, maxDurableCompactionFactChars)
+		if evidence == "" {
+			continue
+		}
+		sha := ""
+		if evidence != action || (turn.Tool != "patch" && turn.Tool != "edit") {
+			sha = turn.Obs.OriginalSHA256
+			if sha == "" {
+				sha = sha256Hex(turn.Obs.Content)
+			}
+		}
+		kind := "failure"
+		if (turn.Tool == "patch" || turn.Tool == "edit") && importance != "critical" && turn.Obs.Error == nil {
+			kind = "change"
+		}
+		fact := CompactionFact{
+			Turn: turn.Index, Tool: turn.Tool, Action: turn.ActionBrief,
+			Kind: kind, Evidence: evidence, SHA256: sha, Ref: turn.Obs.OriginalRef,
+		}
+		key := compactionFactKey(fact)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		facts = append(facts, fact)
+	}
+	t.DurableFacts = boundDurableFacts(facts)
+}
+
+func boundDurableFacts(facts []CompactionFact) []CompactionFact {
+	var requested, failures, changes []CompactionFact
+	for _, fact := range facts {
+		switch fact.Kind {
+		case "requested_evidence":
+			requested = append(requested, fact)
+		case "change":
+			changes = append(changes, fact)
+		default:
+			failures = append(failures, fact)
+		}
+	}
+	if len(requested) > maxDurableRequestedFacts {
+		requested = requested[len(requested)-maxDurableRequestedFacts:]
+	}
+	if len(failures) > maxDurableFailureFacts {
+		failures = failures[len(failures)-maxDurableFailureFacts:]
+	}
+	if len(changes) > maxDurableChangeFacts {
+		changes = changes[len(changes)-maxDurableChangeFacts:]
+	}
+	out := append(append(append([]CompactionFact(nil), requested...), failures...), changes...)
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Turn < out[j].Turn })
+	return out
+}
+
+func durableFactsSHA256(facts []CompactionFact) string {
+	if len(facts) == 0 {
+		return ""
+	}
+	raw, _ := json.Marshal(facts)
+	return sha256Hex(string(raw))
+}
+
+func compactionFactKey(fact CompactionFact) string {
+	if fact.Kind == "requested_evidence" {
+		return fact.Kind + "\x00" + strings.ToLower(fact.Evidence)
+	}
+	if (fact.Tool == "patch" || fact.Tool == "edit") && fact.SHA256 == "" {
+		return fact.Tool + "\x00" + fact.Action
+	}
+	return fmt.Sprintf("%d\x00%s\x00%s", fact.Turn, fact.Tool, fact.SHA256)
+}
+
+func requestedReadEvidence(task string, turn Turn) (string, bool) {
+	if turn.Obs.Error != nil || (turn.Tool != "read" && turn.Tool != "git.diff" && turn.Tool != "git.log" && turn.Tool != "git.status") {
+		return "", false
+	}
+	requested := explicitlyRequestedMarkerKeys(task)
+	for _, match := range markerAssignmentPattern.FindAllStringSubmatch(turn.Obs.Content, -1) {
+		if len(match) != 3 || !requested[strings.ToLower(match[1])] {
+			continue
+		}
+		value := strings.Trim(match[2], "\"'`[](){}<>")
+		if value == "" {
+			continue
+		}
+		return brief(match[1]+"="+value, maxDurableCompactionFactChars), true
+	}
+	return "", false
+}
+
+// explicitlyRequestedMarkerKeys deliberately ignores incidental field names
+// mentioned elsewhere in a task (for example STEP and NEXT in a traversal
+// protocol). Only uppercase identifiers in an explicit output/retention clause
+// are eligible for durable-fact slots. This keeps the bounded ledger from
+// being poisoned by high-cardinality progress metadata.
+func explicitlyRequestedMarkerKeys(task string) map[string]bool {
+	requested := make(map[string]bool)
+	for _, location := range markerRequestAnchorPattern.FindAllStringIndex(task, -1) {
+		end := len(task)
+		if relative := strings.IndexAny(task[location[1]:], ".;\n"); relative >= 0 {
+			end = location[1] + relative
+		}
+		for _, word := range markerIdentifierPattern.FindAllString(task[location[1]:end], -1) {
+			if word == strings.ToUpper(word) && word != strings.ToLower(word) {
+				requested[strings.ToLower(word)] = true
+			}
+		}
+	}
+	return requested
 }
 
 func collapseActionSkeleton(previousSummary string, folded []Turn) string {

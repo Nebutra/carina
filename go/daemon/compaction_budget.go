@@ -105,6 +105,10 @@ func applyCompactionBudget(tr *Transcript, catalog provider.Catalog, modelID str
 	budget := resolveCompactionBudget(catalog, modelID)
 	tr.policy.MaxTokens = budget.TriggerTokens
 	tr.policy.MaxChars = budget.TriggerTokens * 4
+	// Leave a small lookahead reserve so the next action and observation do
+	// not cross the provider window before the next turn-boundary compaction.
+	tr.policy.LookaheadTokens = max(256, min(2_048, budget.ReserveTokens/4))
+	tr.policy.SemanticCompaction = true
 	tr.policy.PolicyVersion = compactionPolicyVersion
 	tr.policy.WindowTokens = budget.WindowTokens
 	tr.policy.ReserveTokens = budget.ReserveTokens
@@ -112,7 +116,8 @@ func applyCompactionBudget(tr *Transcript, catalog provider.Catalog, modelID str
 	tr.CompactionBudget = CompactionBudgetSnapshot{
 		PolicyVersion: compactionPolicyVersion, WindowTokens: budget.WindowTokens,
 		ReserveTokens: budget.ReserveTokens, TriggerTokens: budget.TriggerTokens,
-		MetadataSource: budget.Source,
+		MetadataSource: budget.Source, LookaheadTokens: tr.policy.LookaheadTokens,
+		SemanticEnabled: true,
 	}
 }
 
@@ -131,4 +136,6 @@ func restoreCompactionBudget(tr *Transcript) {
 	tr.policy.WindowTokens = budget.WindowTokens
 	tr.policy.ReserveTokens = budget.ReserveTokens
 	tr.policy.MetadataSource = budget.MetadataSource
+	tr.policy.LookaheadTokens = budget.LookaheadTokens
+	tr.policy.SemanticCompaction = budget.SemanticEnabled
 }

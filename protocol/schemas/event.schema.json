@@ -55,6 +55,7 @@
         "RoutingDecision",
         "RoutingOutcome",
         "RoutingRetryScheduled",
+        "PromptCacheObserved",
         "ContextCompacted",
         "MemoryRecalled",
         "MemoryRecallRequested",
@@ -140,6 +141,10 @@
     {
       "if": { "properties": { "type": { "const": "RoutingRetryScheduled" } }, "required": ["type"] },
       "then": { "required": ["payload"], "properties": { "payload": { "required": ["evidence_id", "attempt", "max_attempts", "error"], "properties": { "attempt": { "type": "integer", "minimum": 1 }, "max_attempts": { "type": "integer", "minimum": 1 }, "error": { "type": "object", "required": ["code", "category", "message", "retry"] } } } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "PromptCacheObserved" } }, "required": ["type"] },
+      "then": { "required": ["payload"], "properties": { "payload": { "required": ["status", "evidence", "provider_reported", "provider", "model", "cache_kind", "cache_read_tokens", "cache_write_tokens", "stable_prefix_sha256", "stable_prefix_bytes", "boundary"], "properties": { "status": { "enum": ["hit", "write", "miss_or_unreported", "unsupported"] }, "evidence": { "enum": ["provider_usage", "carina_stable_prefix_only", "adapter_capability"] }, "provider_reported": { "type": "boolean" }, "provider": { "type": "string" }, "model": { "type": "string" }, "cache_kind": { "enum": ["anthropic", "openai_key", "none"] }, "cache_read_tokens": { "type": "integer", "minimum": 0 }, "cache_write_tokens": { "type": "integer", "minimum": 0 }, "stable_prefix_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "stable_prefix_bytes": { "type": "integer", "minimum": 0 }, "boundary": { "enum": ["stable_prefix", "system_sections_a_d"] } }, "additionalProperties": false } } }
     },
     {
       "if": { "properties": { "type": { "const": "ToolCallApprovalRequired" } }, "required": ["type"] },

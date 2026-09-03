@@ -94,6 +94,52 @@ func TestBuiltinToolRegistryContractFixture(t *testing.T) {
 	}
 }
 
+func TestBuiltinNativeToolSpecsForHonorsSessionProjection(t *testing.T) {
+	d := &Daemon{builtinTools: defaultBuiltinTools}
+	sess := &sessionstore.Session{SessionID: "native-session"}
+	d.allowedTools.Store(sess.SessionID, map[string]bool{"read": true, "search": true})
+	d.restrictedTools.Store(sess.SessionID, map[string]bool{"search": true})
+	defer d.allowedTools.Delete(sess.SessionID)
+	defer d.restrictedTools.Delete(sess.SessionID)
+
+	specs := d.builtinNativeToolSpecsFor(sess)
+	if len(specs) != 2 || specs[0].Name != "read" || specs[1].Name != "done" {
+		names := make([]string, 0, len(specs))
+		for _, spec := range specs {
+			names = append(names, spec.Name)
+		}
+		t.Fatalf("session projection = %v, want [read done]", names)
+	}
+
+	d.planMode = map[string]bool{sess.SessionID: true}
+	planSpecs := d.builtinNativeToolSpecsFor(sess)
+	for _, spec := range planSpecs {
+		if spec.Name == "run" || spec.Name == "patch" || spec.Name == "web.search" {
+			t.Fatalf("plan-blocked tool leaked into native projection: %s", spec.Name)
+		}
+	}
+}
+
+func TestBuiltinPromptCatalogForHonorsSessionProjection(t *testing.T) {
+	d := &Daemon{builtinTools: defaultBuiltinTools}
+	sess := &sessionstore.Session{SessionID: "prompt-session"}
+	d.allowedTools.Store(sess.SessionID, map[string]bool{"read": true})
+	d.restrictedTools.Store(sess.SessionID, map[string]bool{"read": true})
+	defer d.allowedTools.Delete(sess.SessionID)
+	defer d.restrictedTools.Delete(sess.SessionID)
+
+	// The text catalog and native schema projection must agree. `done` remains
+	// visible as the dispatch-layer completion escape hatch, while a denied
+	// read and every unallowlisted tool stay out of the prompt entirely.
+	catalog := d.builtinPromptCatalogFor(sess)
+	if strings.Contains(catalog, "- read:") || strings.Contains(catalog, "- search:") || strings.Contains(catalog, "- run:") {
+		t.Fatalf("denied tools leaked into text catalog: %s", catalog)
+	}
+	if !strings.Contains(catalog, "- done:") {
+		t.Fatalf("completion tool missing from projected catalog: %s", catalog)
+	}
+}
+
 func TestBuiltinToolRegistryValidationFailsClosed(t *testing.T) {
 	valid := builtinToolDescriptors()[0]
 	tests := []struct {

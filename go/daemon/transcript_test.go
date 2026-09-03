@@ -86,6 +86,32 @@ func TestPinnedObservationStaysFullUnlessEnormous(t *testing.T) {
 	}
 }
 
+func TestPinnedObservationOverflowUsesRecoverableArtifact(t *testing.T) {
+	store, err := artifact.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := newTranscript("task")
+	scope := artifact.Scope{SessionID: "sess_pinned", TaskID: "run_pinned"}
+	tr.bindArtifacts(store, scope)
+	body := strings.Repeat("failure output\n", pinnedObservationMaxChars/8)
+	tr.addTurn(Turn{Tool: "run", ActionBrief: "run tests", Obs: Observation{Content: body, Pinned: true}})
+	got := tr.Turns[0].Obs
+	if len(got.Content) >= len(body) || !strings.Contains(got.Content, "snip") && !strings.Contains(got.Content, "exceeds") {
+		t.Fatalf("pinned overflow was not bounded: content=%d body=%d", len(got.Content), len(body))
+	}
+	if !strings.HasPrefix(got.OriginalRef, "artifact:") {
+		t.Fatalf("pinned overflow missing artifact ref: %+v", got)
+	}
+	raw, _, err := store.Read(scope, strings.TrimPrefix(got.OriginalRef, "artifact:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != body {
+		t.Fatalf("pinned artifact round-trip lost %d bytes", len(raw))
+	}
+}
+
 func TestAddTurnSupersedesStaleReadOfSamePath(t *testing.T) {
 	tr := newTranscript("task")
 	tr.addTurn(Turn{Tool: "read", ActionBrief: "read a.go", Path: "a.go", Obs: Observation{Content: "v1"}})
@@ -207,6 +233,36 @@ func TestTranscriptCompactionElidesThenSummarizes(t *testing.T) {
 	last := tr.Turns[len(tr.Turns)-1]
 	if last.Obs.Elided {
 		t.Fatal("recent/pinned turn must not be elided")
+	}
+}
+
+func TestCompactionElisionOnlyProducesReceipt(t *testing.T) {
+	tr := newTranscript("inspect evidence")
+	tr.policy = CompactionPolicy{
+		MaxChars: 800, KeepRecent: 1, ToolOutputMax: 10_000, SummarizeAfter: 100,
+	}
+	for i := 0; i < 4; i++ {
+		tr.addTurn(Turn{
+			Tool: "read", ActionBrief: fmt.Sprintf("read evidence-%d.txt", i),
+			Obs: Observation{Content: strings.Repeat(fmt.Sprintf("evidence-%d ", i), 60)},
+		})
+	}
+	beforeSummary := tr.Summary
+	receipt := tr.compact(func(string) (string, error) {
+		t.Fatal("elision-only compaction must not call the summarizer")
+		return "", nil
+	})
+	if receipt == nil || receipt.Version != 4 || receipt.RemovedTurns != 0 || receipt.ElidedTurns != 3 {
+		t.Fatalf("elision-only receipt = %+v", receipt)
+	}
+	if !reflect.DeepEqual(receipt.ElidedTurnIndices, []int{1, 2, 3}) || !reflect.DeepEqual(receipt.Transforms, []string{"elide_tool_output"}) {
+		t.Fatalf("elision transform is not attributable: %+v", receipt)
+	}
+	if receipt.PreimageSHA256 == "" || receipt.SummarySHA256 != sha256Hex(beforeSummary) || tr.Summary != beforeSummary {
+		t.Fatalf("elision-only receipt changed or failed to bind the summary: %+v", receipt)
+	}
+	if len(tr.CompactionReceipts) != 1 || receipt.CharsAfter >= receipt.CharsBefore {
+		t.Fatalf("elision receipt was not retained or did not save context: %+v", receipt)
 	}
 }
 

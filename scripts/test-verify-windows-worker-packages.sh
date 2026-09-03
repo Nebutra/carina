@@ -3,11 +3,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/carina-windows-assets.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
-version=0.9.1
+version=0.9.2
 for arch in amd64 arm64; do
   ARCHIVE="$work/carina-worker_${version}_windows_${arch}.zip" ARCH="$arch" python3 - <<'PY'
 import os, zipfile
-root=f'carina-worker_0.9.1_windows_{os.environ["ARCH"]}'
+root=f'carina-worker_0.9.2_windows_{os.environ["ARCH"]}'
 with zipfile.ZipFile(os.environ["ARCHIVE"], 'w') as z:
     z.writestr(root+'/bin/carina-worker.exe', b'MZ')
     z.writestr(root+'/README.md', b'docs')

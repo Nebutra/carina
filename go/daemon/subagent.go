@@ -320,9 +320,7 @@ func (d *Daemon) launchPreparedSubagent(parent context.Context, prepared *prepar
 	d.taskContexts[prepared.childTask.RunID] = ctx
 	d.taskCancels[prepared.childTask.RunID] = cancel
 	d.taskContextMu.Unlock()
-	d.taskWG.Add(1)
 	go func() {
-		defer d.taskWG.Done()
 		defer cancel(nil)
 		defer func() {
 			d.taskContextMu.Lock()
@@ -437,7 +435,7 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 	applyCompactionBudget(tr, d.providerCatalog, taskModel(task))
 	guard := newLoopGuard()
 	mistakes := newMistakeTracker()
-	memorySnapshot := d.memory.snapshot(memoryScopeFromSession(sess))
+	memorySnapshot := d.memory.snapshotForPrompt(memoryScopeFromSession(sess), task.UserPrompt, memorySnapshotBudget)
 	layers := d.composeSubagentPromptLayers(sess, task, spec, memorySnapshot)
 
 	d.record(sess.SessionID, "ModelRequested", task.RunID, "model",
@@ -474,8 +472,17 @@ func (d *Daemon) runSubagentLoopContext(ctx context.Context, sess *sessionstore.
 			turnTokens = estimateTokens(seg.full()) + estimateTokens(raw)
 		}
 		d.sched.AddTokens(task.RunID, turnTokens)
+		cacheModel := effectiveModelName(result.Usage)
+		if cacheModel == "" {
+			cacheModel = taskModel(task)
+		}
+		if err := d.recordStrict(sess.SessionID, "PromptCacheObserved", task.RunID, "go",
+			promptCacheReceiptForSegments(d.promptCacheKind(cacheModel), result.Usage, seg), ""); err != nil {
+			d.sched.SetStatus(task.RunID, "failed")
+			return "subagent failed: " + err.Error()
+		}
 		if !result.Usage.Estimated {
-			tr.noteObservedInputTokens(result.Usage.InputTokens)
+			tr.noteObservedInputTokens(result.Usage.promptTokens())
 		}
 		if mtt := d.maxTaskTokens.Load(); mtt > 0 {
 			if t, ok := d.sched.Get(task.RunID); ok && int64(t.TokensUsed) > mtt {

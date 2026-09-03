@@ -166,6 +166,35 @@ func TestOpenAIResponsesProvider(t *testing.T) {
 	}
 }
 
+func TestOpenAIFirstPartyPromptCacheKeyUsesStablePrefix(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		got, _ = body["prompt_cache_key"].(string)
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"output_text":"ok","usage":{"input_tokens":3,"output_tokens":1}}`))
+	}))
+	defer srv.Close()
+	store := testAuthStore(t)
+	if err := store.SetAPIKey("openai", "sk-openai", nil); err != nil {
+		t.Fatal(err)
+	}
+	p := &openAIProvider{providerBase: providerBase{
+		id: "openai", baseURL: srv.URL + "/v1", defaultModel: "gpt-5",
+		auth: auth.ProviderChain("openai", nil, store, nil), client: srv.Client(),
+	}, responses: true}
+	_, err := p.Complete(context.Background(), modelrouter.Request{Model: "default", Prompt: "stablevolatile", StablePrefix: "stable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "carina-"+sha256Hex("stable")[:32] {
+		t.Fatalf("prompt cache key = %q", got)
+	}
+}
+
 func TestOpenAIResponsesProviderFallsBackToChatWhenEndpointUnsupported(t *testing.T) {
 	var paths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

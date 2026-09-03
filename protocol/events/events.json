@@ -1,6 +1,6 @@
 {
   "$comment": "Canonical event type enumeration (PRD §8.2). The event log is append-only; every event carries timestamp + session_id; side-effect events carry permission_decision_id.",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "types": [
     { "name": "ExecutionQueued", "side_effect": false, "payload": ["run_id", "user_prompt"] },
     { "name": "ExecutionStarted", "side_effect": false, "payload": ["resumed"] },
@@ -32,6 +32,7 @@
     { "name": "RoutingDecision", "side_effect": false, "payload": ["evidence_id", "requested_model", "reasoner", "policy", "prompt_sha256", "input_tokens_estimated"] },
     { "name": "RoutingOutcome", "side_effect": false, "payload": ["evidence_id", "requested_model", "status", "latency_ms", "prompt_sha256", "response_sha256", "output_tokens_estimated"] },
     { "name": "RoutingRetryScheduled", "side_effect": false, "payload": ["evidence_id", "attempt", "max_attempts", "error"] },
+    { "name": "PromptCacheObserved", "side_effect": false, "payload": ["status", "evidence", "provider_reported", "provider", "model", "cache_kind", "cache_read_tokens", "cache_write_tokens", "stable_prefix_sha256", "stable_prefix_bytes", "boundary"] },
     { "name": "ContextCompacted", "side_effect": false, "payload": ["receipt"] },
     { "name": "MemoryRecalled", "side_effect": false, "payload": ["provider", "mode", "status", "reason", "evidence_count", "adapter_version"] },
     { "name": "MemoryRecallRequested", "side_effect": false, "payload": ["provider", "endpoint_host", "query_sha256", "status"] },

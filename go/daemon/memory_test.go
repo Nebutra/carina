@@ -106,6 +106,46 @@ func TestCarinaInstructionsWinOverAgentsFallback(t *testing.T) {
 	}
 }
 
+func TestInstructionManifestIsDeterministicAndRevisioned(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(repo, "services", "api")
+	if err := os.MkdirAll(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "CARINA.md"), []byte("ROOT_RULE\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "AGENTS.md"), []byte("NESTED_RULE\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := discoverInstructionManifest(nested)
+	b := discoverInstructionManifest(nested)
+	if a.Version != instructionManifestVersion || a.Digest == "" || !instructionManifestsEqual(&a, &b) || len(a.Entries) != 2 {
+		t.Fatalf("manifest = %+v, repeat = %+v", a, b)
+	}
+	if a.Entries[0].Path == a.Entries[1].Path {
+		t.Fatalf("manifest paths must be distinct: %+v", a.Entries)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "AGENTS.md"), []byte("NESTED_RULE_CHANGED\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := discoverInstructionManifest(nested)
+	if instructionManifestsEqual(&a, &c) {
+		t.Fatalf("manifest digest did not change after instruction edit: before=%+v after=%+v", a, c)
+	}
+	raw, err := encodeRunCheckpoint(&runCheckpoint{Turn: 1, Transcript: newTranscript("task"), InstructionManifest: &a})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded := decodeRunCheckpoint(raw)
+	if decoded == nil || !instructionManifestsEqual(decoded.InstructionManifest, &a) {
+		t.Fatalf("checkpoint lost instruction manifest: %+v", decoded)
+	}
+}
+
 func TestCarinaMemorySnapshotFrozenAcrossRun(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()

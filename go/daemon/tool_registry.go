@@ -348,6 +348,60 @@ func (d *Daemon) builtinNativeToolSpecs() []modelrouter.ToolSpec {
 	return d.builtinToolRegistry().nativeToolSpecs()
 }
 
+// builtinNativeToolSpecsFor projects the reviewed builtin registry into the
+// exact tool set this session may call on this turn. Native function schemas
+// are an authority boundary, so plan-mode blocks and child-session allow/
+// deny lists are applied before serialization rather than merely enforced
+// after the model has already spent context on unavailable tools. "done" is
+// always retained because dispatch intentionally exempts it from allow-lists.
+func (d *Daemon) builtinNativeToolSpecsFor(sess *sessionstore.Session) []modelrouter.ToolSpec {
+	registry := d.builtinToolRegistry()
+	if registry == nil {
+		return nil
+	}
+	allowed, restricted, plan := d.sessionToolProjection(sess)
+	specs := make([]modelrouter.ToolSpec, 0, len(registry.ordered))
+	for _, descriptor := range registry.ordered {
+		if !toolVisibleInProjection(descriptor, allowed, restricted, plan) {
+			continue
+		}
+		specs = append(specs, modelrouter.ToolSpec{
+			Name: descriptor.Name, Description: descriptor.Description,
+			Parameters: cloneStringAnyMap(descriptor.Schema),
+		})
+	}
+	return specs
+}
+
+// sessionToolProjection is shared by native schemas and the text catalog.
+// Keeping one visibility predicate prevents a child from seeing a tool in its
+// prompt that the dispatch layer will reject later in the same turn.
+func (d *Daemon) sessionToolProjection(sess *sessionstore.Session) (allowed, restricted map[string]bool, plan bool) {
+	if d == nil || sess == nil {
+		return nil, nil, false
+	}
+	if raw, ok := d.allowedTools.Load(sess.SessionID); ok {
+		allowed, _ = raw.(map[string]bool)
+	}
+	if raw, ok := d.restrictedTools.Load(sess.SessionID); ok {
+		restricted, _ = raw.(map[string]bool)
+	}
+	return allowed, restricted, d.isPlanMode(sess.SessionID)
+}
+
+func toolVisibleInProjection(descriptor builtinToolDescriptor, allowed, restricted map[string]bool, plan bool) bool {
+	if descriptor.Exposure == builtinToolExposureConditional || (plan && descriptor.PlanMode == builtinToolPlanBlocked) {
+		return false
+	}
+	if descriptor.Name == "done" {
+		return true
+	}
+	if allowed != nil && !allowed[descriptor.Name] {
+		return false
+	}
+	return restricted == nil || !restricted[descriptor.Name]
+}
+
 func (d *Daemon) builtinConditionalPrompt(name string) string {
 	return d.builtinToolRegistry().conditionalPrompt(name)
 }
@@ -429,10 +483,14 @@ func (r *builtinToolRegistry) lookup(name string) (builtinToolDescriptor, bool) 
 }
 
 func (r *builtinToolRegistry) promptCatalog() string {
+	return r.promptCatalogFor(nil, nil, false)
+}
+
+func (r *builtinToolRegistry) promptCatalogFor(allowed, restricted map[string]bool, plan bool) string {
 	var builder strings.Builder
 	builder.WriteString("Available tools:")
 	for _, descriptor := range r.ordered {
-		if descriptor.Exposure != builtinToolExposureDefault || descriptor.PromptSummary == "" {
+		if !toolVisibleInProjection(descriptor, allowed, restricted, plan) || descriptor.PromptSummary == "" {
 			continue
 		}
 		builder.WriteString("\n- ")
@@ -445,6 +503,15 @@ func (r *builtinToolRegistry) promptCatalog() string {
 		builder.WriteString(descriptor.PromptSummary)
 	}
 	return builder.String()
+}
+
+func (d *Daemon) builtinPromptCatalogFor(sess *sessionstore.Session) string {
+	registry := d.builtinToolRegistry()
+	if registry == nil {
+		return "Available tools:"
+	}
+	allowed, restricted, plan := d.sessionToolProjection(sess)
+	return registry.promptCatalogFor(allowed, restricted, plan)
 }
 
 func (r *builtinToolRegistry) conditionalPrompt(name string) string {

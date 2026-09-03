@@ -98,6 +98,26 @@ func TestContextSummaryReportsLatestProviderMeasuredContext(t *testing.T) {
 	}
 }
 
+func TestContextLedgerNativeSchemaShareStaysBelowReleaseGate(t *testing.T) {
+	d, workspace := newLoopDaemon(t)
+	defer d.Close()
+	d.providerCatalog = provider.Catalog{"openrouter": {ID: "openrouter", Models: map[string]provider.Model{"model": {ID: "model", ToolCall: true, Limit: provider.ModelLimit{Context: 32_000}}}}}
+	d.reasoner = &routerReasoner{providerCatalog: d.providerCatalog}
+	sess, err := d.store.CreateSession(workspace, "safe-edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.SubmitWithGoalAndModel(sess.SessionID, sess.WorkspaceID, "inspect context", "openrouter/model", nil)
+	ledger := d.contextLedger(sess, task, newTranscript(task.UserPrompt), "")
+	share, _ := ledger["native_schema_share_percent"].(float64)
+	if status := ledger["native_schema_budget_status"]; status != "within_budget" || share >= nativeSchemaMaxWindowPercent {
+		t.Fatalf("native schemas use %.2f%% of a 32k window: %#v", share, ledger)
+	}
+	if ledger["native_schema_budget_percent"] != nativeSchemaMaxWindowPercent || ledger["native_schema_window_tokens"] != 32_000 {
+		t.Fatalf("native schema budget metadata = %#v", ledger)
+	}
+}
+
 func TestContextSummaryLabelsEstimatedUsageUnavailable(t *testing.T) {
 	d, workspace := newLoopDaemon(t)
 	defer d.Close()
@@ -261,6 +281,10 @@ func TestPromptCacheKindIsAnthropicOnlyForAnthropicProtocol(t *testing.T) {
 	}
 	if got := d.promptCacheKind("anthropic/claude-sonnet-4-5-20250929"); got != "anthropic" {
 		t.Fatalf("anthropic route = %q", got)
+	}
+	d.reasoner = &routerReasoner{providerCatalog: catalog}
+	if got := d.promptCacheKind("openai/gpt-5"); got != "openai_key" {
+		t.Fatalf("first-party OpenAI HTTP route = %q, want openai_key", got)
 	}
 }
 

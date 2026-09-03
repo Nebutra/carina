@@ -46,6 +46,15 @@ func mediaDataURI(m modelrouter.MediaPart) string {
 	return "data:" + m.MediaType + ";base64," + base64.StdEncoding.EncodeToString(m.Data)
 }
 
+// OpenAI's first-party APIs accept a caller-supplied prompt cache key. Keep
+// this opt-in to the direct provider: OpenAI-compatible relays often reject
+// unknown fields, while their cache semantics are not guaranteed.
+func attachOpenAIPromptCacheKey(body map[string]any, req modelrouter.Request, providerID string) {
+	if strings.EqualFold(strings.TrimSpace(providerID), "openai") && strings.TrimSpace(req.StablePrefix) != "" {
+		body["prompt_cache_key"] = "carina-" + sha256Hex(req.StablePrefix)[:32]
+	}
+}
+
 type providerBase struct {
 	id           string
 	label        string
@@ -486,6 +495,7 @@ func (o *openAIProvider) completeChat(ctx context.Context, req modelrouter.Reque
 	}
 	mergeRawBody(bodyMap, o.body)
 	mergeRawBody(bodyMap, override.Body)
+	attachOpenAIPromptCacheKey(bodyMap, req, o.id)
 	attachOpenAITools(bodyMap, req.Tools)
 	effectiveEffort, err := applyNativeReasoningEffort(o.id, model, req.ReasoningEffort, bodyMap)
 	if err != nil {
@@ -585,6 +595,7 @@ func (o *openAIProvider) completeResponses(ctx context.Context, req modelrouter.
 	}
 	mergeRawBody(bodyMap, o.body)
 	mergeRawBody(bodyMap, override.Body)
+	attachOpenAIPromptCacheKey(bodyMap, req, o.id)
 	attachResponsesTools(bodyMap, req.Tools)
 	effectiveEffort, err := applyNativeReasoningEffort(o.id, model, req.ReasoningEffort, bodyMap)
 	if err != nil {

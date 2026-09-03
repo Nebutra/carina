@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"strings"
 
+	modelrouter "github.com/Nebutra/carina/go/model-router"
 	"github.com/Nebutra/carina/go/provider"
 	"github.com/Nebutra/carina/go/scheduler"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
+
+const nativeSchemaMaxWindowPercent = 15
 
 func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 	var p struct {
@@ -98,7 +101,8 @@ func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 	out["compaction_policy"] = map[string]any{
 		"policy_version": policy.PolicyVersion, "window_tokens": policy.WindowTokens,
 		"reserve_tokens": policy.ReserveTokens, "trigger_tokens": policy.TriggerTokens,
-		"metadata_source": policy.MetadataSource,
+		"metadata_source": policy.MetadataSource, "lookahead_tokens": policy.LookaheadTokens,
+		"semantic_enabled": policy.SemanticEnabled,
 	}
 	if context, ok := out["model_context_tokens"].(map[string]any); ok && policy.WindowTokens > 0 {
 		if _, hasLimit := context["limit_tokens"]; !hasLimit {
@@ -119,8 +123,9 @@ func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 		"available": true, "checkpoint_id": checkpointID(latest, cp), "turn": cp.Turn,
 		"transcript_bytes": cp.Transcript.size(), "turn_count": len(cp.Transcript.Turns),
 		"summary_bytes": len(cp.Transcript.Summary), "compaction_count": len(cp.Transcript.CompactionReceipts),
-		"memory_snapshot_bytes": len(cp.MemorySnapshot),
-		"measurement":           "exact persisted checkpoint bytes; not token or live in-flight context usage",
+		"memory_snapshot_bytes":       len(cp.MemorySnapshot),
+		"instruction_manifest_digest": instructionManifestDigest(cp.InstructionManifest),
+		"measurement":                 "exact persisted checkpoint bytes; not token or live in-flight context usage",
 	}
 	if receipts := cp.Transcript.CompactionReceipts; len(receipts) > 0 {
 		out["recent_receipt"] = receipts[len(receipts)-1]
@@ -153,8 +158,12 @@ func (d *Daemon) handleContextSummary(params json.RawMessage) (any, error) {
 
 func (d *Daemon) contextLedger(sess *sessionstore.Session, task *scheduler.ExecutionRun, tr *Transcript, memorySnapshot string) map[string]any {
 	model := taskModel(task)
+	latestUsage := ModelUsage{Model: model}
+	hasUsage := false
 	if d != nil && d.usage != nil && task != nil {
 		if usage, ok := d.usage.latestTaskContext(task.RunID); ok {
+			latestUsage = usage
+			hasUsage = true
 			if ref := effectiveModelName(usage); ref != "" {
 				model = ref
 			}
@@ -180,16 +189,34 @@ func (d *Daemon) contextLedger(sess *sessionstore.Session, task *scheduler.Execu
 		userPrompt = task.UserPrompt
 	}
 	seg := buildPromptSegmentsFromLayers(layers, userPrompt, visible, instruction)
+	var nativeSpecs []modelrouter.ToolSpec
+	if nativeEligible {
+		nativeSpecs = d.builtinNativeToolSpecsFor(sess)
+	}
+	nativeSchemaTokens := 0
+	for _, spec := range nativeSpecs {
+		raw, _ := json.Marshal(spec)
+		nativeSchemaTokens += estimateTokens(string(raw))
+	}
+	contextBudget := resolveCompactionBudget(d.providerCatalog, model)
+	nativeSchemaShare := 0.0
+	if contextBudget.WindowTokens > 0 {
+		nativeSchemaShare = float64(nativeSchemaTokens) * 100 / float64(contextBudget.WindowTokens)
+	}
+	nativeSchemaStatus := "within_budget"
+	if nativeSchemaShare >= nativeSchemaMaxWindowPercent {
+		nativeSchemaStatus = "exceeded"
+	}
 	viewTokens := estimateTokens(visible)
-	viewEstimated := true
-	viewMethod := "chars/4"
-	if d != nil && d.usage != nil && task != nil {
-		if usage, ok := d.usage.latestTaskContext(task.RunID); ok {
-			viewTokens = accountedTokens(usage, visible)
-			if !usage.Estimated && usage.InputTokens > 0 {
-				viewEstimated = false
-				viewMethod = "provider_usage"
-			}
+	requestTokens := 0
+	requestEstimated := true
+	requestMethod := "unavailable"
+	if hasUsage {
+		requestTokens = latestUsage.promptTokens()
+		requestEstimated = latestUsage.Estimated
+		requestMethod = "provider_usage"
+		if latestUsage.Estimated {
+			requestMethod = "reasoner_estimate"
 		}
 	}
 	layer := func(id, text, layerCache, role string) map[string]any {
@@ -213,12 +240,23 @@ func (d *Daemon) contextLedger(sess *sessionstore.Session, task *scheduler.Execu
 		"available":                      tr != nil,
 		"cache":                          cache,
 		"constitution_role":              constitutionRole,
-		"estimate_method":                viewMethod,
-		"estimated":                      viewEstimated,
+		"estimate_method":                "chars/4",
+		"estimated":                      true,
 		"model_visible":                  visible,
 		"model_visible_bytes":            len(visible),
 		"model_visible_sha256":           sha256Hex(visible),
 		"model_visible_tokens_estimated": viewTokens,
+		"stable_prefix_bytes":            len(seg.StablePrefix),
+		"stable_prefix_sha256":           sha256Hex(seg.StablePrefix),
+		"cache_boundary":                 "stable_prefix",
+		"cache_receipt":                  promptCacheReceiptForSegments(cache, latestUsage, seg),
+		"native_tool_count":              len(nativeSpecs),
+		"native_schema_tokens_estimated": nativeSchemaTokens,
+		"native_schema_share_percent":    nativeSchemaShare,
+		"native_schema_budget_percent":   nativeSchemaMaxWindowPercent,
+		"native_schema_budget_status":    nativeSchemaStatus,
+		"native_schema_window_tokens":    contextBudget.WindowTokens,
+		"native_schema_window_source":    contextBudget.Source,
 		"layers": append(append(compactPromptLedgerLayers(layer, cache, constitutionRole, []struct{ id, text string }{
 			{"mode", layers.Mode},
 			{"identity", layers.Identity},
@@ -234,8 +272,23 @@ func (d *Daemon) contextLedger(sess *sessionstore.Session, task *scheduler.Execu
 		"summarizer_failures": 0,
 		"summarizer_circuit":  "closed",
 	}
+	if hasUsage {
+		ledger["latest_request_input_tokens"] = requestTokens
+		ledger["latest_request_input_estimated"] = requestEstimated
+		ledger["latest_request_input_method"] = requestMethod
+	}
+	if sess != nil && task != nil {
+		ledger["cache_slo"] = d.promptCacheSLO(sess.SessionID, task.RunID)
+	} else {
+		ledger["cache_slo"] = map[string]any{"available": false, "reason": "session or task unavailable"}
+	}
+	if !hasUsage {
+		ledger["cache_receipt"] = promptCacheReceiptForSegments(cache, ModelUsage{Provider: "", Model: model}, seg)
+	}
 	if tr != nil {
 		ledger["summarizer_failures"] = tr.SummarizerFailures
+		ledger["durable_fact_count"] = len(tr.DurableFacts)
+		ledger["durable_facts"] = append([]CompactionFact(nil), tr.DurableFacts...)
 		if tr.summarizerCircuitOpen() {
 			ledger["summarizer_circuit"] = "open"
 		}
@@ -270,9 +323,9 @@ func (d *Daemon) promptCacheKind(model string) string {
 	return promptCacheKindFor(catalog, reasoner, model)
 }
 
-// promptCacheKindFor labels prefix-cache capability. Only Anthropic Messages
-// adapters attach cache_control breakpoints. A live reasoner is not enough:
-// Grok JSON-only, Claude CLI, OpenAI-compatible, and unknown routes are none.
+// promptCacheKindFor labels prefix-cache capability. Anthropic Messages uses
+// explicit cache_control breakpoints. The first-party OpenAI HTTP adapter uses
+// a stable prompt_cache_key; compatible relays and CLI routes remain none.
 func promptCacheKindFor(catalog provider.Catalog, reasoner Reasoner, model string) string {
 	model = strings.TrimSpace(model)
 	if model == "" || strings.EqualFold(model, "default") {
@@ -288,8 +341,13 @@ func promptCacheKindFor(catalog provider.Catalog, reasoner Reasoner, model strin
 		}
 	}
 	if info, ok := catalog[normalizeProviderID(providerID)]; ok {
-		if detectRuntimeProtocol(info) == protocolAnthropic {
+		protocol := detectRuntimeProtocol(info)
+		if protocol == protocolAnthropic {
 			return "anthropic"
+		}
+		if _, routedByHTTP := reasoner.(*routerReasoner); routedByHTTP && strings.EqualFold(providerID, "openai") &&
+			(protocol == protocolOpenAIChat || protocol == protocolOpenAIResponses) {
+			return "openai_key"
 		}
 		return "none"
 	}

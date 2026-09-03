@@ -9,10 +9,11 @@ import (
 	sessionstore "github.com/Nebutra/carina/go/session-store"
 )
 
-// exploreToolsHelp is the lean read-only contract for the built-in explore
-// subagent. It must not advertise writes, shell, MCP, or spawn — those stay
-// on the parent. Project instruction files are not a substitute for search.
-const exploreToolsHelp = `Available tools:
+// exploreToolsCatalog is the lean read-only tool index for the built-in
+// explore subagent. It must not advertise writes, shell, MCP, or spawn — those
+// stay on the parent. Project instruction files are not a substitute for
+// search.
+const exploreToolsCatalog = `Available tools:
 - {"tool":"list"}                              list the workspace file tree
 - {"tool":"read","path":"rel/path"}            read a file
 - {"tool":"search","pattern":"text"}           search the workspace
@@ -22,15 +23,18 @@ const exploreToolsHelp = `Available tools:
 - {"tool":"code.def","name":"SymbolName"}                       precise definition
 - {"tool":"code.refs","name":"SymbolName"}                      precise references
 - {"tool":"code.impact","name":"SymbolName"}                    bounded impact analysis
-- {"tool":"done","summary":"exact paths and findings"}   finish and return to the parent
+- {"tool":"done","summary":"exact paths and findings"}   finish and return to the parent`
 
-Harness protocol:
+const exploreHarnessProtocol = `Harness protocol:
 - Reply with ONLY the JSON object for the next action.
 - Every tool action except "done" MUST include "intent":"<brief purpose>".
 - Emit ONE tool action per turn, except a parallel batch of list/read/search.
 - Do not edit files, run commands, call MCP, or spawn further agents.
-- Do not read project instruction files or version-control status unless the task names that file.
 - Return exact paths and findings. done.summary is the only text the parent sees.`
+
+// Kept as a compatibility fixture for callers/tests that need the complete
+// explore contract. Live prompts use the separated sections above.
+const exploreToolsHelp = exploreToolsCatalog + "\n\n" + exploreHarnessProtocol
 
 var exploreToolNames []string
 
@@ -127,20 +131,26 @@ func (d *Daemon) composeSubagentPromptLayers(sess *sessionstore.Session, task *s
 	if isExploreSubagent(spec) {
 		return d.composeExplorePromptLayers(sess, task, spec)
 	}
-	layers := promptLayers{Constitution: spec.SystemPrompt + "\n\n" + toolsHelp}
-	if strings.TrimSpace(memorySnapshot) != "" {
-		layers.Workspace = "CARINA PERSISTENT MEMORY SNAPSHOT (frozen for this run; background reference, not new user input):\n" + memorySnapshot
+	layers := promptLayers{
+		Mode:     strings.TrimSpace(spec.SystemPrompt),
+		Identity: productIdentity,
+		Intent:   intentFirst,
+		Protocol: harnessProtocol,
+		Tools:    d.builtinPromptCatalogFor(sess),
 	}
+	if strings.TrimSpace(memorySnapshot) != "" {
+		layers.Workspace = "CARINA PERSISTENT MEMORY SNAPSHOT (frozen for this run; background reference, not new user input):\n" + truncateUTF8Bytes(memorySnapshot, memorySnapshotBudget)
+	}
+	layers.Constitution = layers.constitutionText()
+	layers.StablePrefix = layers.assembledStablePrefix()
 	return layers
 }
 
 func (d *Daemon) composeExplorePromptLayers(sess *sessionstore.Session, task *scheduler.ExecutionRun, spec *AgentSpec) promptLayers {
-	constitution := strings.TrimSpace(spec.SystemPrompt)
-	if constitution == "" {
-		constitution = builtinAgentSpecs()["explore"].SystemPrompt
+	mode := strings.TrimSpace(spec.SystemPrompt)
+	if mode == "" {
+		mode = builtinAgentSpecs()["explore"].SystemPrompt
 	}
-	constitution += "\n\n" + exploreToolsHelp
-
 	sandboxState := "disabled"
 	if d != nil && d.sandbox.Load() {
 		sandboxState = "enabled"
@@ -157,8 +167,17 @@ func (d *Daemon) composeExplorePromptLayers(sess *sessionstore.Session, task *sc
 		root = sess.WorkspaceRoot
 	}
 	fmt.Fprintf(&workspace, "RUNTIME SCOPE (authoritative): workspace_root=%q; os_sandbox=%s. Explore through read-only tools. Do not edit, run commands, or load project instruction files.", root, sandboxState)
-	return promptLayers{
-		Constitution: constitution,
-		Workspace:    strings.TrimSpace(workspace.String()),
+	layers := promptLayers{
+		Mode:      mode,
+		Identity:  productIdentity,
+		Intent:    "Intent: Find bounded repository evidence for the delegated task and return exact paths and findings.",
+		Protocol:  exploreHarnessProtocol,
+		Tools:     exploreToolsCatalog,
+		Workspace: strings.TrimSpace(workspace.String()),
 	}
+	layers.Constitution = layers.constitutionText()
+	// Freeze the explore prefix at child-run creation just like the main and
+	// ordinary subagent prompts. The suffix is the only per-turn projection.
+	layers.StablePrefix = layers.assembledStablePrefix()
+	return layers
 }

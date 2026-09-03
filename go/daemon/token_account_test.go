@@ -10,6 +10,10 @@ func TestAccountedTokensPrefersProviderUsage(t *testing.T) {
 	if got := accountedTokens(usage, "abcd"); got != 41 {
 		t.Fatalf("provider usage = %d, want 41", got)
 	}
+	cached := ModelUsage{InputTokens: 5, CacheReadTokens: 30, CacheWriteTokens: 6}
+	if got := accountedTokens(cached, "abcd"); got != 41 || cached.promptTokens() != 41 {
+		t.Fatalf("cached prompt footprint = %d/%d, want 41", got, cached.promptTokens())
+	}
 	estimated := ModelUsage{InputTokens: 41, Estimated: true}
 	if got := accountedTokens(estimated, "abcd"); got != estimateTokens("abcd") {
 		t.Fatalf("estimated usage must fall back to chars/4, got %d", got)
@@ -39,7 +43,7 @@ func TestCompactPressureUsesObservedInputTokens(t *testing.T) {
 	}
 }
 
-func TestContextLedgerPrefersProviderUsageForModelView(t *testing.T) {
+func TestContextLedgerSeparatesProviderRequestUsageFromEstimatedLayerSize(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()
 	sess, err := d.store.CreateSession(ws, "safe-edit")
@@ -60,8 +64,11 @@ func TestContextLedgerPrefersProviderUsageForModelView(t *testing.T) {
 		t.Fatal(err)
 	}
 	ledger := result.(map[string]any)["ledger"].(map[string]any)
-	if ledger["estimate_method"] != "provider_usage" || ledger["estimated"] != false || ledger["model_visible_tokens_estimated"] != 77 {
-		t.Fatalf("ledger must use provider input tokens, got %#v", ledger)
+	if ledger["estimate_method"] != "chars/4" || ledger["estimated"] != true || ledger["model_visible_tokens_estimated"] != estimateTokens(tr.render()) {
+		t.Fatalf("model-visible layer must remain an explicit estimate, got %#v", ledger)
+	}
+	if ledger["latest_request_input_tokens"] != 77 || ledger["latest_request_input_estimated"] != false || ledger["latest_request_input_method"] != "provider_usage" {
+		t.Fatalf("exact provider request usage must stay separate from layer estimates, got %#v", ledger)
 	}
 
 	if err := d.usage.record(sess.SessionID, task.RunID, ModelUsage{Provider: "fallback", Model: "local", InputTokens: 9, Estimated: true}); err != nil {
@@ -72,8 +79,8 @@ func TestContextLedgerPrefersProviderUsageForModelView(t *testing.T) {
 		t.Fatal(err)
 	}
 	ledger = result.(map[string]any)["ledger"].(map[string]any)
-	if ledger["estimate_method"] != "chars/4" || ledger["estimated"] != true {
-		t.Fatalf("estimated usage must fall back to chars/4, got %#v", ledger)
+	if ledger["latest_request_input_tokens"] != 9 || ledger["latest_request_input_estimated"] != true || ledger["latest_request_input_method"] != "reasoner_estimate" {
+		t.Fatalf("estimated request usage must be labeled, got %#v", ledger)
 	}
 	if ledger["model_visible_tokens_estimated"] != estimateTokens(tr.render()) {
 		t.Fatalf("fallback tokens = %#v, want %d", ledger["model_visible_tokens_estimated"], estimateTokens(tr.render()))

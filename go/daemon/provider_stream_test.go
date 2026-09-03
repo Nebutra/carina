@@ -32,7 +32,7 @@ func TestOpenAIChatStreamPreservesDeltasUsageAndReasoning(t *testing.T) {
 			t.Fatal(err)
 		}
 		reasoning, _ := body["reasoning"].(map[string]any)
-		if body["stream"] != true || reasoning["effort"] != "high" {
+		if body["stream"] != true || reasoning["effort"] != "high" || body["prompt_cache_key"] != "carina-"+sha256Hex("stable")[:32] {
 			t.Fatalf("stream body = %+v", body)
 		}
 		writeSSE(w,
@@ -52,7 +52,7 @@ func TestOpenAIChatStreamPreservesDeltasUsageAndReasoning(t *testing.T) {
 		auth: auth.ProviderChain("openai", nil, store, nil), client: srv.Client(),
 	}}
 	var events []modelrouter.StreamEvent
-	resp, err := p.Stream(context.Background(), modelrouter.Request{Prompt: "hello", ReasoningEffort: "high"}, func(event modelrouter.StreamEvent) {
+	resp, err := p.Stream(context.Background(), modelrouter.Request{Prompt: "hello", StablePrefix: "stable", ReasoningEffort: "high"}, func(event modelrouter.StreamEvent) {
 		events = append(events, event)
 	})
 	if err != nil {
@@ -111,7 +111,14 @@ func TestOpenAIResponsesStreamPreservesUsageAndResetsBeforeChatFallback(t *testi
 }
 
 func TestOpenAIResponsesStreamPreservesUsage(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["prompt_cache_key"] != "carina-"+sha256Hex("stable")[:32] {
+			t.Fatalf("responses stream cache key = %#v", body["prompt_cache_key"])
+		}
 		writeSSE(w,
 			`{"type":"response.output_text.delta","delta":"{\"tool\":\"done\","}`,
 			`{"type":"response.output_text.delta","delta":"\"summary\":\"responses\"}"}`,
@@ -127,7 +134,7 @@ func TestOpenAIResponsesStreamPreservesUsage(t *testing.T) {
 		id: "openai", baseURL: srv.URL, defaultModel: "gpt-5",
 		auth: auth.ProviderChain("openai", nil, store, nil), client: srv.Client(),
 	}, responses: true}
-	resp, err := p.Stream(context.Background(), modelrouter.Request{Prompt: "hello"}, nil)
+	resp, err := p.Stream(context.Background(), modelrouter.Request{Prompt: "hello", StablePrefix: "stable"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

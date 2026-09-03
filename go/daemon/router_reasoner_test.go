@@ -25,6 +25,17 @@ func (r *failingReasoner) Think(context.Context, string) (string, error) {
 	return "", r.err
 }
 
+type emptyThenSuccessReasoner struct{ calls int }
+
+func (r *emptyThenSuccessReasoner) Name() string { return "openai" }
+func (r *emptyThenSuccessReasoner) Think(context.Context, string) (string, error) {
+	r.calls++
+	if r.calls < 3 {
+		return "", fmt.Errorf("openai: empty response")
+	}
+	return `{"tool":"done","summary":"ok"}`, nil
+}
+
 func (p *reasonerProvider) Name() string { return p.name }
 
 func (p *reasonerProvider) Complete(_ context.Context, req modelrouter.Request) (*modelrouter.Response, error) {
@@ -72,6 +83,21 @@ func TestRetryPolicyDoesNotRetryPermanentHTTPFailures(t *testing.T) {
 	_, err := thinkWithRetryPolicy(context.Background(), r, "", "prompt", "", "", retryPolicy{MaxAttempts: 4, BaseDelay: time.Millisecond, RandFloat64: func() float64 { return 0 }})
 	if err == nil || r.calls != 1 {
 		t.Fatalf("err=%v calls=%d, want one attempt", err, r.calls)
+	}
+}
+
+func TestRetryPolicyRetriesEmptyProviderResponses(t *testing.T) {
+	r := &emptyThenSuccessReasoner{}
+	result, err := thinkWithRetryPolicy(context.Background(), r, "", "prompt", "", "", retryPolicy{
+		MaxAttempts: 4, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond,
+		MaxElapsed: time.Second, RandFloat64: func() float64 { return 0 },
+	})
+	if err != nil || result.Text != `{"tool":"done","summary":"ok"}` || r.calls != 3 {
+		t.Fatalf("result=%q err=%v calls=%d", result.Text, err, r.calls)
+	}
+	info := classifyProviderError(fmt.Errorf("modelrouter: all providers failed: openai: empty response"))
+	if info.Code != "provider_empty_response" || info.Category != "unavailable" || !info.Retryable {
+		t.Fatalf("empty response classification = %+v", info)
 	}
 }
 

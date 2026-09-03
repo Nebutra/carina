@@ -246,7 +246,7 @@ func (d *Daemon) runTaskContext(ctx context.Context, sess *sessionstore.Session,
 	tr := newTranscript(task.UserPrompt)
 	tr.bindArtifacts(d.artifacts, artifact.Scope{SessionID: sess.SessionID, TaskID: task.RunID})
 	applyCompactionBudget(tr, d.providerCatalog, taskModel(task))
-	memorySnapshot := d.memory.snapshot(memoryScopeFromSession(sess))
+	memorySnapshot := d.memory.snapshotForPrompt(memoryScopeFromSession(sess), task.UserPrompt, memorySnapshotBudget)
 	if sess.ForkedFromTaskID != "" {
 		cp := d.runs.loadCheckpointTurn(sess.ForkedFromTaskID, sess.ForkedThroughTurn)
 		if cp == nil {
@@ -300,6 +300,23 @@ func (d *Daemon) resumeTaskContext(ctx context.Context, sess *sessionstore.Sessi
 		return
 	}
 	d.restoreReadProvenance(sess.SessionID, cp.ReadProvenance)
+	currentManifest := instructionManifestForTask(d, sess.WorkspaceRoot, taskAgent(task))
+	if !instructionManifestsEqual(cp.InstructionManifest, currentManifest) {
+		var rebuildPaths []string
+		if cp.Transcript != nil {
+			var receipt *CompactionReceipt
+			if n := len(cp.Transcript.CompactionReceipts); n > 0 {
+				receipt = &cp.Transcript.CompactionReceipts[n-1]
+			}
+			rebuildPaths = d.rebuildAfterCompact(sess, task, cp.Transcript, receipt)
+		}
+		d.record(sess.SessionID, "ExecutionProgressed", task.RunID, "go", map[string]any{
+			"status":            "instruction_manifest_changed",
+			"checkpoint_digest": instructionManifestDigest(cp.InstructionManifest),
+			"current_digest":    instructionManifestDigest(currentManifest),
+			"rebuild_paths":     rebuildPaths,
+		}, "")
+	}
 	d.record(sess.SessionID, "ModelRequested", task.RunID, "go",
 		map[string]any{"engine": d.reasoner.Name(), "model": taskModel(task), "reasoning_effort": task.EffectiveReasoningEffort, "agent": taskAgent(task), "prompt": task.UserPrompt, "resumed_from_turn": cp.Turn}, "")
 	d.runLoopContext(ctx, sess, task, cp.Transcript, cp.Turn+1, cp.MemorySnapshot)
@@ -434,6 +451,9 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 				"input_tokens_estimated": estimateTokens(prompt),
 				"evidence_id":            evidenceID,
 				"prompt_sha256":          promptHash,
+				"stable_prefix_sha256":   sha256Hex(seg.StablePrefix),
+				"stable_prefix_bytes":    len(seg.StablePrefix),
+				"cache_boundary":         "stable_prefix",
 			}, "")
 			started := time.Now()
 			reasonerCtx := withRetryObserver(ctx, func(retry retryAttempt) {
@@ -459,7 +479,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 			reasonerCtx = withReasoningEffort(reasonerCtx, task.EffectiveReasoningEffort)
 			reasonerCtx = withReasonerStream(reasonerCtx, assistantStream)
 			if useNative {
-				reasonerCtx = withNativeTools(reasonerCtx, d.builtinNativeToolSpecs())
+				reasonerCtx = withNativeTools(reasonerCtx, d.builtinNativeToolSpecsFor(sess))
 			}
 			if requery == 0 {
 				result, err = thinkWithRetryModelSegments(reasonerCtx, d.reasoner, task.Model, seg)
@@ -494,6 +514,8 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 				"input_tokens_estimated": estimateTokens(prompt),
 				"evidence_id":            evidenceID,
 				"prompt_sha256":          promptHash,
+				"stable_prefix_sha256":   sha256Hex(seg.StablePrefix),
+				"stable_prefix_bytes":    len(seg.StablePrefix),
 				"tool_protocol":          toolProtocol,
 			}
 			if err != nil {
@@ -571,9 +593,18 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 				return
 			}
 			_ = d.usage.record(sess.SessionID, task.RunID, result.Usage)
+			cacheModel := effectiveModelName(result.Usage)
+			if cacheModel == "" {
+				cacheModel = taskModel(task)
+			}
+			if err := d.recordStrict(sess.SessionID, "PromptCacheObserved", task.RunID, "go",
+				promptCacheReceiptForSegments(d.promptCacheKind(cacheModel), result.Usage, seg), ""); err != nil {
+				d.degradeReasoner(sess, task, tr, err)
+				return
+			}
 			turnTokens += result.Usage.totalTokens()
 			if !result.Usage.Estimated {
-				tr.noteObservedInputTokens(result.Usage.InputTokens)
+				tr.noteObservedInputTokens(result.Usage.promptTokens())
 			}
 			responsePayload := map[string]any{
 				"turn": turn, "text": sanitizeModelResponseForAudit(raw), "usage": result.Usage,
@@ -617,7 +648,7 @@ func (d *Daemon) runLoopContext(ctx context.Context, sess *sessionstore.Session,
 		d.sched.AddTokens(task.RunID, turnTokens)
 		if t, ok := d.sched.Get(task.RunID); ok && t.TokenBudget > 0 && t.TokensUsed > t.TokenBudget {
 			assistantStream.reset()
-			if err := d.runs.saveCheckpointChecked(task.RunID, &runCheckpoint{Turn: turn - 1, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess), ReadProvenance: d.snapshotReadProvenance(sess.SessionID)}); err != nil {
+			if err := d.runs.saveCheckpointChecked(task.RunID, &runCheckpoint{Turn: turn - 1, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess), ReadProvenance: d.snapshotReadProvenance(sess.SessionID), InstructionManifest: instructionManifestForTask(d, sess.WorkspaceRoot, taskAgent(task))}); err != nil {
 				d.sched.SetStatus(task.RunID, "failed")
 				d.sched.SetResult(task.RunID, "token budget exceeded but the resume checkpoint could not be persisted: "+err.Error(), d.appliedPatchIDs(sess))
 				d.persistRun(task.RunID)
@@ -1010,7 +1041,7 @@ func (d *Daemon) persistCheckpoint(sess *sessionstore.Session, task *scheduler.E
 		d.degrade(sess, task, tr, failure+": "+err.Error())
 		return false
 	}
-	cp := &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess), WorkspaceAnchor: anchor, ReadProvenance: d.snapshotReadProvenance(sess.SessionID)}
+	cp := &runCheckpoint{Turn: turn, Transcript: tr, MemorySnapshot: memorySnapshot, AppliedPatches: d.appliedPatchIDs(sess), WorkspaceAnchor: anchor, ReadProvenance: d.snapshotReadProvenance(sess.SessionID), InstructionManifest: instructionManifestForTask(d, sess.WorkspaceRoot, taskAgent(task))}
 	err = d.runs.saveCheckpointChecked(task.RunID, cp)
 	if err == nil {
 		_, _ = d.sched.SetWorkspaceAnchor(task.RunID, *anchor)
@@ -2164,8 +2195,8 @@ func estimateTokens(s string) int { return len(s)/4 + 1 }
 // accountedTokens prefers provider-reported input tokens when usage is not
 // an estimate. Otherwise chars/4 of text.
 func accountedTokens(usage ModelUsage, text string) int {
-	if !usage.Estimated && usage.InputTokens > 0 {
-		return usage.InputTokens
+	if !usage.Estimated && usage.promptTokens() > 0 {
+		return usage.promptTokens()
 	}
 	return estimateTokens(text)
 }

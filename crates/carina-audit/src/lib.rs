@@ -50,6 +50,7 @@ pub enum EventType {
     RoutingDecision,
     RoutingOutcome,
     RoutingRetryScheduled,
+    PromptCacheObserved,
     ContextCompacted,
     MemoryRecalled,
     MemoryRecallRequested,

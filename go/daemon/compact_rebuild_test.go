@@ -88,7 +88,7 @@ func TestRebuildAfterCompactRehydratesCitedFiles(t *testing.T) {
 	}
 }
 
-func TestRebuildAfterCompactRehydratesProjectInstructionsForBuild(t *testing.T) {
+func TestRebuildAfterCompactKeepsProjectInstructionsInDynamicLayerOnly(t *testing.T) {
 	d, ws := newLoopDaemon(t)
 	defer d.Close()
 	if err := os.WriteFile(filepath.Join(ws, "cited.go"), []byte("package cited\n"), 0o600); err != nil {
@@ -109,20 +109,56 @@ func TestRebuildAfterCompactRehydratesProjectInstructionsForBuild(t *testing.T) 
 	if !strings.Contains(tr.Rebuild, "package cited") {
 		t.Fatalf("build rebuild missing cited file:\n%s", tr.Rebuild)
 	}
-	if !strings.Contains(tr.Rebuild, "PROJECT INSTRUCTIONS") || !strings.Contains(tr.Rebuild, "BUILD_RULE_MUST_SURVIVE_COMPACT") {
-		t.Fatalf("build rebuild must rehydrate AGENTS.md:\n%s", tr.Rebuild)
+	if strings.Contains(tr.Rebuild, "PROJECT INSTRUCTIONS") || strings.Contains(tr.Rebuild, "BUILD_RULE_MUST_SURVIVE_COMPACT") {
+		t.Fatalf("rebuild must not duplicate dynamic project instructions:\n%s", tr.Rebuild)
 	}
 	layers := d.composeAgentPromptLayers(sess, task, "")
 	if strings.Contains(layers.Workspace, "package cited") {
 		t.Fatal("rebuild must not mutate the Workspace prefix")
 	}
+	seg := buildPromptSegmentsFromLayers(layers, task.UserPrompt, tr.render(), "GO")
+	if got := strings.Count(seg.full(), "BUILD_RULE_MUST_SURVIVE_COMPACT"); got != 1 {
+		t.Fatalf("current project instruction occurrences = %d, want exactly 1:\n%s", got, seg.full())
+	}
+}
 
-	plan := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "plan it")
-	plan.Agent = "plan"
-	planTr := newTranscript(plan.UserPrompt)
-	d.rebuildAfterCompact(sess, plan, planTr, &CompactionReceipt{})
-	if !strings.Contains(planTr.Rebuild, "BUILD_RULE_MUST_SURVIVE_COMPACT") {
-		t.Fatalf("plan rebuild must still rehydrate AGENTS.md without cited files:\n%s", planTr.Rebuild)
+func TestResumeChangedInstructionManifestDropsStaleRebuildRules(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	rulesPath := filepath.Join(ws, "AGENTS.md")
+	if err := os.WriteFile(rulesPath, []byte("STALE_RULE_MUST_DISAPPEAR\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "cited.go"), []byte("package refreshed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sess, _ := d.store.CreateSession(ws, "safe-edit")
+	if err := d.kern.InitSessionWithPolicy(sess.SessionID, ws, "safe-edit", nil); err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.SubmitWithGoalModelAgent(sess.SessionID, sess.WorkspaceID, "continue build", "", "build", nil)
+	oldManifest := instructionManifestForTask(d, ws, task.Agent)
+	tr := newTranscript(task.UserPrompt)
+	tr.Rebuild = "REBUILT CONTEXT (post-compact; re-read, not new user input):\nPROJECT INSTRUCTIONS (legacy copy):\nSTALE_RULE_MUST_DISAPPEAR"
+	tr.CompactionReceipts = append(tr.CompactionReceipts, CompactionReceipt{Version: 3, CitedFiles: []string{"cited.go"}})
+	if err := os.WriteFile(rulesPath, []byte("CURRENT_RULE_MUST_APPEAR_ONCE\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spy := &promptSpyReasoner{scriptedReasoner: scriptedReasoner{steps: []string{`{"tool":"done","summary":"resumed"}`}}}
+	d.SetReasoner(spy)
+	d.resumeTaskContext(t.Context(), sess, task, &runCheckpoint{Turn: 0, Transcript: tr, InstructionManifest: oldManifest})
+	if len(spy.prompts) != 1 {
+		t.Fatalf("resume prompts = %d, want 1", len(spy.prompts))
+	}
+	prompt := spy.prompts[0]
+	if strings.Contains(prompt, "STALE_RULE_MUST_DISAPPEAR") {
+		t.Fatalf("resume prompt retained stale project instructions:\n%s", prompt)
+	}
+	if got := strings.Count(prompt, "CURRENT_RULE_MUST_APPEAR_ONCE"); got != 1 {
+		t.Fatalf("current project instruction occurrences = %d, want exactly 1:\n%s", got, prompt)
+	}
+	if !strings.Contains(prompt, "package refreshed") {
+		t.Fatalf("resume prompt did not rebuild cited file evidence:\n%s", prompt)
 	}
 }
 
@@ -181,5 +217,35 @@ func TestCompactReceiptRecordsCitedFiles(t *testing.T) {
 		if path == "c.go" {
 			t.Fatal("KeepRecent tail must not be listed as folded cited files")
 		}
+	}
+}
+
+func TestElisionOnlyReceiptIsPersistedByCompactRebuild(t *testing.T) {
+	d, ws := newLoopDaemon(t)
+	defer d.Close()
+	sess, err := d.store.CreateSession(ws, "read-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.kern.InitSessionWithPolicy(sess.SessionID, ws, "read-only", nil); err != nil {
+		t.Fatal(err)
+	}
+	task := d.sched.Submit(sess.SessionID, sess.WorkspaceID, "inspect evidence")
+	tr := newTranscript(task.UserPrompt)
+	tr.policy = CompactionPolicy{MaxChars: 700, KeepRecent: 1, ToolOutputMax: 10_000, SummarizeAfter: 100}
+	for i := 0; i < 4; i++ {
+		tr.addTurn(Turn{Tool: "read", ActionBrief: "read evidence", Obs: Observation{Content: strings.Repeat("evidence ", 80)}})
+	}
+	receipt := tr.compact(nil)
+	if receipt == nil || receipt.Version != 4 {
+		t.Fatalf("elision-only receipt = %+v", receipt)
+	}
+	d.recordCompactRebuild(sess, task, tr, receipt, nil)
+	raw, err := d.kern.ReadEvents(sess.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"type":"ContextCompacted"`) || !strings.Contains(string(raw), `"version":4`) || !strings.Contains(string(raw), `"elided_turn_indices"`) {
+		t.Fatalf("audit read lost elision-only compaction receipt: %s", raw)
 	}
 }

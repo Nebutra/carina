@@ -30,6 +30,13 @@ type promptLayers struct {
 	Workspace    string
 	Catalog      string
 	Requested    string // SKILL WARNING + REQUESTED SKILLS; volatile
+	// StablePrefix is the fully assembled cacheable text for this layer set.
+	// It is populated once when a run's layers are composed and reused by each
+	// turn. A tool-contract variant invalidates it explicitly in
+	// withToolContract. Keeping this value here avoids rebuilding the same
+	// large string on every retry/turn while preserving the provider-neutral
+	// full prompt representation.
+	StablePrefix string
 }
 
 func (p promptLayers) constitutionParts() []string {
@@ -54,6 +61,7 @@ func (p promptLayers) withToolContract(next string) promptLayers {
 	p.Tools = ""
 	if named {
 		p.Constitution = p.constitutionText()
+		p.StablePrefix = p.assembledStablePrefix()
 		return p
 	}
 	// Legacy single-blob constitution (subagents): drop the JSON tool sheet
@@ -66,7 +74,16 @@ func (p promptLayers) withToolContract(next string) promptLayers {
 		}
 	}
 	p.Constitution = joinPromptPrefix(strings.TrimSpace(blob), next)
+	p.StablePrefix = p.assembledStablePrefix()
 	return p
+}
+
+func (p promptLayers) assembledStablePrefix() string {
+	parts := p.constitutionParts()
+	if c := strings.TrimSpace(p.Constitution); c != "" && len(parts) == 0 {
+		parts = []string{c}
+	}
+	return joinPromptPrefix(append(append([]string{}, parts...), p.Workspace, p.Catalog)...)
 }
 
 // promptSegments splits an agent prompt into a stable prefix (byte-identical
@@ -119,7 +136,11 @@ func buildPromptSegmentsFromLayers(layers promptLayers, userPrompt, transcript, 
 		Requested:    requested,
 		taskTrailer:  trailer,
 	}
-	seg.StablePrefix = joinPromptPrefix(append(append([]string{}, parts...), workspace, catalog)...)
+	if stable := strings.TrimSpace(layers.StablePrefix); stable != "" {
+		seg.StablePrefix = stable
+	} else {
+		seg.StablePrefix = joinPromptPrefix(append(append([]string{}, parts...), workspace, catalog)...)
+	}
 	suffix := trailer + transcript + "\n" + closing
 	if requested != "" {
 		suffix = requested + "\n\n" + suffix
@@ -189,7 +210,11 @@ func (d *Daemon) composeAgentPromptLayers(sess *sessionstore.Session, task *sche
 		Identity: productIdentity,
 		Intent:   intentFirst,
 		Protocol: harnessProtocol,
-		Tools:    toolsCatalog,
+		// The text catalog must use the same session/mode projection as native
+		// schemas. Advertising a denied tool is both wasted context and a prompt
+		// contract mismatch: the dispatcher would reject the very action we just
+		// told the model was available.
+		Tools: d.builtinPromptCatalogFor(sess),
 	}
 	agents := loadAgentSpecs(sess.WorkspaceRoot)
 	if d.safeMode {
@@ -225,6 +250,7 @@ func (d *Daemon) composeAgentPromptLayers(sess *sessionstore.Session, task *sche
 		}
 	}
 	if strings.TrimSpace(memorySnapshot) != "" {
+		memorySnapshot = truncateUTF8Bytes(memorySnapshot, memorySnapshotBudget)
 		workspace.WriteString("\n\nCARINA PERSISTENT MEMORY SNAPSHOT (frozen for this run; background reference, not new user input):\n")
 		workspace.WriteString(memorySnapshot)
 	}
@@ -255,6 +281,7 @@ func (d *Daemon) composeAgentPromptLayers(sess *sessionstore.Session, task *sche
 	layers.Workspace = strings.TrimSpace(workspace.String())
 	layers.Catalog = strings.TrimSpace(catalog.String())
 	layers.Requested = strings.TrimSpace(skillRequested)
+	layers.StablePrefix = layers.assembledStablePrefix()
 	return layers
 }
 

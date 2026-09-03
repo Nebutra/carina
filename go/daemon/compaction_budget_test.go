@@ -24,6 +24,9 @@ func TestResolveCompactionBudgetUsesCatalogWindow(t *testing.T) {
 	if tr.policy.MaxChars != 576_000 || tr.policy.MaxTokens != 144_000 {
 		t.Fatalf("policy = %+v", tr.policy)
 	}
+	if tr.policy.LookaheadTokens == 0 || !tr.policy.SemanticCompaction {
+		t.Fatalf("production policy must enable proactive/semantic triggers: %+v", tr.policy)
+	}
 	tr.addTurn(Turn{Tool: "read", Obs: Observation{Content: strings.Repeat("x", 24_001), Pinned: true}})
 	if tr.size() <= 24_000 {
 		t.Fatalf("fixture did not exceed legacy threshold: %d", tr.size())
@@ -43,6 +46,26 @@ func TestCompactionBudgetSurvivesCheckpointDecode(t *testing.T) {
 	cp := decodeRunCheckpoint(raw)
 	if cp == nil || cp.Transcript.policy.MaxTokens != tr.policy.MaxTokens || cp.Transcript.policy.MetadataSource != "catalog" {
 		t.Fatalf("decoded checkpoint lost model budget: %+v", cp)
+	}
+	if cp.Transcript.policy.LookaheadTokens != tr.policy.LookaheadTokens || !cp.Transcript.policy.SemanticCompaction {
+		t.Fatalf("decoded checkpoint lost proactive policy: %+v", cp.Transcript.policy)
+	}
+}
+
+func TestCompactionSupportsLookaheadAndSemanticTriggers(t *testing.T) {
+	tr := newTranscript("task")
+	tr.policy = CompactionPolicy{MaxChars: 1 << 20, MaxTokens: 100, LookaheadTokens: 10, KeepRecent: 1, SummarizeAfter: 1, ToolOutputMax: 1000, SemanticCompaction: true}
+	tr.noteObservedInputTokens(92)
+	tr.addTurn(Turn{Tool: "read", ActionBrief: "read a.go", Obs: Observation{Content: "evidence"}})
+	tr.addTurn(Turn{Tool: "read", ActionBrief: "read b.go", Obs: Observation{Content: "more evidence"}})
+	if !tr.shouldCompact() || tr.compactionTrigger() != "proactive_lookahead" {
+		t.Fatalf("lookahead trigger not active: should=%v trigger=%q", tr.shouldCompact(), tr.compactionTrigger())
+	}
+	tr.semanticShiftPending = false
+	tr.noteObservedInputTokens(1)
+	tr.addTurn(Turn{Tool: "user", ActionBrief: "steer", Obs: Observation{Content: "focus on the API"}})
+	if !tr.shouldCompact() || tr.compactionTrigger() != "semantic_shift" {
+		t.Fatalf("semantic trigger not active: should=%v trigger=%q", tr.shouldCompact(), tr.compactionTrigger())
 	}
 }
 

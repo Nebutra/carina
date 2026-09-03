@@ -234,16 +234,86 @@ func (s *memoryStore) restore(scope memoryScope, target string, entries []string
 }
 
 func (s *memoryStore) snapshot(scope memoryScope) string {
+	return s.snapshotForPrompt(scope, "", 0)
+}
+
+// snapshotForPrompt projects memory into a bounded, relevance-ordered view.
+// Exact memory remains on disk; only the top lexical hits plus a deterministic
+// recent fallback enter the model context. This gives every task a hard budget
+// without making a short or novel task lose all durable context.
+func (s *memoryStore) snapshotForPrompt(scope memoryScope, query string, budget int) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	parts := []string{}
-	if block := s.renderSnapshotBlock(memoryTargetUser, scope); block != "" {
-		parts = append(parts, block)
+	if budget <= 0 {
+		budget = memorySnapshotBudget
 	}
-	if block := s.renderSnapshotBlock(memoryTargetMemory, scope); block != "" {
-		parts = append(parts, block)
+	query = strings.TrimSpace(query)
+	selected := map[string]map[int]bool{memoryTargetUser: {}, memoryTargetMemory: {}}
+	ordered := map[string][]int{memoryTargetUser: {}, memoryTargetMemory: {}}
+	if query != "" {
+		terms := memorySearchTerms(query)
+		for target, entries := range map[string][]string{
+			memoryTargetUser:   s.readEntriesLocked(scope, memoryTargetUser),
+			memoryTargetMemory: s.readEntriesLocked(scope, memoryTargetMemory),
+		} {
+			hits := make([]memorySearchHit, 0, len(entries))
+			for index, entry := range entries {
+				if scanMemoryContent(entry) != nil {
+					continue
+				}
+				if score := lexicalMemoryScore(strings.ToLower(entry), strings.ToLower(query), terms); score > 0 {
+					hits = append(hits, memorySearchHit{Target: target, Index: index, Score: score})
+				}
+			}
+			sort.SliceStable(hits, func(i, j int) bool {
+				if hits[i].Score == hits[j].Score {
+					return hits[i].Index < hits[j].Index
+				}
+				return hits[i].Score > hits[j].Score
+			})
+			for _, hit := range hits {
+				selected[target][hit.Index] = true
+				ordered[target] = append(ordered[target], hit.Index)
+			}
+		}
 	}
-	return strings.Join(parts, "\n\n")
+	// Include the newest entries as a bounded fallback. User profile entries
+	// are considered before project memory when the budget is tight.
+	for _, target := range []string{memoryTargetUser, memoryTargetMemory} {
+		entries := s.readEntriesLocked(scope, target)
+		for index := len(entries) - 1; index >= 0 && len(selected[target]) < 4; index-- {
+			if !selected[target][index] {
+				selected[target][index] = true
+				ordered[target] = append(ordered[target], index)
+			}
+		}
+	}
+	parts := make([]string, 0, 2)
+	for _, target := range []string{memoryTargetUser, memoryTargetMemory} {
+		entries := s.readEntriesLocked(scope, target)
+		projected := make([]string, 0, len(entries))
+		for _, index := range ordered[target] {
+			entry := entries[index]
+			if err := scanMemoryContent(entry); err != nil {
+				projected = append(projected, "[BLOCKED: memory entry matched threat pattern: "+err.Error()+". Remove or replace the original entry.]")
+			} else {
+				projected = append(projected, entry)
+			}
+		}
+		if len(projected) == 0 {
+			continue
+		}
+		label := "CARINA MEMORY"
+		if target == memoryTargetUser {
+			label = "CARINA USER PROFILE"
+		}
+		parts = append(parts, fmt.Sprintf("%s [%s]\n%s", label, s.usage(target, projected), strings.Join(projected, memoryDelimiter)))
+	}
+	result := strings.Join(parts, "\n\n")
+	if len(result) > budget {
+		result = truncateUTF8Bytes(result, budget) + "\n…[memory snapshot truncated]"
+	}
+	return result
 }
 
 func (s *memoryStore) contextBlock(scope memoryScope) string {

@@ -1,166 +1,179 @@
-# Carina Context Engineering (DRAFT LAW)
+# Carina Context Engineering
 
-> Companion to `docs/PROMPT_SPEC.md`. Product still FAIL while constitution
-> rides in the user role and default models are cache `none`.
-> Evidence: `docs/research/competitive-2026-08/27-prompt-context-audit-0.8.41.md`.
-> Code: `go/daemon/transcript.go`, `compaction_budget.go`, `compact_rebuild.go`,
-> `memory.go`, `subagent.go`, `context_summary.go`, `anthropic.go`,
-> `go/contextengine` (noop).
+Status: `v0.9.2` release specification. The core cascade, checkpoint lifecycle,
+cache SLO instrumentation, and deterministic long-session fidelity fixtures are
+hardened. Provider-backed cache runs and semantic quality curves remain release
+evidence.
 
----
+## 1. Two ledgers, one model projection
 
-## 1. Two ledgers
+The session event log is the source of truth. The transcript is a bounded,
+reconstructable projection for the model.
 
-| Ledger | Owner | Bound |
-|--------|-------|-------|
-| Audit / events | hash chain | complete, never compacted |
-| Model view | `Transcript` | window − reserve; snip → elide → summary |
+| Ledger | Contract |
+|---|---|
+| Audit/event ledger | hash chained, complete, never compacted, includes original tool bytes or artifact references |
+| Model view | `Transcript`, bounded by the model window and reserve; safe to elide, summarize, and rebuild |
 
-Never feed the audit log to the model.
+Raw tool output and child transcripts never enter the model view or a parent
+context. Every projection transform records a receipt with preimage hash,
+source reference, transform, byte/token counts, and pressure before/after.
 
----
+## 2. Current cascade and target cascade
 
-## 2. Compaction cascade
+Carina implements tiers 0-5. Tier 5 uses deterministic lexical boundaries and
+measured growth forecasting; embedding quality remains a later optimization.
 
-Keep today’s cheap-first order. Outer tiers stay P1.
+| Tier | Current `v0.8.42` behavior | Keep | Release target |
+|---|---|---|---|
+| 0 enqueue snip | `snipObservation`, default 2,000 chars; typed importance + shape summary; pinned values over 64 KiB become a pinned artifact pointer | preview, hash, artifact pointer | richer provider-aware extractors |
+| 1 stale-read elision | `supersedeStaleReads` removes older unpinned reads of the same path | newest read and pinned failures | retain latest relevant evidence by topic, not path only |
+| 2 local collapse | keep three recent turns; elide old observations; deterministic action skeleton at pressure <= 1.10 | task, user steering, paths, and up to four explicitly requested `KEY=VALUE` read facts | add image replacement |
+| 3 summary | model summary after escalation plus a bounded deterministic durable-fact ledger | user-authored turns under 4,000 chars, requested read facts, changed paths, and failures | fact confidence and richer provenance |
+| 4 rebuild | re-read at most five cited/key files into volatile `Transcript.Rebuild`, 8,000 char cap; project rules stay in the freshly composed dynamic system layer | current file contents; exactly one active rule revision | verify citations and invalidate stale rebuild entries |
+| 5 proactive/semantic | production policy enables lookahead, measured input-growth forecasting, and semantic boundaries; receipts record `hard_budget`, `proactive_lookahead`, `proactive_forecast`, or `semantic_shift` | bounded forecast and durable user turns | embedding/topic inference and richer fact segmentation |
 
-| Tier | When | Keep | Drop |
-|------|------|------|------|
-| 0 Snip | enqueue | last 2k chars of a tool obs (pinned fail-closed) | raw tail |
-| 1 Stale reads | newer read of same path | latest | older unpinned reads |
-| 2 Elide | pressure ≤ ~1.10 | last `KeepRecent` (3) turns; user turns under 4k | old tool bodies → pointer |
-| 3 Summary | pressure above local tier | 9-class handoff (user verbatim, paths, errors, next) | folded tool process |
-| 4 Rebuild | after 3 | **re-read** ≤5 cited files into volatile `Transcript.Rebuild` (8k char cap) | stale citations |
-| 5 Proactive / semantic | P1 | EWMA lookahead / topic shift | — |
+The context engine package is intentionally a no-op identity today:
+`go/contextengine/contextengine.go:3-4,125-171` reports that it transforms no
+bytes. `Transcript.compact` is the product compressor and must remain named as
+such in operator-facing output.
 
-Today: 0–4 exist. 5 does not. Rebuild is volatile (with TASK), never prefix.
-F stays in Workspace for build/plan for the run — do not dump AGENTS.md into
-a greeting because compact ran. After compact on build/plan, Grok-style
-verbatim AGENTS **item** is appended to volatile `Transcript.Rebuild` (P1-C5).
+Compaction triggers at approximately 80% of the usable window (`window -
+reserve`), with an additional lookahead reserve and EWMA growth forecast
+derived from measured provider input sizes. It also retries on provider
+prompt-too-long errors. Semantic compaction recognizes explicit
+steering/import/fork boundaries and low-overlap topic shifts using a
+deterministic lexical signal; embeddings remain a measured follow-up rather
+than an ungrounded host classifier.
 
-`go/contextengine` is identity; do not advertise it as a compressor.
-`Transcript.compact` is the product compressor.
+Every context-changing call returns a receipt. A v4 receipt represents
+Step-1-only elision: no turns were folded, `Summary` is unchanged,
+`removed_turns=0`, and `elided_turn_indices` plus the preimage hash identify the
+exact transformed observations. The daemon persists that receipt through
+`ContextCompacted` even when elision alone returns below the pressure trigger.
 
-Trigger: ~80% of (catalog window − reserve). Fallback window 32k is honest
-only when the catalog has no window — do not silently use 32k for a 200k model.
-Proxy model ids alias through the lab catalog (same path as vision chips).
+## 3. Token budget model
 
----
-
-## 3. Token budget (operator-visible)
-
+```text
+window   = catalog context limit, or explicit 32,000 fallback when unknown
+reserve  = max(4,000, min(32,000, window / 10))
+trigger  = 0.80 * (window - reserve)
+pressure = observed provider input tokens / trigger
+           or chars(model_view) / 4 / trigger when usage is estimated
+warning  = pressure >= 0.80
+critical = pressure >= 0.90
 ```
-window     = catalog context or declared fallback
-reserve    = max(4k, min(32k, window/10))
-trigger    = 80% × (window − reserve)
-pressure   = observed_input_tokens / trigger
-             (chars/4 of the model view when usage is absent or estimated)
-warning    = 80%    critical = 90%
-```
 
-Provider-reported input tokens drive model-view pressure and `/context`
-ledger counts when the last usage is not an estimate. `len/4` stays the
-fallback.
+`go/daemon/compaction_budget.go:24-32` computes the budget and
+`context_summary.go:36-128,154-249` exposes it. Provider usage is preferred;
+`chars/4` is explicitly labeled as an estimate. `/context` now reports native
+schema share against the model window and computes a provider-evidence cache
+SLO from canonical receipts. Layer token counts remain estimates, and no
+persistent tokenizer snapshot is attached to a checkpoint.
 
-Anthropic `/context` must show `cache_read` vs `cache_write` (P0-P14).
-Grok/OpenAI must show `cache=none` without implying prefix cache.
+## 4. Memory lifecycle
 
-TUI `/context` already speaks VOICE. Do not show `ledger`/`hash` slang.
-In-loop `tr.compact` and idle `/compact` must be labeled as different
-jobs (live model view vs checkpoint rewrite).
+| Memory stream | Current injection | Budget/guard | Required lifecycle |
+|---|---|---|---|
+| User/project rules | `loadMemory` plus `discoverInstructionManifest` in `go/daemon/memory.go`; user home then project root to cwd; one winner per directory | 8,000-char source cap; `CARINA.override.md` > `CARINA.md` > `AGENTS.*`; checkpoint stores path/bytes/SHA-256/digest | compare the manifest on compact/resume; recompose the current effective rules once in the dynamic system layer and invalidate stale transcript rebuilds |
+| Governed local memory | `memoryStore.snapshotForPrompt` in `go/daemon/memory_store.go`; frozen at task start and checkpointed, with lexical relevance ordering plus recent fallback | store limits (4,000 memory / 2,400 user by default); 6,000-byte model-view budget | inject once per run after cache boundary; never dump raw turns |
+| Fresh HMS evidence | `buildTaskMemoryEvidence` in `memory_task_context.go:11-74`; pinned observation on a fresh task | normalized result cap, 768 chars per item, overall memory budget | hybrid recall only at task start, record policy/audit status, do not re-query after compact |
+| Explicit memory search | lexical/semantic/auto in `memory_semantic.go:31-114` | caller limit up to 50; task snapshot has a hard byte budget | add provider-aware reranking and per-turn recall only when cache impact is measured |
 
----
+Project rule loading is mode-gated: `build` and `plan` load F; `converse` and
+`explore` do not host-load it. The checkpointed instruction manifest records
+ordered paths, byte sizes, hashes, and an aggregate digest; compact/resume
+compares that revision before the next model call.
 
-## 4. Memory inject
+## 5. Subagent context contract
 
-| Stream | When | Budget | Where |
-|--------|------|--------|-------|
-| Project rules (F) | build/plan only | 8k chars, one winner per directory | Workspace layer, after cache boundary |
-| Governed snapshot (G) | task start, frozen | existing store cap | Workspace layer |
-| HMS evidence | fresh task, hybrid mode | pinned observation | Transcript, not system |
+- Child sessions are created with an attenuated capability profile and an
+  independent transcript (`subagent.go:45-49,410-565`).
+- Parent context receives only `done.summary`; child transcript and raw tool
+  output are not copied back.
+- Explore is read-only, lean, and does not load project rules
+  (`explore.go:12-33,126-163`).
+- Child memory is a frozen snapshot for that child; it does not inherit the
+  parent transcript.
+- Delegation depth and turns are bounded; parallel fan-out is explicit.
 
-Do not retrieve HMS or dump AGENTS.md for Fixture G.
-Identity and F are not a substitute for inspecting this repository.
+Ordinary and explore subagents now use named Mode/Identity/Intent/Protocol/Tools
+sections. Their child transcript remains isolated and only `done.summary`
+crosses back to the parent; tool visibility uses the same session projection as
+native schemas.
 
----
-
-## 5. Subagent contract (keep)
-
-- Child: own session, attenuated profile, own transcript.
-- Explore: no project rules, no writes, lean tools.
-- Parent sees **only** `done.summary`.
-- Do not copy parent TRANSCRIPT into the child.
-- Do not copy child TRANSCRIPT into the parent.
-
----
-
-## 6. Pipeline (as shipped 0.8.41 — waste marked)
+## 6. `v0.9.2` prompt/context data flow
 
 ```mermaid
 flowchart TD
-  start[Task start] --> snap[memory.snapshot]
-  snap --> rules{build/plan?}
-  rules -->|yes| loadF[loadMemory 8k]
-  rules -->|converse/greeting| skipF[skip AGENTS.md]
-  loadF --> layers
-  skipF --> layers[composeAgentPromptLayers once]
-  layers --> loop[Each Think]
-  loop --> cheap["compact(nil) elide/collapse"]
-  cheap --> rebuild[rebuild cited files into transcript]
-  rebuild --> build[buildPromptSegmentsFromLayers]
-  build --> full["seg.full = prefix + requested + TASK + transcript"]
-  full --> route{Reasoner}
-  route -->|Anthropic| sysCache["system A-D cached; workspace after boundary; user = TASK"]
-  route -->|Grok ACP| stuff["system = 1-line ReAct; user = framed full()"]
-  route -->|OpenAI/Mox| blob["single blob; cache kind none"]
-  userCache --> act[JSON action or native tools]
-  stuff --> act
+  start[Task start] --> snap[Memory snapshot frozen]
+  snap --> rules{build or plan?}
+  rules -->|yes| f[loadMemory: user -> root -> nested, cap 8k]
+  rules -->|no| nof[skip host-loaded project rules]
+  f --> compose[composeAgentPromptLayers once]
+  nof --> compose
+  compose --> loop[Each Think]
+  loop --> cheap[Transcript.compact: snip, stale-read, elide, collapse/summary]
+  cheap --> rebuild[Re-read cited files into volatile Rebuild; rules remain in dynamic system]
+  rebuild --> assemble[buildPromptSegmentsFromLayers + seg.full]
+  assemble --> route{Provider route}
+  route -->|Anthropic| sys[A-D system cached; E-G dynamic system; H-J user]
+  route -->|Grok ACP| vendor[one-line vendor system + Carina full blob]
+  route -->|Direct OpenAI| blob[single frozen prefix; prompt_cache_key; cached-token receipt]
+  route -->|Other OpenAI-compatible| relay[single blob; cache unsupported unless usage proves it]
+  sys --> act[JSON or native tool decision]
+  vendor --> act
   blob --> act
-  act --> exec[Kernel + Zig tools]
-  exec --> obs[list/search extract then snip 2k]
-  obs --> after[model summary after turn]
-  after --> loop
+  act --> execute[Kernel-governed tool execution]
+  execute --> obs[typed extract + observation snip/artifact]
+  obs --> loop
+  act -->|spawn| child[isolated child session]
+  child --> summary[parent receives done.summary only]
 ```
 
-**Target after P0-P12:** Anthropic `system` = A–D (cached). User = H–J.
-Workspace/F/G sit after the dynamic boundary, not in TASK.
+Known residual risk points are explicit: Grok and CLI routes remain uncached;
+OpenAI-compatible relays are marked unsupported; and semantic inference is
+deterministic lexical rather than embedding-based. Direct OpenAI uses a stable
+cache key on streaming and non-streaming paths. Native HTTP schemas and the
+text index share the session/mode projection, stable serialization is memoized,
+and project-rule precedence is persisted as a revisioned manifest.
 
----
+## 7. P0 work required before release
 
-## 7. P0 / P1 / P2
+P0 means measurable product impact and must be completed before calling the
+prompt/context system SOTA or publishing a release.
 
-Prompt-law structure S1–S11 and tool-surface T-S1–T-S3 remain landed.
-Context-engineering C1–C2 (constitution < 800 tok on G/R; contextengine
-identity) remain landed. **Product P0 is not closed.**
+| ID | Problem | Reference implementation | Suggested Carina files | Acceptance |
+|---|---|---|---|---|
+| P0-1 | Stable/dynamic boundary was represented but serialized on every turn | Claude `09-system-prompt工程.md` and `04-Agent协调/06-Fork与提示词缓存优化.md` | `go/daemon/promptcache.go`, `go/daemon/reasoner.go`, route telemetry | **implemented:** memoized stable prefix, exact Anthropic A-D receipt boundary, Direct OpenAI key on both request paths, warm-up-adjusted 95% SLO with 20-request minimum |
+| P0-2 | Native HTTP sent all builtin schemas without the active authority projection | Claude tool loading and OMP session-tools deferred exposure | `go/daemon/tool_registry.go`, `go/daemon/tool_schema.go`, `go/daemon/agent.go` | **implemented:** native schemas and text catalog use the same session/mode projection; 32k schema-share fixture enforces <15% |
+| P0-3 | Pinned observations could bypass the model-view budget | Claude context compression cascade; OMP compaction | `go/daemon/transcript.go`, `context_compression.go`, artifact store | **implemented:** ordinary cap plus pinned >64 KiB recoverable artifact pointer and hash |
+| P0-4 | Compaction lacked proactive lookahead, semantic boundaries, and receipts for cheap-only transforms | jcode `compaction.rs`; OMP `docs/compaction.md` | `go/daemon/transcript.go`, `compaction_budget.go`, `compact_rebuild.go` | **implemented:** lookahead, EWMA forecast, lexical topic boundaries, v4 elision-only receipts, bounded requested-evidence facts, and checkpoint-roundtrip 60+/72-turn fidelity fixtures |
+| P0-5 | Rule lifecycle lacked durable source revisions | Codex `agents_md.rs`/manager and Claude layered CLAUDE.md | `go/daemon/memory.go`, `compact_rebuild.go`, checkpoint schema | **implemented:** deterministic path/bytes/SHA-256 manifest persisted and compared on compact/resume |
 
-| ID | Status | Item |
-|----|--------|------|
-| P0-P12 | **source** | Anthropic `system` A–D + dynamic workspace. Grok/OpenAI still user-stuffed |
-| P0-P13 | **source** | Intent: identity/F are not this repository |
-| P0-P14 | **source** | `/context` `constitution_role` + `cache_read_tokens` in usage breakdown |
-| P0-C1 | landed | Fixture G/R constitution without F < 800 tok |
-| P0-C2 | landed | `go/contextengine` is identity |
-| P1-C1 | landed | post-compact cited-file rebuild (volatile) |
-| P1-C2 | landed | provider usage drives pressure when present |
-| P1-C5 | **source** | AGENTS.md item after compact, build/plan only |
-| P1-C3 | deferred | Proactive compact (jcode EWMA) |
-| P1-C6 | deferred | OpenAI prefix cache only if the route documents it |
-| P2-C1 | deferred | Semantic / topic-shift compact |
-| P2-C2 | deferred | Memory retrieve budget per turn |
-| P2-C3 | deferred | Tokenizer-accurate pressure in `/context` |
+## 8. P1 and P2
 
-Do not enable MiniLM / snapcompact as defaults to look like jcode/OMP.
+| Priority | Item | Completion signal |
+|---|---|---|
+| P1 implemented | EWMA proactive compaction and expected-output reservation | receipts distinguish lookahead, forecast, semantic shift, and hard budget |
+| P1 baseline | Semantic/topic-shift compaction with deterministic durable facts | 60-turn fixture preserves task, steering, changed path, failure, and next action; 72-turn fixture preserves explicit first/middle/last read evidence across checkpoint restore |
+| P1 | Memory retrieval budget and reranking | task memory snapshot has a hard byte cap and relevance-first ordering; per-turn recall remains opt-in |
+| P1 implemented | Strict subagent prompt sections | child A-D uses named sections and a frozen prefix; parent receives summary-only output |
+| P1 implemented | Provider cache dashboard | `/context` reports actual boundary hash, provider evidence, post-warm-up hit rate, sample sufficiency, and SLO verdict |
+| P2 | Provider tokenizer snapshots | pressure error below 5% for supported routes |
+| P2 | Automatic degradation ladder | tool schema reduction, memory suppression, and new-session suggestion are deterministic at critical pressure |
+| P2 | Context replay/quality harness | 50+ turn fixtures produce success-vs-pressure curves and compact fidelity reports |
 
----
+## 9. Anti-patterns
 
-## 8. Anti-patterns
-
-1. Do not compact the audit chain.
-2. Do not fold user messages away without the verbatim budget.
-3. Do not re-inject AGENTS.md into a greeting turn “because compact dropped it”.
-4. Do not enable MiniLM / snapcompact as a default.
-5. Do not return child transcripts to the parent.
-6. Do not treat idle `/compact` as a substitute for in-loop `tr.compact`.
-7. Do not call `Transcript.compact` a context engine.
-8. Do not treat user-block `cache_control` as a system cache boundary.
-9. Do not answer workspace structure from product identity.
+1. Compacting the audit chain or treating a model summary as the source of
+   truth.
+2. Putting TASK, transcript, or project rules into the cacheable A-D prefix.
+3. Calling `contextengine` a compressor while its effective engine is no-op.
+4. Sending every native/MCP schema or skill body every turn.
+5. Re-reading or re-injecting project rules into a greeting merely because a
+   compact happened.
+6. Returning child transcripts to the parent.
+7. Using more `DO NOT` rules to mask a wrong role, mode, or tool boundary.
+8. Claiming cache hits without provider `cache_read` evidence.
+9. Treating a successful answer as proof of context health.
