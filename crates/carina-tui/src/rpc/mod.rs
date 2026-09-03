@@ -1511,7 +1511,7 @@ mod tests {
             let (_stream, _) = listener.accept().unwrap();
         });
         let runtime: RuntimeInitialize = serde_json::from_value(json!({
-            "runtime_version": "0.9.2",
+            "runtime_version": "0.9.3",
             "protocol_version": "1.3.0",
             "projection_version": "1.0.0",
             "capabilities": {"session_items_watermark": {"version": 1}},

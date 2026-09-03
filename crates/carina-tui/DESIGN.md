@@ -5,7 +5,7 @@
 > `styles.md` is the renderer contract. When a P0 slice ships, rewrite the
 > matching `styles.md` section. Do not keep two competing empty-state stories.
 >
-> Baseline: Carina v0.9.2. Chrome P0, conversation-document P0, recovered
+> Baseline: Carina v0.9.3. Chrome P0, conversation-document P0, recovered
 > failures leaving the page, collapse-clear, honest Grok isolation copy,
 > hot-path P0, Intent-Meta prompt, session-dialogue hydrate, unboxed chat
 > tables, history-fork rewind, constitution A–D, Harness naming, todo/web.search,
