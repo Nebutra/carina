@@ -58,5 +58,21 @@ func Seed() Catalog {
 			Env:  []string{"CARINA_LOCAL_API_KEY"},
 			NPM:  "@ai-sdk/openai-compatible",
 		},
+		"xai": {
+			ID:   "xai",
+			Name: "xAI",
+			API:  "https://api.x.ai/v1",
+			Env:  []string{"XAI_API_KEY"},
+			NPM:  "@ai-sdk/xai",
+			Models: map[string]Model{
+				"grok-4": {
+					ID:        "grok-4",
+					Name:      "Grok 4",
+					Reasoning: true,
+					ToolCall:  true,
+					Limit:     ModelLimit{Context: 256000, Output: 32768},
+				},
+			},
+		},
 	}
 }

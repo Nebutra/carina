@@ -320,7 +320,9 @@ func (d *Daemon) launchPreparedSubagent(parent context.Context, prepared *prepar
 	d.taskContexts[prepared.childTask.RunID] = ctx
 	d.taskCancels[prepared.childTask.RunID] = cancel
 	d.taskContextMu.Unlock()
+	d.taskWG.Add(1)
 	go func() {
+		defer d.taskWG.Done()
 		defer cancel(nil)
 		defer func() {
 			d.taskContextMu.Lock()

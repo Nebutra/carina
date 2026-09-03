@@ -504,18 +504,40 @@ type grokBuildDiskRecord struct {
 
 var grokBuildDiscoveryCache grokBuildDiscoveryCacheState
 
+// snapshotGrokBuildDiscoverer freezes the process environment at request
+// time. Cached probes may run in a background goroutine after the caller has
+// changed HOME/PATH (for example, a test scope or a concurrently launched
+// daemon); allowing the child process to read the later environment can make
+// it write state into an unrelated profile.
+func snapshotGrokBuildDiscoverer() GrokBuildDiscoverer {
+	env := append([]string(nil), os.Environ()...)
+	values := make(map[string]string, len(env))
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	return GrokBuildDiscoverer{
+		Getenv:  func(key string) string { return values[key] },
+		Environ: func() []string { return append([]string(nil), env...) },
+	}
+}
+
 func detectGrokBuildFn(ctx context.Context) GrokBuildDiscovery {
-	return (GrokBuildDiscoverer{}).Discover(ctx)
+	return snapshotGrokBuildDiscoverer().Discover(ctx)
 }
 
 func DetectGrokBuild(ctx context.Context) GrokBuildDiscovery {
-	return grokBuildDiscoveryCache.detect(ctx, detectGrokBuildFn)
+	discoverer := snapshotGrokBuildDiscoverer()
+	return grokBuildDiscoveryCache.detect(ctx, discoverer.Discover)
 }
 
 // DetectGrokBuildCached never waits on `grok models`. It returns a memory or
 // disk snapshot, or a probing placeholder, and refreshes in the background.
 func DetectGrokBuildCached(ctx context.Context) GrokBuildDiscovery {
-	return grokBuildDiscoveryCache.lookup(ctx, detectGrokBuildFn, false)
+	discoverer := snapshotGrokBuildDiscoverer()
+	return grokBuildDiscoveryCache.lookup(ctx, discoverer.Discover, false)
 }
 
 func (c *grokBuildDiscoveryCacheState) detect(ctx context.Context, discover func(context.Context) GrokBuildDiscovery) GrokBuildDiscovery {

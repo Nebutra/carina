@@ -10,6 +10,15 @@ import (
 
 func newLoopDaemon(t *testing.T) (*Daemon, string) {
 	t.Helper()
+	// Daemon tests should not parse or mutate a developer/runner's host model
+	// cache. Preserve tests that deliberately provide their own temporary HOME.
+	home := filepath.Clean(os.Getenv("HOME"))
+	tempRoot := filepath.Clean(os.TempDir()) + string(os.PathSeparator)
+	if home == "." || !strings.HasPrefix(home+string(os.PathSeparator), tempRoot) {
+		home = t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+	}
 	repoRoot := repoRootFromHere(t)
 	kernelBin := firstExistingPath(
 		os.Getenv("CARINA_KERNEL_BIN"),

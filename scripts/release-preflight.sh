@@ -136,7 +136,7 @@ if [[ "$mode" == "full" ]]; then
   run_gate residual_ux test "steer/interrupt/cancel and screen-mode residual iron gate" make residual-ux-gate
   run_gate visual_density test "production-renderer visual density contract" make visual-density-gate
   run_gate rust_tests test "Rust workspace tests" cargo test --workspace
-  run_gate go_race test "Go runtime race suite" bash -c 'CARINA_KERNEL_BIN="$PWD/target/release/carina-kernel-service" go test -race ./go/...'
+  run_gate go_race test "Go runtime race suite" bash -c 'CARINA_KERNEL_BIN="$PWD/target/release/carina-kernel-service" go test -race -p 1 ./go/...'
   run_gate go_apps test "Go application tests" bash -c 'CARINA_KERNEL_BIN="$PWD/target/release/carina-kernel-service" go test ./apps/...'
   run_gate sdk_go sdk "Go SDK conformance" go test -race ./sdk/go
   run_gate sdk_typescript sdk "TypeScript SDK conformance" bash -c 'cd sdk/typescript && npm ci && npm test'

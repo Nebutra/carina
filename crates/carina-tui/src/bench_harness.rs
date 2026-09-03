@@ -92,6 +92,9 @@ pub fn run_pty_first_frame() -> BenchScenarioResult {
     {
         match paint_pty_first_frame() {
             Ok(result) => result,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                unavailable_pty_result(error)
+            }
             Err(error) => BenchScenarioResult {
                 name: "pty_first_frame".into(),
                 render_p50_ms: 0.0,
@@ -120,6 +123,22 @@ pub fn run_pty_first_frame() -> BenchScenarioResult {
             ttfi_ms: None,
             notes: "pty first-frame requires unix".into(),
         }
+    }
+}
+
+#[cfg(unix)]
+fn unavailable_pty_result(error: std::io::Error) -> BenchScenarioResult {
+    BenchScenarioResult {
+        name: "pty_first_frame".into(),
+        render_p50_ms: 0.0,
+        render_p95_ms: 0.0,
+        render_p99_ms: 0.0,
+        frames: 0,
+        coalesced: 0,
+        highlight_tokens: 0,
+        ttff_ms: None,
+        ttfi_ms: None,
+        notes: format!("pty unavailable: {error}"),
     }
 }
 
@@ -315,9 +334,13 @@ mod tests {
             assert!(line.contains("requires unix"), "{line}");
             return;
         }
-        let ttff = result
-            .ttff_ms
-            .unwrap_or_else(|| panic!("expected PTY ttff, got {line}"));
+        let Some(ttff) = result.ttff_ms else {
+            if result.notes.starts_with("pty unavailable:") {
+                eprintln!("skipping PTY first-frame benchmark: {line}");
+                return;
+            }
+            panic!("expected PTY ttff, got {line}");
+        };
         let ttfi = result.ttfi_ms.expect("ttfi");
         assert_eq!(result.frames, 1, "{line}");
         assert!(ttfi >= ttff, "{line}");
