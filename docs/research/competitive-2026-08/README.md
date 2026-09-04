@@ -1,7 +1,7 @@
 # Competitive Research 2026-08 — Artifact Index
 
 > 取证日期：2026-08-02
-> **现状刷新：2026-09-03 @ Carina v0.9.3 + working tree** — **Harness SSOT：[28-harness-re-audit-0.8.42.md](./28-harness-re-audit-0.8.42.md)**（`24`/`22` 为历史）；**工具面 / Meta / 奏折 SSOT：[29](./29-tool-surface-meta-proactive-audit.md)**（`25` 为 0.8.37 历史）；**审美 SSOT：[30](./30-tui-aesthetic-audit.md)**（`18`/`17` 为历史）；长文 **[23](./23-assistant-markdown-document.md)**；**Prompt/Context：[27](./27-prompt-context-audit-0.8.41.md)**；热路径见 **[26](./26-hot-path-post-0.8.38.md)**。
+> **现状刷新：2026-09-03 @ Carina v0.9.4 + working tree** — **Harness SSOT：[28-harness-re-audit-0.8.42.md](./28-harness-re-audit-0.8.42.md)**（`24`/`22` 为历史）；**工具面 / Meta / 奏折 SSOT：[29](./29-tool-surface-meta-proactive-audit.md)**（`25` 为 0.8.37 历史）；**审美 SSOT：[30](./30-tui-aesthetic-audit.md)**（`18`/`17` 为历史）；长文 **[23](./23-assistant-markdown-document.md)**；**Prompt/Context：[27](./27-prompt-context-audit-0.8.41.md)**；热路径见 **[26](./26-hot-path-post-0.8.38.md)**。
 > 范围：Carina vs Jcode / Grok Build / Claude Code (notes) / Codex / Oh My Pi (OMP) / DeepSeek Harness（公开文档，本机无 clone）
 > 用途：竞品逆向 → GAP → 闭环。用户模板 P0 六项（web.search / MCP / 摘要 / 并行 / todo / schema 分层）**多数已落地**。日用剩余在 **P1：奏折 / git 信息 / 模型侧 job.wait**。SaaS/ACP/皮肤否决。MiniLM/snapcompact 不作默认。
 
@@ -11,14 +11,14 @@
 
 | 文件 | 角色 |
 |------|------|
-| **[28-harness-re-audit-0.8.42.md](./28-harness-re-audit-0.8.42.md)** | **Harness SSOT v0.9.3**：用户可感 ~7.5/10；日用剩余 **P0-H12**（working tree 已 memo）；SaaS 不排 P0 |
+| **[28-harness-re-audit-0.8.42.md](./28-harness-re-audit-0.8.42.md)** | **Harness SSOT v0.9.4**：用户可感 ~7.5/10；日用剩余 **P0-H12**（working tree 已 memo）；SaaS 不排 P0 |
 | **[29-tool-surface-meta-proactive-audit.md](./29-tool-surface-meta-proactive-audit.md)** | **工具面 / Meta / 奏折 SSOT**：实用 8 / 日用 SOTA 7；P0 六项多数已收；P1 = 奏折 + git-info + job.wait |
-| **[30-tui-aesthetic-audit.md](./30-tui-aesthetic-audit.md)** | **审美 SSOT v0.9.3**：加权 ~6/10 仍 FAIL 愉悦；A115/A106/A107/A109/A116/A114′ 已落地 |
+| **[30-tui-aesthetic-audit.md](./30-tui-aesthetic-audit.md)** | **审美 SSOT v0.9.4**：加权 ~6/10 仍 FAIL 愉悦；A115/A106/A107/A109/A116/A114′ 已落地 |
 | **[25-tool-surface-meta-proactive-audit.md](./25-tool-surface-meta-proactive-audit.md)** | 历史：0.8.37 工具面稿；被 **29** supersede |
 | **[24-post-0.8.36-harness-re-audit.md](./24-post-0.8.36-harness-re-audit.md)** | 历史：Harness 0.8.36 |
 | **[23-assistant-markdown-document.md](./23-assistant-markdown-document.md)** | 长文答案排版：A015/A016 随 **0.8.35** 发；A017 标题层级仍开 |
 | **[22-post-0.8.34-harness-re-audit.md](./22-post-0.8.34-harness-re-audit.md)** | **Harness 全维度再审计 v0.8.34**：模块地图 + 六家 job + scorecard + 分类清单；剩余 P0 = S7/S8/S10 |
-| **[27-prompt-context-audit-0.8.41.md](./27-prompt-context-audit-0.8.41.md)** | Prompt/Context 取证：Anthropic P12–P14 随 **0.9.3** 发；Grok/OpenAI 仍 `none` |
+| **[27-prompt-context-audit-0.8.41.md](./27-prompt-context-audit-0.8.41.md)** | Prompt/Context 取证：Anthropic P12–P14 随 **0.9.4** 发；Grok/OpenAI 仍 `none` |
 | **[21-prompt-context-re-audit.md](./21-prompt-context-re-audit.md)** | 历史：Prompt 再审计 v0.8.33 FAIL ~5.5/10 |
 | **[26-hot-path-post-0.8.38.md](./26-hot-path-post-0.8.38.md)** | **热路径再审计 v0.8.38**：PTY TTFF **15.2 ms**；**P0-H11 已落地**（turn 2+ 不 `exec` 新 grok）；剩余 P0 = **P0-H12** list/search memo |
 | **[20-hot-path-latency-audit.md](./20-hot-path-latency-audit.md)** | 历史：v0.8.32 FAIL ~4.5/10；P0 H1–H7 随 **0.8.33** 发；法：`docs/HOT_PATH.md` |
