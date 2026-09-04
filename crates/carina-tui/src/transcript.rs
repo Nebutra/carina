@@ -562,6 +562,10 @@ impl TranscriptReducer {
             | "ToolRequested"
             | "ToolApproved"
             | "ToolDenied"
+            // Provider cache receipts are operational telemetry. Their event
+            // name contains "Prompt", so the generic classifier would
+            // otherwise mislabel them as user messages in the live transcript.
+            | "PromptCacheObserved" => false,
             // OverlayStack is the single live/replay owner for pending
             // governance input. Transcript receipts would duplicate the
             // actionable surface and diverge from hydrated history.
@@ -4190,6 +4194,29 @@ tool:read-2 | title=[src/running.rs] | status=[failed] | body=[permission denied
         ] {
             assert!(!reducer.reduce_event(&mut blocks, event));
         }
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn prompt_cache_receipts_never_enter_the_live_transcript() {
+        let mut reducer = TranscriptReducer::default();
+        let mut blocks = Vec::new();
+        let receipt = json!({
+            "status": "unsupported",
+            "evidence": "provider_usage",
+            "provider_reported": false,
+            "provider": "proxy",
+            "model": "gpt-5.6-sol",
+            "cache_kind": "none",
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "stable_prefix_sha256": "0".repeat(64),
+            "stable_prefix_bytes": 1024,
+            "boundary": "stable_prefix"
+        });
+
+        assert!(!reducer.reduce_event(&mut blocks, wire("PromptCacheObserved", receipt.clone()),));
+        assert!(!reducer.reduce_event(&mut blocks, wire("PromptCacheObserved", receipt),));
         assert!(blocks.is_empty());
     }
 
