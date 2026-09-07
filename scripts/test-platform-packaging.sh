@@ -3,6 +3,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; cd "$root"
 node integrations/web/test.mjs
 node integrations/web/design-system-check.mjs
+grep -Fq 'integrations/(vscode|web)' scripts/ci-gates.sh
 (cd packaging/npm && npm test)
 test "$(go run ./scripts/product-version.go)" = "$(node -p "require('./packaging/npm/package.json').version")"
 grep -q 'USER 65532:65532' packaging/docker/daemon.Dockerfile packaging/docker/worker.Dockerfile

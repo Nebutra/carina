@@ -24,7 +24,7 @@ ts_runtime=$(find . -type d -name node_modules -prune -o \
      -o -path '*/tools/*' -o -path '*/patch/*' -o -path '*/scheduler/*' \
      -o -path '*/session/*' -o -path '*/executor/*' \) \
   -name '*.ts' -print 2>/dev/null)
-ts_stray=$(find . -name '*.ts' 2>/dev/null | grep -vE '/(sdk|ui|integrations/vscode|examples|tests|docs|node_modules|\.claude)/' || true)
+ts_stray=$(find . -name '*.ts' 2>/dev/null | grep -vE '/(sdk|ui|integrations/(vscode|web)|examples|tests|docs|node_modules|\.claude)/' || true)
 [ -z "$ts_runtime$ts_stray" ] || fail "16.1 TypeScript runtime file(s) found: $ts_runtime $ts_stray"
 ok "16.1 no TypeScript runtime"
 
