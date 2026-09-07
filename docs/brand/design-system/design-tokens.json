@@ -101,9 +101,13 @@
   "duration": {
     "fast": { "$value": "120ms", "$type": "duration" },
     "medium": { "$value": "220ms", "$type": "duration" },
-    "slow": { "$value": "480ms", "$type": "duration" }
+    "slow": { "$value": "480ms", "$type": "duration" },
+    "panel": { "$value": "320ms", "$type": "duration", "$description": "Reversible navigation and workspace panel movement." },
+    "overlay": { "$value": "220ms", "$type": "duration", "$description": "Modal scrims and transient surface fades." }
   },
   "cubicBezier": {
-    "standard": { "$value": [0.2, 0, 0, 1], "$type": "cubicBezier" }
+    "standard": { "$value": [0.2, 0, 0, 1], "$type": "cubicBezier" },
+    "enter": { "$value": [0.16, 1, 0.3, 1], "$type": "cubicBezier", "$description": "Decelerated arrival for surfaces entering the workspace." },
+    "exit": { "$value": [0.7, 0, 0.84, 0], "$type": "cubicBezier", "$description": "Controlled departure without a snap." }
   }
 }

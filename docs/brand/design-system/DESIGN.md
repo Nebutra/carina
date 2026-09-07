@@ -175,9 +175,14 @@ Code surfaces use `surface-raised`, 8px radius, and Geist Mono. Trace rows use f
 ## 8. Motion
 
 - Fast: 120ms for hover and press.
-- Medium: 220ms for panels and disclosure.
+- Medium: 220ms for disclosure and transient surfaces.
 - Slow: 480ms for formation/loading sequences.
-- Easing: `cubic-bezier(0.2, 0, 0, 1)`.
+- Panel: 320ms for reversible workspace and navigation movement.
+- Overlay: 220ms for modal scrims and transient surface fades.
+- Enter: `cubic-bezier(0.16, 1, 0.3, 1)`; exit: `cubic-bezier(0.7, 0, 0.84, 0)`.
+- Animate `transform`, `opacity`, and layout tracks. Do not animate `display`.
+  Keep a surface mounted while it exits, delay `visibility` until the motion
+  completes, and make every open/close transition reversible.
 - No ambient floating UI. Nebula motion is limited to hero media and loading illustrations.
 - Respect `prefers-reduced-motion` and remove glow drift or pulsing.
 
@@ -194,20 +199,16 @@ Code surfaces use `surface-raised`, 8px radius, and Geist Mono. Trace rows use f
 
 Use authentic astronomical imagery for first-viewport brand moments. Crop around dark dust lanes and luminous emission ridges, leaving quiet negative space for type. Product imagery shows the real runtime interface without device frames. Do not use generic planets, astronauts, glowing brains, HUD circles, or random starfield patterns.
 
-## 11. Astryx Mapping
+## 11. Framework-Neutral Theme Adapter
 
-Carina extends `@astryxdesign/theme-neutral` and overrides semantic tokens through `defineTheme()`. Use Astryx components and semantic props before custom DOM. Import components from documented subpaths, for example `@astryxdesign/core/Button`.
+`carina.ts` is the typed, framework-neutral adapter for this token source. It
+contains no runtime dependency on a component supplier, so Web, Tauri, docs,
+and future clients can consume the same semantic values without installing an
+unrelated UI framework. Product features must still consume their local
+Project Design System boundary; this adapter is the bridge for token values,
+not a business-component API.
 
-For production SSR builds:
-
-```bash
-npx astryx theme build ./src/themes/carina.ts
-```
-
-Import the generated theme object and CSS, then wrap the application with `Theme`. Generate current agent instructions with:
-
-```bash
-npx astryx init --features agents --agent codex
-```
-
-Reference: https://astryx.atmeta.com/docs/getting-started
+When a client uses a component framework, generate its theme bridge from
+`carinaTheme` and `carinaThemeModes` in that client package. Keep generated
+CSS or framework objects as reproducible derivatives and never edit a second
+token set by hand.

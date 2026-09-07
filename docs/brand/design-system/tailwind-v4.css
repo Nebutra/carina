@@ -82,6 +82,8 @@
 
   /* Motion */
   --ease-carina: cubic-bezier(0.2, 0, 0, 1);
+  --ease-carina-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-carina-exit: cubic-bezier(0.7, 0, 0.84, 0);
   --animate-carina-pulse: carina-pulse 1.8s var(--ease-carina) infinite;
 }
 

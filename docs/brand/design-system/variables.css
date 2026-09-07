@@ -125,7 +125,11 @@
   --duration-fast: 120ms;
   --duration-medium: 220ms;
   --duration-slow: 480ms;
+  --duration-panel: 320ms;
+  --duration-overlay: 220ms;
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.7, 0, 0.84, 0);
   --focus-ring: 0 0 0 2px var(--color-background-page), 0 0 0 4px var(--color-focus);
 }
 
@@ -163,5 +167,7 @@
     --duration-fast: 0ms;
     --duration-medium: 0ms;
     --duration-slow: 0ms;
+    --duration-panel: 0ms;
+    --duration-overlay: 0ms;
   }
 }
