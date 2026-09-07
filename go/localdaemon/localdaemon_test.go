@@ -57,7 +57,7 @@ func TestRequireRuntimeMethodsRejectsLegacyRuntimeBeforeUILaunch(t *testing.T) {
 
 func TestRequiredRuntimeMethodsIncludeConversationImport(t *testing.T) {
 	missing := missingRuntimeMethods([]string{"execution.start"}, requiredRuntimeMethods...)
-	want := []string{"conversation.import.discover", "conversation.import.apply"}
+	want := []string{"conversation.import.discover", "conversation.import.apply", "gateway.local.ensure"}
 	if !slices.Equal(missing, want) {
 		t.Fatalf("missing methods = %v, want %v", missing, want)
 	}
@@ -122,7 +122,7 @@ func TestRuntimeHandshakeRejectsMissingConversationImportMethods(t *testing.T) {
 	if !errors.As(err, &compatibility) {
 		t.Fatalf("runtimeHandshake error = %v, want RuntimeCompatibilityError", err)
 	}
-	want := []string{"conversation.import.discover", "conversation.import.apply"}
+	want := []string{"conversation.import.discover", "conversation.import.apply", "gateway.local.ensure"}
 	if !slices.Equal(compatibility.MissingMethods, want) {
 		t.Fatalf("missing methods = %v, want %v", compatibility.MissingMethods, want)
 	}

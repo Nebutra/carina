@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import tomllib
 from pathlib import Path
 
 
@@ -52,10 +53,42 @@ def validate(root: Path) -> str:
         ("sdk/typescript/src/index.ts", r"compatibleRuntimeVersion = '([^']+)'", "TypeScript SDK"),
         ("sdk/python/src/carina_sdk/__init__.py", r'compatible_runtime_version = "([^"]+)"', "Python SDK"),
         ("integrations/vscode/src/extension.ts", r"client_version:'([^']+)'", "VS Code client"),
-        ("integrations/web/app.js", r"client_version:'([^']+)'", "web client"),
     )
     for relative, pattern, label in regex_owners:
         require_match(root / relative, pattern, version, label)
+
+    web = json.loads((root / "integrations/web/package.json").read_text(encoding="utf-8"))
+    require_equal("web package", web["version"], version)
+    web_lock = json.loads((root / "integrations/web/package-lock.json").read_text(encoding="utf-8"))
+    require_equal("web npm lock", web_lock["version"], version)
+    require_equal("web npm lock root", web_lock["packages"][""]["version"], version)
+
+    tauri = json.loads((root / "integrations/tauri/package.json").read_text(encoding="utf-8"))
+    require_equal("Tauri package", tauri["version"], version)
+    tauri_lock = json.loads((root / "integrations/tauri/package-lock.json").read_text(encoding="utf-8"))
+    require_equal("Tauri npm lock", tauri_lock["version"], version)
+    require_equal("Tauri npm lock root", tauri_lock["packages"][""]["version"], version)
+    tauri_config = json.loads(
+        (root / "integrations/tauri/src-tauri/tauri.conf.json").read_text(encoding="utf-8")
+    )
+    require_equal("Tauri config", tauri_config["version"], version)
+    require_match(
+        root / "integrations/tauri/src-tauri/Cargo.toml",
+        r'(?ms)^\[package\].*?^version = "([^"]+)"',
+        version,
+        "Tauri Cargo package",
+    )
+    cargo_lock = tomllib.loads(
+        (root / "integrations/tauri/src-tauri/Cargo.lock").read_text(encoding="utf-8")
+    )
+    root_packages = [
+        package for package in cargo_lock.get("package", []) if package.get("name") == "carina-harness"
+    ]
+    if len(root_packages) != 1:
+        raise SystemExit(
+            "version-matrix: expected exactly one carina-harness package in Tauri Cargo.lock"
+        )
+    require_equal("Tauri Cargo lock root", root_packages[0]["version"], version)
 
     return version
 

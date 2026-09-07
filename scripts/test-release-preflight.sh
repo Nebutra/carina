@@ -171,5 +171,21 @@ grep -Fq 'run_gate visual_density' "$ROOT/scripts/release-preflight.sh" || {
   echo "test-release-preflight: visual_density gate missing from release-preflight" >&2
   exit 1
 }
+grep -Fq 'run_gate tauri_tests' "$ROOT/scripts/release-preflight.sh" || {
+  echo "test-release-preflight: tauri_tests gate missing from release-preflight" >&2
+  exit 1
+}
+test "$(grep -Fc 'cargo test --manifest-path integrations/tauri/src-tauri/Cargo.toml' "$ROOT/.github/workflows/ci.yml")" -ge 1 || {
+  echo "test-release-preflight: CI must test the Tauri owner bridge" >&2
+  exit 1
+}
+test "$(grep -Fc 'cargo test --manifest-path integrations/tauri/src-tauri/Cargo.toml' "$ROOT/.github/workflows/release.yml")" -ge 2 || {
+  echo "test-release-preflight: every supported Tauri release platform must test the owner bridge" >&2
+  exit 1
+}
+grep -Fq 'playwright install --with-deps chromium' "$ROOT/.github/workflows/release.yml" || {
+  echo "test-release-preflight: release integration job must install Chromium for browser smoke tests" >&2
+  exit 1
+}
 
 echo "test-release-preflight: ok"

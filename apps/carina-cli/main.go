@@ -156,6 +156,10 @@ Providers and BYOK:
   carina auth logout <provider>                     remove a local credential
   carina providers list [--refresh] [--offline]     list provider catalog entries
 
+Harness bootstrap:
+  carina harness bootstrap --workspace PATH --role observer|operator --origin ORIGIN --json
+                                                   start the owner Gateway and mint a scoped browser token
+
 Gateway and RPC:
   carina gateway hello [role]                       negotiate Gateway role/scope discovery
   carina gateway methods                            list RPC methods with scope/exposure metadata
@@ -259,6 +263,8 @@ func run(cmd string, args []string) error {
 		return cmdAuth(args)
 	case "providers":
 		return cmdProviders(args)
+	case "harness":
+		return cmdHarness(args)
 	// Native toolchain launchers (PRD §8.1): carina forwards straight to the
 	// Zig binaries — no daemon, no business logic, just process exec.
 	// run/patch use a -native suffix to avoid clashing with the agent-level

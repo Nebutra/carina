@@ -1,6 +1,6 @@
 {
   "$comment": "Authoritative Carina JSON-RPC 2.0 registry. Each entry mirrors a daemon MethodDescriptor; params/result document the wire contract. Transport is newline-delimited JSON over the local socket or authenticated Gateway transports.",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "apis": {
     "runtime": [
       { "method": "runtime.initialize", "scope": "read", "remote": true, "params": { "protocol_version": "semver?", "schema_version": "semver? compatible major", "projection_version": "semver? exact reducer match", "client_name": "string?", "client_version": "semver?", "expected_workspace_id": "string?", "expected_runtime_id": "string?", "expected_epoch": "string?" }, "result": "RuntimeInitializeResult" },
@@ -10,9 +10,14 @@
     ],
     "gateway": [
       { "method": "gateway.hello", "scope": "read", "remote": true, "params": { "protocol_version": "number?", "client_id": "string?", "role": "operator|observer|worker|node?", "scopes": "Scope[]?", "token": "string?" }, "result": "GatewayHello" },
+      { "method": "gateway.local.ensure", "scope": "admin", "remote": false, "control_plane_write": true, "params": { "origin": "tauri://localhost|http(s)://tauri.localhost|loopback http origin" }, "result": "{ gateway_url: string, origin: string }" },
       { "method": "gateway.methods", "scope": "read", "remote": true, "params": {}, "result": "{ version: string, methods: MethodDescriptor[] }" },
       { "method": "gateway.resolve_scope", "scope": "read", "remote": false, "params": { "method": "string", "params": "object?" }, "result": "{ method: string, scope: Scope, dynamic_scope: boolean }" },
-      { "method": "gateway.token.issue", "scope": "admin", "remote": false, "control_plane_write": true, "conditional": "gateway_token_signing_key_file", "params": { "subject": "string?", "role": "operator|observer|worker|node?", "scopes": "Scope[]", "routes": "string[]?", "ttl_seconds": "number?", "transport": "ws|http|plugin?" }, "result": "{ token: string, claims: GatewayTokenClaims }" }
+      { "method": "gateway.token.issue", "scope": "admin", "remote": false, "control_plane_write": true, "conditional": "gateway_token_signing_key_file or gateway.local.ensure", "params": { "subject": "string?", "role": "operator|observer|worker|node?", "scopes": "Scope[]", "routes": "string[]?", "ttl_seconds": "number?", "transport": "ws|http|plugin?", "tenant_id": "string?", "session_id": "string? (requires tenant_id and visible session)" }, "result": "{ token: string, claims: GatewayTokenClaims }" }
+    ],
+    "harness": [
+      { "method": "harness.workspace.tree", "scope": "read", "remote": true, "params": { "session_id": "string", "max_files": "integer 1..1200?", "max_depth": "integer 1..12?", "tenant_id": "string? (remote must match Gateway token tenant_id)" }, "result": "{ files: TreeNode[], truncated: boolean }" },
+      { "method": "harness.submit", "scope": "write", "remote": true, "params": { "session_id": "string?", "workspace_root": "absolute string required when session_id omitted", "profile": "string? default safe-edit", "prompt": "string 1..1048576 bytes", "agent": "string?", "locale": "string?", "client_submission_id": "ASCII token 1..128?", "input_media": "GatewayMediaInput[] max 4 images / 4 MiB total", "tenant_id": "string? (remote must match Gateway token tenant_id)" }, "result": "{ session: Session, execution: { task_id: string, status: string } }" }
     ],
     "daemon": [
       { "method": "daemon.status", "scope": "read", "remote": true, "params": {}, "result": "DaemonStatus" },

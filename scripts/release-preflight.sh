@@ -97,7 +97,8 @@ run_gate workflow_lint release "GitHub Actions syntax and DAG are valid" lint_wo
 run_gate release_asset_contract package "exact four-archive and signing-result contract rejects omissions" ./scripts/test-verify-release-assets.sh
 run_gate linux_package_contract package "deb/rpm package checksums reject omissions and corruption" ./scripts/test-verify-linux-packages.sh
 run_gate windows_worker_package_contract package "Windows worker package checksums and contents reject corruption" ./scripts/test-verify-windows-worker-packages.sh
-run_gate integration_package_contract package "VSIX and web operator packages reject omissions and corruption" ./scripts/test-verify-integration-packages.sh
+run_gate integration_package_contract package "VSIX, Web, and Tauri packages reject omissions and corruption" ./scripts/test-verify-integration-packages.sh
+run_gate tauri_package_contract package "Tauri bundle staging enforces the supported platform matrix and checksums" ./scripts/test-package-tauri.sh
 run_gate signing_dry_run signing "signing automation rejects missing/invalid credentials" ./scripts/test-sign-and-notarize-release.sh
 run_gate homebrew_formula package "Homebrew Formula renders without placeholders" ./scripts/test-homebrew-formula.sh
 run_gate npm_package_contract package "five complete npm tarballs freeze reproducibly and pass offline global install" ./scripts/test-package-npm-release.sh
@@ -136,6 +137,7 @@ if [[ "$mode" == "full" ]]; then
   run_gate residual_ux test "steer/interrupt/cancel and screen-mode residual iron gate" make residual-ux-gate
   run_gate visual_density test "production-renderer visual density contract" make visual-density-gate
   run_gate rust_tests test "Rust workspace tests" cargo test --workspace
+  run_gate tauri_tests test "Tauri owner bridge tests" cargo test --manifest-path integrations/tauri/src-tauri/Cargo.toml
   run_gate go_race test "Go runtime race suite" bash -c 'CARINA_KERNEL_BIN="$PWD/target/release/carina-kernel-service" go test -race -p 1 ./go/...'
   run_gate go_apps test "Go application tests" bash -c 'CARINA_KERNEL_BIN="$PWD/target/release/carina-kernel-service" go test ./apps/...'
   run_gate sdk_go sdk "Go SDK conformance" go test -race ./sdk/go

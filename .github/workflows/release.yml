@@ -323,6 +323,11 @@ jobs:
         with: { node-version: "24" }
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with: { python-version: "3.12" }
+      - name: Install Web Harness browser dependencies
+        working-directory: integrations/web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
       - name: Build operator client packages
         run: VERSION="${GITHUB_REF_NAME#v}" ./scripts/package-integrations.sh
       - uses: actions/attest-build-provenance@78e6cbd37d0ac1a40113c04f2037dacf1ea3f12e # v4
@@ -344,8 +349,167 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build-tauri:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            integrations/web/package-lock.json
+            integrations/tauri/package-lock.json
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: "1.96.1"
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+        with:
+          shared-key: release-tauri-${{ matrix.platform }}-${{ matrix.arch }}
+          workspaces: integrations/tauri/src-tauri -> target
+          cache-on-failure: true
+      - name: Install Linux Tauri build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Test Tauri owner bridge
+        run: cargo test --manifest-path integrations/tauri/src-tauri/Cargo.toml
+      - name: Build Tauri Harness installer
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}" \
+          TAURI_PLATFORM="${{ matrix.platform }}" \
+          TAURI_ARCH="${{ matrix.arch }}" \
+            ./scripts/package-tauri.sh
+      - uses: actions/attest-build-provenance@78e6cbd37d0ac1a40113c04f2037dacf1ea3f12e # v4
+        with:
+          subject-path: |
+            dist/carina-harness_*.AppImage
+            dist/carina-harness_*.deb
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: carina-tauri-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            dist/carina-harness_*.AppImage
+            dist/carina-harness_*.AppImage.sha256
+            dist/carina-harness_*.deb
+            dist/carina-harness_*.deb.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  build-tauri-macos:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: amd64
+    runs-on: ${{ matrix.runner }}
+    environment: codesigning
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            integrations/web/package-lock.json
+            integrations/tauri/package-lock.json
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: "1.96.1"
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+        with:
+          shared-key: release-tauri-darwin-${{ matrix.arch }}
+          workspaces: integrations/tauri/src-tauri -> target
+          cache-on-failure: true
+      - name: Configure Apple signing and notarization
+        env:
+          APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+          APPLE_DEVELOPER_ID_APPLICATION_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_IDENTITY }}
+          APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          APPLE_NOTARY_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+        run: |
+          test -n "$APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64"
+          test -n "$APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD"
+          test -n "$APPLE_DEVELOPER_ID_APPLICATION_IDENTITY"
+          test -n "$APPLE_NOTARY_TEAM_ID"
+          echo "APPLE_CERTIFICATE=$APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64" >> "$GITHUB_ENV"
+          echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD" >> "$GITHUB_ENV"
+          echo "APPLE_SIGNING_IDENTITY=$APPLE_DEVELOPER_ID_APPLICATION_IDENTITY" >> "$GITHUB_ENV"
+          if [[ -n "$APPLE_NOTARY_KEY_P8" ]]; then
+            test -n "$APPLE_NOTARY_KEY_ID"
+            test -n "$APPLE_NOTARY_ISSUER_ID"
+            key_path="$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
+            printf '%s' "$APPLE_NOTARY_KEY_P8" > "$key_path"
+            chmod 600 "$key_path"
+            echo "APPLE_API_KEY=$APPLE_NOTARY_KEY_ID" >> "$GITHUB_ENV"
+            echo "APPLE_API_ISSUER=$APPLE_NOTARY_ISSUER_ID" >> "$GITHUB_ENV"
+            echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+          else
+            test -n "$APPLE_NOTARY_APPLE_ID"
+            test -n "$APPLE_NOTARY_PASSWORD"
+            echo "APPLE_ID=$APPLE_NOTARY_APPLE_ID" >> "$GITHUB_ENV"
+            echo "APPLE_PASSWORD=$APPLE_NOTARY_PASSWORD" >> "$GITHUB_ENV"
+            echo "APPLE_TEAM_ID=$APPLE_NOTARY_TEAM_ID" >> "$GITHUB_ENV"
+          fi
+      - name: Test Tauri owner bridge
+        run: cargo test --manifest-path integrations/tauri/src-tauri/Cargo.toml
+      - name: Build signed and notarized Tauri Harness DMG
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}" TAURI_PLATFORM=darwin TAURI_ARCH="${{ matrix.arch }}" \
+            ./scripts/package-tauri.sh
+          dmg="dist/carina-harness_${GITHUB_REF_NAME#v}_darwin_${{ matrix.arch }}.dmg"
+          test -f "$dmg"
+          xcrun stapler validate "$dmg"
+      - uses: actions/attest-build-provenance@78e6cbd37d0ac1a40113c04f2037dacf1ea3f12e # v4
+        with:
+          subject-path: dist/carina-harness_*.dmg
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: carina-tauri-darwin-${{ matrix.arch }}
+          path: |
+            dist/carina-harness_*.dmg
+            dist/carina-harness_*.dmg.sha256
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
-    needs: [validate-suite, build, build-linux, build-windows-worker, build-integrations, publish-npm]
+    needs: [validate-suite, build, build-linux, build-windows-worker, build-integrations, build-tauri, build-tauri-macos, publish-npm]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -372,9 +536,16 @@ jobs:
         with:
           name: carina-integrations
           path: dist
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: carina-tauri-*
+          path: dist
+          merge-multiple: true
 
       - name: Verify release assets
-        run: VERSION="${GITHUB_REF_NAME#v}" REQUIRE_SIGNING=1 ./scripts/verify-release-assets.sh
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}" REQUIRE_SIGNING=1 ./scripts/verify-release-assets.sh
+          VERSION="${GITHUB_REF_NAME#v}" REQUIRE_TAURI=1 ./scripts/verify-integration-packages.sh
 
       - name: Publish GitHub release
         env:
@@ -395,6 +566,14 @@ jobs:
               echo "carina_${version}_web-operator.tar.gz.sha256"
               echo "carina-install.sh"
               echo "carina-install.sh.sha256"
+              for arch in arm64 amd64; do
+                echo "carina-harness_${version}_darwin_${arch}.dmg"
+                echo "carina-harness_${version}_darwin_${arch}.dmg.sha256"
+                echo "carina-harness_${version}_linux_${arch}.AppImage"
+                echo "carina-harness_${version}_linux_${arch}.AppImage.sha256"
+                echo "carina-harness_${version}_linux_${arch}.deb"
+                echo "carina-harness_${version}_linux_${arch}.deb.sha256"
+              done
               for target in darwin_arm64 darwin_amd64 linux_arm64 linux_amd64; do
                 echo "carina_${version}_${target}.tar.gz"
                 echo "carina_${version}_${target}.tar.gz.sha256"
@@ -416,6 +595,7 @@ jobs:
             gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
               --dir published/native -p "carina_${version}_darwin_*" \
               -p "carina_${version}_linux_*" -p "carina-worker_${version}_windows_*" \
+              -p "carina-harness_${version}_*" \
               -p "carina_${version}_vscode.vsix*" -p "carina_${version}_web-operator.tar.gz*" \
               -p "carina-install.sh*" \
               -p SHA256SUMS
@@ -425,7 +605,7 @@ jobs:
             DIST=published/native VERSION="$version" REQUIRE_SIGNING=1 ./scripts/verify-release-assets.sh
             DIST=published/native VERSION="$version" ./scripts/verify-linux-packages.sh
             DIST=published/native VERSION="$version" ./scripts/verify-windows-worker-packages.sh
-            DIST=published/native VERSION="$version" ./scripts/verify-integration-packages.sh
+            DIST=published/native VERSION="$version" REQUIRE_TAURI=1 ./scripts/verify-integration-packages.sh
             cmp published/SHA256SUMS.expected published/native/SHA256SUMS
             VERSION="$version" BUNDLE="published/npm/carina_${version}_npm_packages.tar.gz" \
               ./scripts/verify-npm-release-bundle.sh
@@ -435,6 +615,7 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.tar.gz.sha256 \
             dist/*.tar.gz.notary.json dist/*.tar.gz.signing.txt dist/*.deb dist/*.deb.sha256 \
             dist/*.rpm dist/*.rpm.sha256 dist/*.zip dist/*.zip.sha256 dist/SHA256SUMS \
+            dist/*.dmg dist/*.dmg.sha256 dist/*.AppImage dist/*.AppImage.sha256 \
             dist/*.vsix dist/*.vsix.sha256 \
             dist/carina-install.sh dist/carina-install.sh.sha256 \
             --repo "$GITHUB_REPOSITORY" --clobber

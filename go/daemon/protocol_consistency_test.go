@@ -74,8 +74,8 @@ func TestProtocolMethodRegistryMatchesDaemonBidirectionally(t *testing.T) {
 	base := &Daemon{server: rpc.NewServer()}
 	base.registerMethods()
 	baseMethods := descriptorMap(base.server.MethodDescriptors())
-	if _, ok := baseMethods["gateway.token.issue"]; ok {
-		t.Fatal("gateway.token.issue must not register without a signing key")
+	if _, ok := baseMethods["gateway.token.issue"]; !ok {
+		t.Fatal("gateway.token.issue must remain discoverable so gateway.local.ensure can activate it")
 	}
 
 	withConditional := &Daemon{server: rpc.NewServer(), gatewayTokens: &rpc.GatewayTokenIssuer{}}
@@ -110,12 +110,12 @@ func TestProtocolMethodRegistryMatchesDaemonBidirectionally(t *testing.T) {
 		if record.Conditional == "" && !registeredByDefault {
 			t.Fatalf("unconditional protocol method %s is not registered by default", name)
 		}
-		if record.Conditional != "" && registeredByDefault {
+		if record.Conditional != "" && registeredByDefault && name != "gateway.token.issue" {
 			t.Fatalf("conditional protocol method %s unexpectedly registers by default", name)
 		}
 	}
 	conditional := catalog["gateway.token.issue"]
-	if conditional.Conditional != "gateway_token_signing_key_file" {
+	if conditional.Conditional != "gateway_token_signing_key_file or gateway.local.ensure" {
 		t.Fatalf("gateway.token.issue conditional marker = %q", conditional.Conditional)
 	}
 }

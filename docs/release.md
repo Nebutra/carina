@@ -209,8 +209,9 @@ Pushing a tag matching `v<major>.<minor>.<patch>` runs
   `scripts/install-zig-tool.sh`;
 - builds native macOS and Linux archives for `arm64` and `amd64`, deb/rpm
   packages, and contained Windows worker ZIPs;
-- packages the VS Code extension, static Web Operator, and checksum-enforcing
-  installer as independently verified release assets;
+- packages the VS Code extension, static Web Harness, checksum-enforcing
+  installer, and native Tauri Harness for macOS and Linux as independently
+  verified release assets;
 - starts the daemon from each packaged archive and runs the Go, Python, and
   TypeScript read-only conformance contract against its Unix socket;
 - freezes the four native npm packages plus launcher as one checksum-verified
@@ -236,7 +237,7 @@ Pushing a tag matching `v<major>.<minor>.<patch>` runs
   `main`, refuses Formula downgrades, then pushes `Formula/carina.rb` through a
   repository-scoped SSH deploy key.
 
-Once the draft becomes public, all 32 release assets are immutable. A full
+Once the draft becomes public, all 44 release assets are immutable. A full
 workflow rerun downloads and verifies the existing native archives, signing
 evidence, OS packages, operator clients, installer, checksum manifest, and
 frozen npm bundle instead of overwriting them.

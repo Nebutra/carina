@@ -24,6 +24,38 @@ func TestWebSocketGatewayRequiresTokenVerifierBeforeListen(t *testing.T) {
 	}
 }
 
+func TestWebSocketGatewayBindServeAndClose(t *testing.T) {
+	s := NewServer()
+	opts := WebSocketOptions{Path: "/gateway", TokenVerifier: testWebSocketIssuer(t)}
+	ln, err := s.BindWebSocketWithOptions("127.0.0.1:0", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	if strings.HasSuffix(addr, ":0") {
+		t.Fatalf("bound address did not resolve an ephemeral port: %s", addr)
+	}
+	served := make(chan error, 1)
+	go func() { served <- s.ServeWebSocketWithOptions(ln, opts) }()
+	waitTCP(t, addr)
+
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Fatalf("serve after close: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Server.Close did not stop websocket serve loop")
+	}
+	if conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond); err == nil {
+		_ = conn.Close()
+		t.Fatal("websocket listener remained reachable after Server.Close")
+	}
+}
+
 func TestWebSocketGatewayRoundTripAndRemotePolicy(t *testing.T) {
 	s := NewServer()
 	if err := s.RegisterMethod(MethodDescriptor{Method: "daemon.status", Scope: ScopeRead, Remote: true}, func(_ json.RawMessage) (any, error) {

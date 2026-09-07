@@ -153,6 +153,19 @@ Mismatch is `unknown session` (no enumeration). Unix-socket callers that omit
 `tenant_id` use the local owner tenant. Two tenants cannot share one
 `workspace_root`.
 
+The Web and Tauri Harness use two dedicated WebSocket methods instead of
+opening the daemon's local mutation surface:
+
+| Method | Scope | Contract |
+|--------|-------|----------|
+| `harness.workspace.tree` | `read` | return at most 1,200 files and depth 12 as `{ files, truncated }` for one visible session |
+| `harness.submit` | `write` | create or reuse one tenant-visible session, ingest at most four validated images (4 MiB total), and enqueue one background execution |
+
+Both methods require a tenant-bound `transport: "ws"` token and pass the
+Gateway workspace/session guard. `session.create`, `artifact.upload`, and
+`execution.start` remain local-only; clients must not probe or expose them as
+remote-capable fallbacks.
+
 Scoped Gateway token issuing:
 
 - enable signing explicitly with `gateway_token_signing_key_file`, env

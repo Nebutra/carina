@@ -334,8 +334,11 @@ type Daemon struct {
 	memoryProjectionWriteMu  sync.Mutex
 	schedules                *scheduler.ScheduleStore // persistent cron/at/every definitions
 	gatewayTokens            *rpc.GatewayTokenIssuer  // optional scoped Gateway token signer/verifier
-	gatewayTokenMaxTTL       time.Duration            // max TTL for locally issued scoped Gateway tokens
-	gatewayWorkspacePin      string                   // canonical Gateway HTTP/WS pin; empty = unpinned
+	gatewayMu                sync.Mutex
+	localGatewayURL          string
+	localGatewayOrigin       string
+	gatewayTokenMaxTTL       time.Duration // max TTL for locally issued scoped Gateway tokens
+	gatewayWorkspacePin      string        // canonical Gateway HTTP/WS pin; empty = unpinned
 	gatewayHTTPServers       []*http.Server
 	gatewayResponses         map[string]string // response id -> session id for /v1/responses continuity
 	agentView                *agentview.Store
@@ -1186,10 +1189,11 @@ func (d *Daemon) registerMethods() {
 	d.registerRPC("context.compress", rpc.ScopeWrite, false, d.handleContextCompress)
 	d.registerRPC("gateway.hello", rpc.ScopeRead, true, d.handleGatewayHello)
 	d.registerRPC("gateway.methods", rpc.ScopeRead, true, d.handleGatewayMethods)
+	d.registerRPC("gateway.local.ensure", rpc.ScopeAdmin, false, d.handleGatewayLocalEnsure, true)
+	d.registerRPC("harness.workspace.tree", rpc.ScopeRead, true, d.handleHarnessWorkspaceTree)
+	d.registerRPC("harness.submit", rpc.ScopeWrite, true, d.handleHarnessSubmit)
 	d.registerRPC("gateway.resolve_scope", rpc.ScopeRead, false, d.handleGatewayResolveScope)
-	if d.gatewayTokens != nil {
-		d.registerRPC("gateway.token.issue", rpc.ScopeAdmin, false, d.handleGatewayTokenIssue, true)
-	}
+	d.registerRPC("gateway.token.issue", rpc.ScopeAdmin, false, d.handleGatewayTokenIssue, true)
 	d.registerRPC("agent.list", rpc.ScopeRead, true, d.handleAgentList)
 	d.registerRPC("model.list", rpc.ScopeRead, true, d.handleModelList)
 	d.registerRPC("agent.view", rpc.ScopeRead, true, d.handleAgentView)
@@ -1859,8 +1863,11 @@ func (d *Daemon) handleGatewayResolveScope(params json.RawMessage) (any, error) 
 }
 
 func (d *Daemon) handleGatewayTokenIssue(params json.RawMessage) (any, error) {
-	if d.gatewayTokens == nil {
-		return nil, fmt.Errorf("gateway token issuing is disabled")
+	d.gatewayMu.Lock()
+	issuer := d.gatewayTokens
+	d.gatewayMu.Unlock()
+	if issuer == nil {
+		return nil, fmt.Errorf("gateway token issuing is disabled; call gateway.local.ensure first")
 	}
 	var p struct {
 		Subject    string      `json:"subject"`
@@ -1869,6 +1876,8 @@ func (d *Daemon) handleGatewayTokenIssue(params json.RawMessage) (any, error) {
 		Routes     []string    `json:"routes"`
 		TTLSeconds int64       `json:"ttl_seconds"`
 		Transport  string      `json:"transport"`
+		TenantID   string      `json:"tenant_id"`
+		SessionID  string      `json:"session_id"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("invalid params: %w", err)
@@ -1883,11 +1892,63 @@ func (d *Daemon) handleGatewayTokenIssue(params json.RawMessage) (any, error) {
 	if ttl > d.gatewayTokenMaxTTL {
 		return nil, fmt.Errorf("ttl_seconds exceeds gateway token max ttl")
 	}
-	token, claims, err := d.gatewayTokens.IssueWithRoutes(p.Subject, p.Role, p.Scopes, p.Routes, ttl, p.Transport)
+	p.TenantID = strings.TrimSpace(p.TenantID)
+	p.SessionID = strings.TrimSpace(p.SessionID)
+	if p.SessionID != "" {
+		if p.TenantID == "" {
+			return nil, fmt.Errorf("tenant_id is required when session_id is set")
+		}
+		if _, ok := d.store.Visible(p.SessionID, p.TenantID); !ok {
+			return nil, fmt.Errorf("unknown session")
+		}
+	}
+	token, claims, err := issuer.IssueWithBinding(p.Subject, p.Role, p.Scopes, p.Routes, ttl, p.Transport, p.TenantID, p.SessionID)
 	if err != nil {
 		return nil, err
 	}
 	return map[string]any{"token": token, "claims": claims}, nil
+}
+
+// handleGatewayLocalEnsure starts the owner-controlled loopback Gateway once
+// and returns its actual ephemeral endpoint. A later call may reuse it only
+// with the same normalized browser origin.
+func (d *Daemon) handleGatewayLocalEnsure(params json.RawMessage) (any, error) {
+	var p struct {
+		Origin string `json:"origin"`
+	}
+	if len(params) > 0 && string(params) != "null" {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, fmt.Errorf("invalid params: %w", err)
+		}
+	}
+	origin, err := rpc.NormalizeGatewayOrigin(p.Origin)
+	if err != nil {
+		return nil, err
+	}
+	d.gatewayMu.Lock()
+	defer d.gatewayMu.Unlock()
+	if d.localGatewayURL != "" {
+		if d.localGatewayOrigin != origin {
+			return nil, fmt.Errorf("local gateway already ensured for origin %q", d.localGatewayOrigin)
+		}
+		return map[string]any{"gateway_url": d.localGatewayURL, "origin": d.localGatewayOrigin}, nil
+	}
+	if d.gatewayTokens == nil {
+		issuer, err := rpc.NewGatewayTokenIssuer(nil)
+		if err != nil {
+			return nil, fmt.Errorf("create local gateway token issuer: %w", err)
+		}
+		d.gatewayTokens = issuer
+	}
+	opts := rpc.WebSocketOptions{Path: "/gateway", AllowedOrigins: []string{origin}, TokenVerifier: d.gatewayTokens}
+	ln, err := d.server.BindWebSocketWithOptions("127.0.0.1:0", opts)
+	if err != nil {
+		return nil, fmt.Errorf("bind local gateway: %w", err)
+	}
+	d.localGatewayOrigin = origin
+	d.localGatewayURL = "ws://" + ln.Addr().String() + "/gateway"
+	go func() { _ = d.server.ServeWebSocketWithOptions(ln, opts) }()
+	return map[string]any{"gateway_url": d.localGatewayURL, "origin": d.localGatewayOrigin}, nil
 }
 
 // ---- sessions -------------------------------------------------------------

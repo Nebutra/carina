@@ -163,7 +163,8 @@ func (d *Daemon) gatewayTenantParamsAllowed(method string, params json.RawMessag
 
 func gatewayTenantMethod(method string) bool {
 	switch method {
-	case "session.get", "session.list", "session.replay", "session.items",
+	case "harness.submit", "harness.workspace.tree",
+		"session.get", "session.list", "session.replay", "session.items",
 		"session.review", "session.attach", "session.events.stream",
 		"execution.status", "execution.list":
 		return true

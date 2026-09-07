@@ -1,0 +1,36 @@
+{
+  "name": "@nebutra/carina-web-harness",
+  "private": true,
+  "version": "0.9.3",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 4173",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4173",
+    "typecheck": "tsc --noEmit",
+    "theme-typecheck": "tsc --ignoreConfig --target ES2022 --module ESNext --moduleResolution Bundler --strict --noEmit ../../docs/brand/design-system/carina.ts",
+    "design-system-check": "node design-system-check.mjs",
+    "test:browser": "playwright test --config playwright.config.ts",
+    "test": "node test.mjs && npm run design-system-check && node --experimental-strip-types test-harness-preferences.mjs && node --experimental-strip-types test-workspace.mjs && node --experimental-strip-types test-trajectory.mjs && node --experimental-strip-types test-trajectory-stream.mjs && npm run typecheck && npm run theme-typecheck && npm run test:browser"
+  },
+  "dependencies": {
+    "@radix-ui/react-collapsible": "^1.1.11",
+    "@radix-ui/react-dialog": "^1.1.23",
+    "@radix-ui/react-scroll-area": "^1.2.10",
+    "@radix-ui/react-tooltip": "^1.2.16",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.468.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tailwind-merge": "^3.3.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^26.4.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^5.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Carina Harness desktop capabilities",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:default"]
+}

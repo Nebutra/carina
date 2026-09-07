@@ -1,0 +1,15 @@
+{
+  "name": "@nebutra/carina-tauri-harness",
+  "private": true,
+  "version": "0.9.3",
+  "description": "Carina Harness desktop shell",
+  "scripts": {
+    "predev": "node scripts/sync-assets.mjs && npm --prefix ../web run build",
+    "dev": "tauri dev",
+    "prebuild": "node scripts/sync-assets.mjs && npm --prefix ../web run build",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.4"
+  }
+}

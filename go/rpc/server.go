@@ -285,6 +285,7 @@ type Server struct {
 	descriptors       map[string]MethodDescriptor
 	scopeResolvers    map[string]ScopeResolver
 	listeners         []net.Listener
+	closed            bool
 	remoteSafe        map[string]bool // methods a Remote origin may call
 	remoteDisabled    bool            // kill-switch: refuse all Remote calls
 	strictMethods     bool            // refuse registered handlers without descriptors
@@ -565,9 +566,9 @@ func ValidateLoopbackTCPAddress(addr string) error {
 }
 
 func (s *Server) accept(ln net.Listener, origin Origin) error {
-	s.mu.Lock()
-	s.listeners = append(s.listeners, ln)
-	s.mu.Unlock()
+	if err := s.registerListener(ln); err != nil {
+		return err
+	}
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -577,12 +578,29 @@ func (s *Server) accept(ln net.Listener, origin Origin) error {
 	}
 }
 
+func (s *Server) registerListener(ln net.Listener) error {
+	if ln == nil {
+		return fmt.Errorf("rpc: listener is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		_ = ln.Close()
+		return net.ErrClosed
+	}
+	s.listeners = append(s.listeners, ln)
+	return nil
+}
+
 func (s *Server) Close() error {
 	s.mu.Lock()
-	for _, ln := range s.listeners {
+	s.closed = true
+	listeners := append([]net.Listener(nil), s.listeners...)
+	s.listeners = nil
+	s.mu.Unlock()
+	for _, ln := range listeners {
 		_ = ln.Close()
 	}
-	s.mu.Unlock()
 	s.releaseLock()
 	return nil
 }

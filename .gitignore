@@ -1,6 +1,7 @@
 # Rust
 /target/
 Cargo.lock
+!integrations/tauri/src-tauri/Cargo.lock
 
 # Go
 /bin/
@@ -16,6 +17,7 @@ zig-cache/
 node_modules/
 dist/
 *.tsbuildinfo
+integrations/web/test-results/
 
 # Python
 __pycache__/

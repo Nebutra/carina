@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -37,26 +38,50 @@ func (s *Server) ListenWebSocket(addr, path string, allowedOrigins []string) err
 }
 
 func (s *Server) ListenWebSocketWithOptions(addr string, opts WebSocketOptions) error {
+	ln, err := s.BindWebSocketWithOptions(addr, opts)
+	if err != nil {
+		return err
+	}
+	return s.ServeWebSocketWithOptions(ln, opts)
+}
+
+// BindWebSocketWithOptions binds and registers a Gateway listener without
+// entering its serve loop. Callers can use ln.Addr() to publish an ephemeral
+// loopback endpoint before serving it asynchronously. Server.Close owns every
+// listener returned by this method.
+func (s *Server) BindWebSocketWithOptions(addr string, opts WebSocketOptions) (net.Listener, error) {
+	if opts.TokenVerifier == nil {
+		return nil, fmt.Errorf("rpc: websocket gateway requires a token verifier")
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("rpc: listen websocket %s: %w", addr, err)
+	}
+	if err := s.registerListener(ln); err != nil {
+		return nil, fmt.Errorf("rpc: register websocket listener: %w", err)
+	}
+	return ln, nil
+}
+
+// ServeWebSocketWithOptions serves a listener returned by
+// BindWebSocketWithOptions. The listener remains owned by Server.Close.
+func (s *Server) ServeWebSocketWithOptions(ln net.Listener, opts WebSocketOptions) error {
+	if ln == nil {
+		return fmt.Errorf("rpc: websocket listener is required")
+	}
 	if strings.TrimSpace(opts.Path) == "" {
 		opts.Path = defaultGatewayWebSocketPath
 	}
 	if opts.TokenVerifier == nil {
 		return fmt.Errorf("rpc: websocket gateway requires a token verifier")
 	}
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("rpc: listen websocket %s: %w", addr, err)
-	}
-	s.mu.Lock()
-	s.listeners = append(s.listeners, ln)
-	s.mu.Unlock()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(opts.Path, func(w http.ResponseWriter, r *http.Request) {
 		s.handleWebSocketUpgrade(w, r, opts)
 	})
-	err = (&http.Server{Handler: mux}).Serve(ln)
-	if err == nil || strings.Contains(err.Error(), "use of closed network connection") {
+	err := (&http.Server{Handler: mux}).Serve(ln)
+	if err == nil || errors.Is(err, net.ErrClosed) || errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
 	return err

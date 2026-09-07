@@ -8,7 +8,8 @@ duplicate authority.
 |---|---|---|
 | VS Code | Checksummed VSIX, local daemon socket, Agent View and explicit operator commands | IDE client only; daemon remains authoritative |
 | Web | Checksummed static release archive and read-first WebSocket Gateway with scoped, short-lived tokens | No token persistence; writes require operator scope and confirmation |
-| Desktop/mobile | Future client over the same Gateway and event contracts | Not embedded in the runtime |
+| Tauri desktop | Shared `integrations/web` Harness UI in a native window, same scoped Gateway and event contracts | Shell owns window lifecycle only; no duplicate policy or session authority |
+| Mobile | Future client over the same Gateway and event contracts | Not embedded in the runtime |
 | Browser/computer use | Future sandboxed worker adapter | Never an implicit runtime capability |
 | Artifacts | Runtime emits typed references, provenance and policy labels | Rendering and sharing belong to clients/Nebutra Cloud |
 

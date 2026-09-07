@@ -36,7 +36,25 @@ class VersionMatrixTest(unittest.TestCase):
         self._write("sdk/typescript/src/index.ts", "export const compatibleRuntimeVersion = '1.2.3'\n")
         self._write("sdk/python/src/carina_sdk/__init__.py", 'compatible_runtime_version = "1.2.3"\n')
         self._write("integrations/vscode/src/extension.ts", "client_version:'1.2.3'\n")
-        self._write("integrations/web/app.js", "client_version:'1.2.3'\n")
+        self._write_json("integrations/web/package.json", {"version": "1.2.3"})
+        self._write_json(
+            "integrations/web/package-lock.json",
+            {"version": "1.2.3", "packages": {"": {"version": "1.2.3"}}},
+        )
+        self._write_json("integrations/tauri/package.json", {"version": "1.2.3"})
+        self._write_json(
+            "integrations/tauri/package-lock.json",
+            {"version": "1.2.3", "packages": {"": {"version": "1.2.3"}}},
+        )
+        self._write_json("integrations/tauri/src-tauri/tauri.conf.json", {"version": "1.2.3"})
+        self._write(
+            "integrations/tauri/src-tauri/Cargo.toml",
+            '[package]\nname = "carina-harness"\nversion = "1.2.3"\n',
+        )
+        self._write(
+            "integrations/tauri/src-tauri/Cargo.lock",
+            'version = 4\n\n[[package]]\nname = "carina-harness"\nversion = "1.2.3"\n',
+        )
 
     def tearDown(self) -> None:
         self.temp.cleanup()
@@ -62,7 +80,13 @@ class VersionMatrixTest(unittest.TestCase):
             "sdk/typescript/src/index.ts",
             "sdk/python/src/carina_sdk/__init__.py",
             "integrations/vscode/src/extension.ts",
-            "integrations/web/app.js",
+            "integrations/web/package.json",
+            "integrations/web/package-lock.json",
+            "integrations/tauri/package.json",
+            "integrations/tauri/package-lock.json",
+            "integrations/tauri/src-tauri/tauri.conf.json",
+            "integrations/tauri/src-tauri/Cargo.toml",
+            "integrations/tauri/src-tauri/Cargo.lock",
         )
         for relative in owners:
             with self.subTest(owner=relative):
@@ -72,6 +96,26 @@ class VersionMatrixTest(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     version_matrix.validate(self.root)
                 path.write_text(original, encoding="utf-8")
+
+    def test_web_npm_lock_root_drift_fails_closed(self) -> None:
+        relative = "integrations/web/package-lock.json"
+        path = self.root / relative
+        lock = json.loads(path.read_text(encoding="utf-8"))
+        lock["packages"][""]["version"] = "9.9.9"
+        path.write_text(json.dumps(lock), encoding="utf-8")
+
+        with self.assertRaises(SystemExit):
+            version_matrix.validate(self.root)
+
+    def test_tauri_npm_lock_root_drift_fails_closed(self) -> None:
+        relative = "integrations/tauri/package-lock.json"
+        path = self.root / relative
+        lock = json.loads(path.read_text(encoding="utf-8"))
+        lock["packages"][""]["version"] = "9.9.9"
+        path.write_text(json.dumps(lock), encoding="utf-8")
+
+        with self.assertRaises(SystemExit):
+            version_matrix.validate(self.root)
 
 
 if __name__ == "__main__":

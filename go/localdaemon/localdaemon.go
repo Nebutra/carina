@@ -29,6 +29,7 @@ var requiredRuntimeMethods = []string{
 	"execution.start",
 	"conversation.import.discover",
 	"conversation.import.apply",
+	"gateway.local.ensure",
 }
 
 // DialFunc dials a unix socket. Tests replace Dial.

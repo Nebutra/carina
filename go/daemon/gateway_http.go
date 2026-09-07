@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/Nebutra/carina/go/artifact"
 	"github.com/Nebutra/carina/go/rpc"
 	"github.com/Nebutra/carina/go/scheduler"
 	sessionstore "github.com/Nebutra/carina/go/session-store"
@@ -93,6 +95,7 @@ func (h *gatewayHTTP) handleChatCompletions(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var req chatCompletionRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
@@ -106,7 +109,7 @@ func (h *gatewayHTTP) handleChatCompletions(w http.ResponseWriter, r *http.Reque
 		h.handleChatCompletionsStream(w, r, req, prompt, claims.TenantID)
 		return
 	}
-	task, sessionID, err := h.submitAgentTask(r, req.Model, prompt, req.Metadata, "", claims.TenantID)
+	task, sessionID, err := h.submitAgentTask(r, req.Model, prompt, req.Metadata, "", claims.TenantID, req.InputMedia)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "submit_failed", err.Error())
 		return
@@ -139,7 +142,7 @@ func (h *gatewayHTTP) handleChatCompletionsStream(w http.ResponseWriter, r *http
 		h.writeError(w, http.StatusInternalServerError, "streaming_unavailable", "response writer does not support streaming")
 		return
 	}
-	task, sessionID, err := h.submitAgentTask(r, req.Model, prompt, req.Metadata, "", tenantID)
+	task, sessionID, err := h.submitAgentTask(r, req.Model, prompt, req.Metadata, "", tenantID, req.InputMedia)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "submit_failed", err.Error())
 		return
@@ -426,7 +429,7 @@ func (h *gatewayHTTP) handleResponses(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "invalid_request", "input is required")
 		return
 	}
-	task, sessionID, err := h.submitAgentTask(r, req.Model, prompt, req.Metadata, req.PreviousResponseID, claims.TenantID)
+	task, sessionID, err := h.submitAgentTask(r, req.Model, prompt, req.Metadata, req.PreviousResponseID, claims.TenantID, nil)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "submit_failed", err.Error())
 		return
@@ -579,7 +582,7 @@ func (h *gatewayHTTP) applyOrigin(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-func (h *gatewayHTTP) submitAgentTask(r *http.Request, model, prompt string, metadata map[string]any, previousResponseID, tenantID string) (*scheduler.ExecutionRun, string, error) {
+func (h *gatewayHTTP) submitAgentTask(r *http.Request, model, prompt string, metadata map[string]any, previousResponseID, tenantID string, media []gatewayMediaInput) (*scheduler.ExecutionRun, string, error) {
 	agent, err := agentFromGatewayModel(model)
 	if err != nil {
 		return nil, "", err
@@ -624,10 +627,17 @@ func (h *gatewayHTTP) submitAgentTask(r *http.Request, model, prompt string, met
 			return nil, "", err
 		}
 	}
+	inputMediaRefs, err := ingestGatewayMedia(h.d.artifacts, sessionID, media)
+	if err != nil {
+		return nil, "", err
+	}
 	submit := map[string]any{
 		"session_id": sessionID,
 		"prompt":     prompt,
 		"agent":      agent,
+	}
+	if len(inputMediaRefs) > 0 {
+		submit["input_media_refs"] = inputMediaRefs
 	}
 	if strings.TrimSpace(tenantID) != "" {
 		submit["tenant_id"] = strings.TrimSpace(tenantID)
@@ -646,6 +656,50 @@ func (h *gatewayHTTP) submitAgentTask(r *http.Request, model, prompt string, met
 		task = &decoded
 	}
 	return task, sessionID, nil
+}
+
+func ingestGatewayMedia(store *artifact.Store, sessionID string, media []gatewayMediaInput) ([]MediaRef, error) {
+	if len(media) == 0 {
+		return nil, nil
+	}
+	if len(media) > maxRequestMediaParts {
+		return nil, fmt.Errorf("input_media must contain at most %d images", maxRequestMediaParts)
+	}
+	refs := make([]MediaRef, 0, len(media))
+	var total int64
+	for _, input := range media {
+		if _, ok := allowedGatewayMediaTypes[input.MediaType]; !ok {
+			return nil, fmt.Errorf("unsupported input media type %q", input.MediaType)
+		}
+		raw, err := base64.StdEncoding.Strict().DecodeString(input.ContentBase64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid input media encoding: %w", err)
+		}
+		if len(raw) < 1 || len(raw) > maxArtifactUploadBytes {
+			return nil, fmt.Errorf("input media must be 1..%d bytes", maxArtifactUploadBytes)
+		}
+		total += int64(len(raw))
+		if total > maxRequestMediaBytes {
+			return nil, fmt.Errorf("input media exceeds %d byte request budget", maxRequestMediaBytes)
+		}
+		origin := strings.TrimSpace(input.Origin)
+		if len(origin) > 256 {
+			origin = origin[:256]
+		}
+		ref, err := ingestImageMedia(store, artifact.Scope{SessionID: sessionID}, origin, raw)
+		if err != nil {
+			return nil, err
+		}
+		if ref.MediaType != input.MediaType {
+			return nil, fmt.Errorf("declared media_type %q does not match content %q", input.MediaType, ref.MediaType)
+		}
+		refs = append(refs, ref)
+	}
+	return refs, nil
+}
+
+var allowedGatewayMediaTypes = map[string]struct{}{
+	"image/png": {}, "image/jpeg": {}, "image/gif": {}, "image/webp": {},
 }
 
 func (h *gatewayHTTP) createGatewaySession(root, tenantID string) (*sessionstore.Session, error) {
@@ -736,10 +790,17 @@ func gatewayModel(id, description string) map[string]any {
 }
 
 type chatCompletionRequest struct {
-	Model    string           `json:"model"`
-	Messages []gatewayMessage `json:"messages"`
-	Stream   bool             `json:"stream"`
-	Metadata map[string]any   `json:"metadata"`
+	Model      string              `json:"model"`
+	Messages   []gatewayMessage    `json:"messages"`
+	Stream     bool                `json:"stream"`
+	Metadata   map[string]any      `json:"metadata"`
+	InputMedia []gatewayMediaInput `json:"input_media"`
+}
+
+type gatewayMediaInput struct {
+	MediaType     string `json:"media_type"`
+	ContentBase64 string `json:"content_base64"`
+	Origin        string `json:"origin"`
 }
 
 type gatewayMessage struct {
