@@ -506,6 +506,20 @@ jobs:
             ./scripts/package-tauri.sh
           dmg="dist/carina-harness_${GITHUB_REF_NAME#v}_darwin_${{ matrix.arch }}.dmg"
           test -f "$dmg"
+          if [[ -n "${APPLE_API_KEY_PATH:-}" ]]; then
+            xcrun notarytool submit "$dmg" \
+              --key "$APPLE_API_KEY_PATH" \
+              --key-id "$APPLE_API_KEY" \
+              --issuer "$APPLE_API_ISSUER" \
+              --wait
+          else
+            xcrun notarytool submit "$dmg" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait
+          fi
+          xcrun stapler staple "$dmg"
           xcrun stapler validate "$dmg"
       - uses: actions/attest-build-provenance@78e6cbd37d0ac1a40113c04f2037dacf1ea3f12e # v4
         with:
