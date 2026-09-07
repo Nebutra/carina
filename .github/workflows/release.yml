@@ -468,24 +468,30 @@ jobs:
           test -n "$APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD"
           test -n "$APPLE_DEVELOPER_ID_APPLICATION_IDENTITY"
           test -n "$APPLE_NOTARY_TEAM_ID"
-          echo "APPLE_CERTIFICATE=$APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64" >> "$GITHUB_ENV"
-          echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD" >> "$GITHUB_ENV"
-          echo "APPLE_SIGNING_IDENTITY=$APPLE_DEVELOPER_ID_APPLICATION_IDENTITY" >> "$GITHUB_ENV"
+          {
+            echo "APPLE_CERTIFICATE=$APPLE_DEVELOPER_ID_APPLICATION_P12_BASE64"
+            echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_DEVELOPER_ID_APPLICATION_P12_PASSWORD"
+            echo "APPLE_SIGNING_IDENTITY=$APPLE_DEVELOPER_ID_APPLICATION_IDENTITY"
+          } >> "$GITHUB_ENV"
           if [[ -n "$APPLE_NOTARY_KEY_P8" ]]; then
             test -n "$APPLE_NOTARY_KEY_ID"
             test -n "$APPLE_NOTARY_ISSUER_ID"
             key_path="$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
             printf '%s' "$APPLE_NOTARY_KEY_P8" > "$key_path"
             chmod 600 "$key_path"
-            echo "APPLE_API_KEY=$APPLE_NOTARY_KEY_ID" >> "$GITHUB_ENV"
-            echo "APPLE_API_ISSUER=$APPLE_NOTARY_ISSUER_ID" >> "$GITHUB_ENV"
-            echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+            {
+              echo "APPLE_API_KEY=$APPLE_NOTARY_KEY_ID"
+              echo "APPLE_API_ISSUER=$APPLE_NOTARY_ISSUER_ID"
+              echo "APPLE_API_KEY_PATH=$key_path"
+            } >> "$GITHUB_ENV"
           else
             test -n "$APPLE_NOTARY_APPLE_ID"
             test -n "$APPLE_NOTARY_PASSWORD"
-            echo "APPLE_ID=$APPLE_NOTARY_APPLE_ID" >> "$GITHUB_ENV"
-            echo "APPLE_PASSWORD=$APPLE_NOTARY_PASSWORD" >> "$GITHUB_ENV"
-            echo "APPLE_TEAM_ID=$APPLE_NOTARY_TEAM_ID" >> "$GITHUB_ENV"
+            {
+              echo "APPLE_ID=$APPLE_NOTARY_APPLE_ID"
+              echo "APPLE_PASSWORD=$APPLE_NOTARY_PASSWORD"
+              echo "APPLE_TEAM_ID=$APPLE_NOTARY_TEAM_ID"
+            } >> "$GITHUB_ENV"
           fi
       - name: Test Tauri owner bridge
         run: cargo test --manifest-path integrations/tauri/src-tauri/Cargo.toml
