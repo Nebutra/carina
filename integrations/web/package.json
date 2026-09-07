@@ -1,7 +1,7 @@
 {
   "name": "@nebutra/carina-web-harness",
   "private": true,
-  "version": "0.9.3",
+  "version": "0.10.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 4173",

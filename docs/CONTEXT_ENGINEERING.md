@@ -1,6 +1,6 @@
 # Carina Context Engineering
 
-Status: `v0.9.4` release specification. The core cascade, checkpoint lifecycle,
+Status: `v0.10.0` release specification. The core cascade, checkpoint lifecycle,
 cache SLO instrumentation, and deterministic long-session fidelity fixtures are
 hardened. Provider-backed cache runs and semantic quality curves remain release
 evidence.
@@ -102,7 +102,7 @@ sections. Their child transcript remains isolated and only `done.summary`
 crosses back to the parent; tool visibility uses the same session projection as
 native schemas.
 
-## 6. `v0.9.4` prompt/context data flow
+## 6. `v0.10.0` prompt/context data flow
 
 ```mermaid
 flowchart TD

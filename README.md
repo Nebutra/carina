@@ -7,7 +7,7 @@
 **Run coding agents on real repositories with policy, audit, and rollback in the loop.**
 
 [![status](https://img.shields.io/badge/status-alpha-8E4053)](#current-status)
-[![release](https://img.shields.io/badge/release-v0.9.4-176F70)](https://github.com/Nebutra/carina/releases/tag/v0.9.4)
+[![release](https://img.shields.io/badge/release-v0.10.0-176F70)](https://github.com/Nebutra/carina/releases/tag/v0.10.0)
 [![harness](https://img.shields.io/badge/harness-local--first-087C58)](#why-carina)
 [![audit](https://img.shields.io/badge/audit-hash--chained-8C5A15)](#review-and-audit)
 [![license](https://img.shields.io/badge/license-MIT-182023)](LICENSE)
@@ -22,9 +22,10 @@ machine, so file reads, edits, commands, network access, plugins, and secrets go
 through explicit policy before they happen.
 
 Carina is alpha software with a public, fail-closed release pipeline. Version
-`0.9.4` ships signed and Apple-notarized macOS archives, Linux archives and
+`0.10.0` ships signed and Apple-notarized macOS archives, Linux archives and
 packages, a provenance-backed npm launcher with native platform packages, a
-Windows worker, and packaged VS Code/Web Operator clients. Install through the
+Windows worker, and packaged VS Code, Web Harness, and macOS/Linux Tauri Harness
+clients. Install through the
 shell installer, Homebrew, npm, or the release archives; source builds remain
 available for contributors and runtime integrators.
 
@@ -92,21 +93,21 @@ Implemented in this repository:
 | Integration | MCP client/server with tool search (`mcp_find`), WASM plugin boundary with org/user/project tighten-only enable merge, workers, workflow DAGs (batch and streaming — conditional/dynamic graphs, live inter-step channels, remote worker-pool dispatch, run-wide budgets; see [`docs/workflows.md`](docs/workflows.md)) |
 | Nebutra boundary | Local runtime stays authoritative; identity and multi-endpoint sync are scoped to Nebutra Cloud (`nebutra.com`) |
 
-Published in `v0.9.4`:
+Published in `v0.10.0`:
 
 - signed and Apple-notarized macOS arm64/x64 archives with public notary and
   signing evidence;
 - Linux arm64/x64 archives plus Debian and RPM packages;
 - `@nebutra/carina` and four native npm packages through trusted publishing,
   each with SLSA provenance;
-- Windows arm64/x64 remote-worker packages, a VS Code VSIX, and the Web
-  Operator archive;
+- Windows arm64/x64 remote-worker packages, a VS Code VSIX, the Web Harness
+  archive, and native Tauri Harness bundles for macOS and Linux;
 - the maintained `Nebutra/tap/carina` Homebrew formula.
 
 Remaining activation and alpha limitations:
 
 - public container registry publication;
-- Marketplace/hosting activation for the packaged VS Code and Web Operator
+- Marketplace/hosting activation for the packaged VS Code and Web Harness
   clients;
 - Homebrew Core review for untapped `brew install carina`; the maintained
   Nebutra tap is available now;
@@ -154,8 +155,9 @@ npm install -g @nebutra/carina
 ```
 
 Exact archives, checksums, Apple notary evidence, Linux packages, the Windows
-worker, VSIX, and Web Operator bundle are available on the
-[`v0.9.4` release](https://github.com/Nebutra/carina/releases/tag/v0.9.4).
+worker, VSIX, Web Harness archive, and macOS/Linux Tauri Harness bundles are
+available on the
+[`v0.10.0` release](https://github.com/Nebutra/carina/releases/tag/v0.10.0).
 
 ## Built-in Updates
 

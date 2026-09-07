@@ -1,6 +1,6 @@
 [package]
 name = "carina-harness"
-version = "0.9.3"
+version = "0.10.0"
 description = "Carina Harness desktop shell"
 authors = ["Nebutra"]
 edition = "2021"

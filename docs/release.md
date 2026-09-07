@@ -106,7 +106,7 @@ make release-package
 To build the product version declared by `go/product` explicitly:
 
 ```bash
-VERSION=0.9.4 make release-package
+VERSION=0.10.0 make release-package
 ```
 
 The package command writes to `dist/`:
@@ -128,14 +128,14 @@ not hidden state.
 Use existing artifacts without rebuilding:
 
 ```bash
-SKIP_BUILD=1 VERSION=0.9.4 ./scripts/package-release.sh
+SKIP_BUILD=1 VERSION=0.10.0 ./scripts/package-release.sh
 ```
 
 If Zig is unavailable but `zig/zig-out/bin/carina-*` artifacts already exist,
 reuse them explicitly:
 
 ```bash
-SKIP_ZIG=1 VERSION=0.9.4 make release-package
+SKIP_ZIG=1 VERSION=0.10.0 make release-package
 ```
 
 `SKIP_BUILD=1` and `SKIP_ZIG=1` are recorded as warnings in `MANIFEST.json` and
@@ -336,7 +336,8 @@ injects versioned release URLs and both architecture checksums.
 ## External Activation Still Required
 
 The repository ships the checksum-enforcing installer, Linuxbrew Formula,
-deb/rpm packages, Windows worker ZIP, VSIX, Web Operator archive, container
-Dockerfiles, SBOM generation, provenance, and verification contracts. Public
+deb/rpm packages, Windows worker ZIP, VSIX, Web Harness archive, macOS/Linux
+Tauri Harness bundles, container Dockerfiles, SBOM generation, provenance, and
+verification contracts. Public
 activation still requires the credentials, publisher identities, registries,
 upstream review, hosting, and tag permissions listed in the Roadmap.

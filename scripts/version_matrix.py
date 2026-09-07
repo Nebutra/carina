@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import tomllib
 from pathlib import Path
 
 
@@ -78,17 +77,16 @@ def validate(root: Path) -> str:
         version,
         "Tauri Cargo package",
     )
-    cargo_lock = tomllib.loads(
-        (root / "integrations/tauri/src-tauri/Cargo.lock").read_text(encoding="utf-8")
+    cargo_lock = (root / "integrations/tauri/src-tauri/Cargo.lock").read_text(encoding="utf-8")
+    root_versions = re.findall(
+        r'(?ms)^\[\[package\]\]\s+name = "carina-harness"\s+version = "([^"]+)"',
+        cargo_lock,
     )
-    root_packages = [
-        package for package in cargo_lock.get("package", []) if package.get("name") == "carina-harness"
-    ]
-    if len(root_packages) != 1:
+    if len(root_versions) != 1:
         raise SystemExit(
             "version-matrix: expected exactly one carina-harness package in Tauri Cargo.lock"
         )
-    require_equal("Tauri Cargo lock root", root_packages[0]["version"], version)
+    require_equal("Tauri Cargo lock root", root_versions[0], version)
 
     return version
 

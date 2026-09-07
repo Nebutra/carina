@@ -1,4 +1,4 @@
-// Package sdk provides typed JSON-RPC wrappers for Carina Harness 0.9.4.
+// Package sdk provides typed JSON-RPC wrappers for Carina Harness 0.10.0.
 package sdk
 
 import (
@@ -18,7 +18,7 @@ import (
 	"github.com/Nebutra/carina/go/rpc"
 )
 
-const CompatibleRuntimeVersion = "0.9.4"
+const CompatibleRuntimeVersion = "0.10.0"
 const streamQueueLimit = 64
 const artifactUploadChunkSize = 512 << 10
 const artifactUploadMaxBytes = 4 << 20
