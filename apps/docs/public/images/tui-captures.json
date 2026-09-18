@@ -4,7 +4,7 @@
   "inputs": {
     "brandVariables": {
       "path": "docs/brand/design-system/variables.css",
-      "sha256": "4d999cf87f968e426f062a8272ddfa8b1492fab8a314152d34f3f684865ea70f"
+      "sha256": "abdd9d04d4fd7c3e5b442b5878356914769fe045858e62a4e160c67a94baa473"
     },
     "font": {
       "path": "apps/docs/public/fonts/geist-mono-latin-variable.woff2",
